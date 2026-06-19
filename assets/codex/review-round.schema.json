@@ -15,6 +15,7 @@
         "additionalProperties": false,
         "required": ["severity", "kind", "spec_ref", "where", "claim", "evidence"],
         "properties": {
+          "id": { "type": "string", "description": "OPTIONAL — when re-reporting a finding you were handed, echo its exact ledger id (e.g. S2-N3) so merge-ledger binds to it precisely instead of guessing by fingerprint. Omit for a genuinely new finding." },
           "severity": { "enum": ["low", "medium", "high"] },
           "kind": { "enum": ["spec-gap", "anti-cheat", "safety", "missing-edge", "type-quality", "code-fault", "test-fault"] },
           "spec_ref": { "type": "string", "minLength": 1, "description": "The spec section/anchor violated — REQUIRED (no spec_ref => inadmissible style opinion)." },
@@ -27,12 +28,13 @@
     },
     "resolved": {
       "type": "array",
-      "description": "Prior findings the verifier RE-CHECKED and confirms now satisfy the spec against the current tree. merge-ledger.py marks the matching ledger finding fixed + verified_by=codex. Only the verifier may populate this — it is the positive confirmation that a fix held.",
+      "description": "Prior findings the verifier RE-CHECKED and confirms now satisfy the spec against the current tree. merge-ledger.py marks the matching ledger finding fixed + verified_by=codex. Only the verifier may populate this — it is the positive confirmation that a fix held. Cite `id` (echoed from the prior findings handed to you) so the resolution is unambiguous even when two defects share a kind|spec_ref|file; without an id, merge-ledger falls back to the first still-live finding of that fingerprint.",
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": ["kind", "spec_ref", "where"],
         "properties": {
+          "id": { "type": "string", "description": "OPTIONAL but PREFERRED — the exact ledger finding id being resolved (e.g. S2-N3), echoed from the prior findings you were given. Disambiguates colliding fingerprints. merge-ledger matches by this id first, then by fingerprint." },
           "kind": { "enum": ["spec-gap", "anti-cheat", "safety", "missing-edge", "type-quality", "code-fault", "test-fault"] },
           "spec_ref": { "type": "string", "minLength": 1 },
           "where": { "type": "string", "minLength": 1 },

@@ -17,8 +17,13 @@ command -v gemini >/dev/null 2>&1 && echo "gemini: $(command -v gemini)" || echo
 [ -f package.json ] && (npm ci 2>/dev/null || npm install 2>/dev/null) && echo "deps: installed" || echo "deps: no package.json (or install skipped)"
 # [ -f prisma/schema.prisma ] && npx prisma generate
 
-# 3) jsonschema for the plugin self-tests + gemini self-validation (optional but recommended):
-pip install jsonschema 2>/dev/null || pip install --user jsonschema 2>/dev/null || true
+# 3) jsonschema is REQUIRED, not optional — the triage gate FAILS CLOSED without it (no validator =>
+#    escalate, never green), so an autonomous run with no jsonschema would park every slice. Install
+#    it hard and ABORT setup if it still can't be imported, so the operator finds out now, not mid-run.
+pip install jsonschema 2>/dev/null || pip install --user jsonschema 2>/dev/null || pip install --break-system-packages jsonschema 2>/dev/null || true
+python3 -c "import jsonschema" 2>/dev/null \
+  && echo "jsonschema: installed (triage validator present)" \
+  || { echo "FATAL: jsonschema not importable — the Parallax triage gate fails closed without it (every slice would escalate). Fix the install before running."; exit 1; }
 
 # 4) Secret presence check — NEVER print values, only whether they're set. Set these in the
 #    routine Environment (not the repo). Names match what .parallax/codex.toml references.

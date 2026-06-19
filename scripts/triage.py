@@ -16,12 +16,17 @@ the work must not be able to certify itself):
     AND last_verified_diff == --current-diff. A `fixed` that Claude merely stamped (no
     verified_by, or a stale diff) is treated as LIVE and still blocks.
 
-  * FAIL CLOSED ON A BAD LEDGER. If jsonschema is available and the ledger doesn't validate
-    against assets/codex/review-ledger.schema.json, the decision is `escalate`, never green.
+  * FAIL CLOSED, ALWAYS. The ledger MUST validate against assets/codex/review-ledger.schema.json
+    before any green: if it does not validate — OR jsonschema is not importable, OR the schema file
+    is missing — the decision is `escalate`, never green. An autonomous gate must never pass as
+    green a ledger it was UNABLE to validate (the old fail-OPEN: no jsonschema => skip => green on a
+    `{}` ledger). The only way to skip validation is the explicit, insecure --no-schema-check, used
+    solely for logic-isolation tests in the harness.
 
 Usage:
     triage.py LEDGER.json --policy .parallax/codex.toml --current-diff <sha> [--schema PATH]
     triage.py - --policy ... --current-diff ...        # ledger on stdin
+    triage.py ... --no-schema-check                    # INSECURE: skip validation (tests only)
 Exit code: 0 green, 1 block, 2 escalate, 3 bad input. Prints a JSON decision to stdout.
 """
 import argparse, hashlib, json, os, sys
@@ -78,14 +83,22 @@ def disposition(f, policy, current_diff):
     return "BLOCK"                            # unknown severity -> conservative
 
 
-def validate_ledger(ledger, schema_path):
-    """Fail-closed structural check. Returns an error string, or None if valid / unavailable."""
+def validate_ledger(ledger, schema_path, require=True):
+    """Fail-CLOSED structural check. Returns an error string (=> escalate) or None if valid.
+
+    For an autonomous gate the INABILITY to validate must never pass as green. So a missing
+    jsonschema, a missing schema file, or a schema violation each return an error => the caller
+    escalates. The ONLY skip is the explicit, insecure --no-schema-check (require=False), which the
+    harness uses to isolate triage LOGIC from schema rejection — never a production path.
+    """
+    if not require:
+        return None                           # explicit, insecure opt-out (logic-isolation tests only)
     try:
         import jsonschema
     except ImportError:
-        return None                           # can't validate here; the harness does it where jsonschema exists
+        return "validator-unavailable: jsonschema not importable (fail-closed — cannot certify a ledger we cannot validate)"
     if not schema_path or not os.path.exists(schema_path):
-        return None
+        return f"schema-missing: {schema_path!r} not found (fail-closed)"
     try:
         jsonschema.validate(ledger, json.load(open(schema_path)))
         return None
@@ -118,15 +131,17 @@ def main(argv):
     ap = argparse.ArgumentParser()
     ap.add_argument("ledger")
     ap.add_argument("--policy", help="path to the TRUSTED .parallax/codex.toml")
-    ap.add_argument("--current-diff", dest="current_diff", help="SHA of the assembled tree under review")
+    ap.add_argument("--current-diff", dest="current_diff", help="SHA of the assembled tree under review (a git write-tree of the staged tree)")
     ap.add_argument("--schema", default="assets/codex/review-ledger.schema.json")
+    ap.add_argument("--no-schema-check", dest="no_schema", action="store_true",
+                    help="INSECURE: skip ledger schema validation (logic-isolation tests only). Default fails closed.")
     a = ap.parse_args(argv)
     try:
         src = sys.stdin.read() if a.ledger == "-" else open(a.ledger).read()
         ledger = json.loads(src)
     except Exception as e:
         print(json.dumps({"decision": "escalate", "error": f"bad ledger: {e}"})); return 3
-    schema_err = validate_ledger(ledger, a.schema)
+    schema_err = validate_ledger(ledger, a.schema, require=not a.no_schema)
     if schema_err:
         print(json.dumps({"decision": "escalate", "error": schema_err})); return 2
     policy, note = load_policy(a.policy)

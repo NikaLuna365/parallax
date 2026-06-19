@@ -138,8 +138,8 @@ python3 - <<'PY' >/tmp/parallax_triage 2>&1
 import json,subprocess
 TOML="assets/codex/codex.toml.example"; D="a"*40; E="b"*40
 def dec(led,diff=D):
-    # --schema /nonexistent isolates triage LOGIC (schema rejection is tested separately)
-    p=subprocess.run(["python3","scripts/triage.py","-","--policy",TOML,"--current-diff",diff,"--schema","/nonexistent"],
+    # --no-schema-check isolates triage LOGIC (fail-closed schema validation is tested in [review_failclosed])
+    p=subprocess.run(["python3","scripts/triage.py","-","--policy",TOML,"--current-diff",diff,"--no-schema-check"],
                      input=json.dumps(led),capture_output=True,text=True)
     try: return json.loads(p.stdout)["decision"], p.returncode
     except Exception: return ("PARSE_ERR:"+p.stdout+p.stderr), p.returncode
@@ -221,6 +221,61 @@ echo "[review_contracts]  (presence — producer-proof wiring is documented)"
 { grep -qi "no anchoring" skills/role-codex-judge/SKILL.md && grep -q "review-round" skills/role-codex-judge/SKILL.md && grep -q "merge-ledger.py" skills/role-codex-judge/SKILL.md && grep -q "reviews/<slice_id>.json" skills/role-codex-judge/SKILL.md; } && ok "role-codex-judge: fresh per-slice review, emits a review-round, mechanical merge" || no "role-codex-judge missing v0.21 producer-proof protocol"
 { grep -q "scripts/merge-ledger.py" commands/run.md && grep -qF "scripts/triage.py \"\$LEDGER\" --policy .parallax/codex.toml" commands/run.md && grep -q "reviews/\$SID.json" commands/run.md; } && ok "run.md wires merge-ledger + triage(--policy from toml) + per-slice ledger" || no "run.md missing producer-proof pipeline"
 grep -q "never checked out in parallel" commands/run.md && ok "run.md: feature branch not checked out in parallel (no stale worktree on CAS)" || no "run.md missing no-checkout-in-parallel"
+
+echo "[difftree]  (v0.22 P0#1 — EXECUTES: the review diff is git write-tree of the STAGED tree, not HEAD^{tree})"
+bash tests/t_difftree.sh >/tmp/parallax_dt 2>&1 && ok "write-tree catches a since-changed staged tree (HEAD^{tree} false-greens; write-tree re-blocks the stale fix)" || { no "difftree (P0#1)"; sed 's/^/      /' /tmp/parallax_dt; }
+{ grep -qF 'DIFF=$(git -C "$ASSEMBLED" write-tree)' commands/run.md \
+  && grep -qF 'git -C "$ASSEMBLED" diff --quiet' commands/run.md \
+  && ! grep -qF 'git -C "$ASSEMBLED" rev-parse "HEAD^{tree}"' commands/run.md; } \
+  && ok "run.md computes the review DIFF via write-tree + a clean-index guard (not HEAD^{tree})" || no "run.md review diff not switched to write-tree"
+
+echo "[pass_through_ledger]  (v0.22 P0#2 — EXECUTES: a Codex 'pass' that omits a prior open finding still blocks)"
+python3 - <<'PY' >/tmp/parallax_ptl 2>&1
+import json,subprocess,tempfile,os
+T=tempfile.mkdtemp(); L=os.path.join(T,"S1.json"); D="a"*40
+def merge(d): p=os.path.join(T,"r.json"); json.dump(d,open(p,"w")); subprocess.run(["python3","scripts/merge-ledger.py",L,p,"--slice","S1","--current-diff",D,"--slug","demo"],capture_output=True,text=True,check=True)
+merge({"verdict":"concerns","findings":[{"severity":"high","kind":"safety","spec_ref":"s#a","where":"src/a.ts:1","claim":"c","evidence":"e"}],"resolved":[]})  # round 1: open high-safety
+merge({"verdict":"pass","findings":[],"resolved":[]})                                                                                                        # round 2: bare PASS, omits it
+p=subprocess.run(["python3","scripts/triage.py",L,"--policy","assets/codex/codex.toml.example","--current-diff",D,"--no-schema-check"],capture_output=True,text=True)
+dec=json.loads(p.stdout)["decision"]
+print("OK" if (dec!="green" and p.returncode!=0) else "BAD pass-bypassed-ledger decision="+dec)
+PY
+R=$(cat /tmp/parallax_ptl)
+[ "$R" = OK ] && ok "a 'pass' routed through merge+triage does NOT green a slice with a prior open finding" || { no "pass bypasses the ledger"; echo "      $R"; }
+grep -qF 'does NOT bypass the ledger' commands/run.md && ok "run.md routes BOTH pass and concerns through merge-ledger + triage (no commit-on-pass shortcut)" || no "run.md still commits directly on Codex pass"
+
+echo "[review_failclosed]  (v0.22 P0#3 — EXECUTES: no jsonschema => escalate, never green)"
+FAKE=$(mktemp -d); echo 'raise ImportError("simulated: jsonschema missing")' > "$FAKE/jsonschema.py"
+HID=$(echo '{}' | PYTHONPATH="$FAKE" python3 scripts/triage.py - --policy assets/codex/codex.toml.example --current-diff aaaa 2>/dev/null); HRC=$?
+OPT=$(echo '{}' | python3 scripts/triage.py - --policy assets/codex/codex.toml.example --current-diff aaaa --no-schema-check 2>/dev/null); ORC=$?
+rm -rf "$FAKE"
+{ echo "$HID" | grep -q '"decision": "escalate"' && [ "$HRC" = 2 ] && echo "$OPT" | grep -q '"decision": "green"' && [ "$ORC" = 0 ]; } \
+  && ok "triage fails CLOSED with no validator (escalate/2); --no-schema-check is the only opt-out (green/0)" \
+  || { no "triage still fails OPEN without jsonschema"; echo "      hidden=[$HID] rc=$HRC ; optout=[$OPT] rc=$ORC"; }
+
+echo "[merge_ledger_collision]  (v0.22 P1#4 — EXECUTES: same-fingerprint distinct defects don't collapse; resolve by exact id)"
+python3 - <<'PY' >/tmp/parallax_mlc 2>&1
+import json,subprocess,tempfile,os
+T=tempfile.mkdtemp(); L=os.path.join(T,"S1.json"); D1="a"*40; D2="b"*40
+def merge(d,diff): p=os.path.join(T,"r.json"); json.dump(d,open(p,"w")); subprocess.run(["python3","scripts/merge-ledger.py",L,p,"--slice","S1","--current-diff",diff,"--slug","demo"],capture_output=True,text=True,check=True)
+# two DIFFERENT defects, identical kind|spec_ref|file -> same fingerprint, must NOT collapse to one
+merge({"verdict":"concerns","findings":[
+  {"severity":"high","kind":"code-fault","spec_ref":"spec#B10","where":"src/o.ts:10","claim":"ONE","evidence":"e1"},
+  {"severity":"high","kind":"code-fault","spec_ref":"spec#B10","where":"src/o.ts:55","claim":"TWO","evidence":"e2"}],"resolved":[]},D1)
+l=json.load(open(L)); assert len(l["findings"])==2, ("collapsed",l)
+# resolve N1 by EXACT id while re-reporting N2 (cites id) -> N1 fixed, N2 still open (no false settle, no loss)
+merge({"verdict":"concerns","findings":[{"id":"S1-N2","severity":"high","kind":"code-fault","spec_ref":"spec#B10","where":"src/o.ts:60","claim":"TWO again","evidence":"e2"}],
+       "resolved":[{"id":"S1-N1","kind":"code-fault","spec_ref":"spec#B10","where":"src/o.ts:10","note":"fixed one"}]},D2)
+l=json.load(open(L)); st={f["id"]:f["status"] for f in l["findings"]}
+assert st=={"S1-N1":"fixed","S1-N2":"open"}, st
+print("OK")
+PY
+R=$(cat /tmp/parallax_mlc)
+[ "$R" = OK ] && ok "two same-fingerprint defects stay distinct; resolve-by-id settles exactly one (no data loss)" || { no "merge-ledger collision handling wrong"; echo "      $R"; }
+
+echo "[epic_verify_gate]  (v0.22 P1#5 — presence: an UNVERIFIED run holds the append-only epic)"
+{ grep -qF 'PARALLAX_VERIFIED:-0' commands/run.md && grep -q "epic NOT advanced" commands/run.md; } && ok "run.md hard-holds the epic push behind a verified gate (warn pushes feature, not epic)" || no "run.md epic advance lacks the UNVERIFIED hold"
+grep -qF 'is a feature-only license' commands/run.md && ok "run.md: warn = feature push only, never auto-advances the epic" || no "run.md missing warn=feature-only rule"
 
 echo "[security_no_secrets]  (locks repo hygiene)"
 grep -qE 'sk-[A-Za-z0-9]{16,}|AIza[0-9A-Za-z_-]{20,}|[0-9]{6,}:[A-Za-z0-9_-]{20,}' assets/codex/codex.toml.example && no "config has a secret-shaped value" || ok "config has no secret-shaped values (only *_env names)"
