@@ -48,6 +48,14 @@ def fingerprint(kind, spec_ref, where):
     return hashlib.sha256(basis.encode()).hexdigest()[:16]
 
 
+def _id_consistent(ex, item):
+    """A cited id is honored ONLY if it agrees with the item's fingerprint (kind|spec_ref|file).
+    Without this, a round could resolve or re-report finding A by quoting A's id while carrying a
+    completely different defect's metadata — closing the wrong finding (v0.22 P1#3). On a mismatch we
+    ignore the id and fall back to fingerprint matching, which is fail-safe (it can't settle A)."""
+    return ex.get("fingerprint") == fingerprint(item.get("kind"), item.get("spec_ref"), item.get("where"))
+
+
 def _next_n(findings, slice_id):
     n = 0
     for f in findings:
@@ -95,10 +103,10 @@ def merge(ledger, rnd, slice_id, current_diff, slug=None):
     deferred = []
     for item in rnd.get("findings", []):
         rid = item.get("id")
-        if rid and rid in by_id and rid not in consumed:
+        if rid and rid in by_id and rid not in consumed and _id_consistent(by_id[rid], item):
             _reopen(by_id[rid], item)
         else:
-            deferred.append(item)
+            deferred.append(item)                # uncited, or an id whose metadata doesn't match it
     # Pass B — each uncited finding takes the FIRST still-unconsumed ledger finding of its fingerprint;
     # if none remains it becomes a NEW, distinct finding. So two same-fp findings in one round never
     # collapse — each consumes a different slot, or spawns its own id (the v0.21 P1#4 data loss).
@@ -126,23 +134,28 @@ def merge(ledger, rnd, slice_id, current_diff, slug=None):
     # otherwise fall back to the first still-live finding of that fingerprint. NEVER settle a finding
     # also re-reported this round, and absence alone never fixes anything (fail closed).
     for item in rnd.get("resolved", []):
-        target = None
         rid = item.get("id")
-        if rid and rid in by_id:
-            cand = by_id[rid]
-            if cand["id"] not in current_ids and cand.get("status") in ("open", "regressed"):
-                target = cand
-        else:
-            fp = fingerprint(item.get("kind"), item.get("spec_ref"), item.get("where"))
-            for cand in by_fp.get(fp, []):
-                if cand["id"] not in current_ids and cand.get("status") in ("open", "regressed"):
-                    target = cand
-                    break
-        if target:
-            target["status"] = "fixed"
-            target["verified_by"] = "codex"
-            target["last_verified_diff"] = current_diff
-            target["resolution"] = item.get("note", "verified resolved by codex")
+        cand = by_id.get(rid) if rid else None
+        if cand and _id_consistent(cand, item) and cand["id"] not in current_ids:
+            # Exact, consistent id: settle a LIVE finding, OR re-stamp an ALREADY-`fixed` one the verifier
+            # re-confirmed against the CURRENT tree. The re-stamp keeps a fix's proof tracking the latest
+            # diff across rounds (while sibling findings are still being fixed), so it doesn't read as
+            # stale at the final green — the verifier's regression pass re-confirms every fixed finding.
+            if cand.get("status") in ("open", "regressed"):
+                cand["status"] = "fixed"
+                cand["resolution"] = item.get("note", "verified resolved by codex")
+            cand["verified_by"] = "codex"
+            cand["last_verified_diff"] = current_diff
+            continue
+        # no id, or an id whose metadata doesn't match -> fingerprint fallback: settle the first LIVE match only
+        fp = fingerprint(item.get("kind"), item.get("spec_ref"), item.get("where"))
+        for c in by_fp.get(fp, []):
+            if c["id"] not in current_ids and c.get("status") in ("open", "regressed"):
+                c["status"] = "fixed"
+                c["verified_by"] = "codex"
+                c["last_verified_diff"] = current_diff
+                c["resolution"] = item.get("note", "verified resolved by codex")
+                break
 
     ledger["rounds_used"] = round_no
     return ledger

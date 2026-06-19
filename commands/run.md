@@ -148,23 +148,30 @@ Maintain a per-slice **iteration counter** (max **3**) and a private **attempt h
     ```bash
     SID="S<n>"; LEDGER=".parallax/$SLUG/reviews/$SID.json"           # ONE ledger PER SLICE
     ASSEMBLED="$ROOT"                                                 # sequential; PARALLEL: "$WT/$SID/assembly"
-    # The tree under review is STAGED, not committed (assembly stages src+tests; the integration
-    # commit happens later). Hash the INDEX with `git write-tree`, NEVER `HEAD^{tree}` — HEAD has not
-    # moved, so a stale codex-verified fix would re-match a since-changed tree (v0.21 P0#1 false-green).
-    # Require a clean worktree-vs-index, so the SHA is exactly what the verifier read on disk.
-    git -C "$ASSEMBLED" diff --quiet || { echo "ESCALATE: unstaged changes under review — cannot certify"; exit 2; }
-    DIFF=$(git -C "$ASSEMBLED" write-tree)                            # content SHA of the ACTUAL staged tree
+    SRC_PATHSPECS=(  ':(glob)src/**'  )                              # = Step 1 (re-declared; shell state doesn't persist)
+    TEST_PATHSPECS=( ':(glob)tests/**'  ':(glob)**/*.test.*' )
+    # Guard ONLY the reviewed scope (src+tests), NEVER .parallax/: the review ledger is metadata that
+    # legitimately changes every round, and gating on it would wedge the next re-review (v0.22 P1#5).
+    # Reject BOTH unstaged tracked changes AND untracked files in that scope, so the hash below equals
+    # exactly what the verifier read on disk and nothing un-reviewed can ride in at commit (v0.22 P0#1).
+    if ! git -C "$ASSEMBLED" diff --quiet -- "${SRC_PATHSPECS[@]}" "${TEST_PATHSPECS[@]}" \
+       || [ -n "$(git -C "$ASSEMBLED" ls-files --others --exclude-standard -- "${SRC_PATHSPECS[@]}" "${TEST_PATHSPECS[@]}")" ]; then
+      echo "ESCALATE: unstaged or untracked files in the reviewed scope — cannot certify"; exit 2; fi
+    # DIFF = content hash of EXACTLY the reviewed code+tests in the index (mode+blob+path per file) —
+    # the tree Codex reviewed. Stable against .parallax/ churn, and never HEAD^{tree} (v0.21/v0.22 P0#1).
+    DIFF=$(git -C "$ASSEMBLED" ls-files -s -- "${SRC_PATHSPECS[@]}" "${TEST_PATHSPECS[@]}" | git hash-object --stdin)
     python3 scripts/merge-ledger.py "$LEDGER" "$ROUND_JSON" --slice "$SID" --current-diff "$DIFF" --slug "$SLUG"
     python3 scripts/triage.py "$LEDGER" --policy .parallax/codex.toml --current-diff "$DIFF"; case $? in   # 0 green / 1 block / 2 escalate
-      0) git add -A && git commit -q -m "$SID ${S.id}: green (advisories, if any, recorded)";;
+      0) git -C "$ASSEMBLED" add -- "$LEDGER"      # reviewed src+tests are ALREADY staged by 2b assembly; stage ONLY the receipt. NEVER 'git add -A' (it would sweep in un-reviewed untracked files — v0.22 P0#1). Committing the index = reviewed tree + receipt, nothing else.
+         git -C "$ASSEMBLED" commit -q -m "$SID ${S.id}: green (reviewed tree + review receipt)";;
       1) echo "BLOCK: route each blocker to its fault side, fix, then re-review (FRESH verifier, +1 round)";;
       2) echo "ESCALATE/PARK: escalation queue (finding + Claude's ledgered rebuttal, if contesting)";;
     esac
     ```
-    Why this can't be gamed: `merge-ledger.py` is the **only** writer of findings (it maps the verifier's review round into the ledger by fingerprint/id — Claude invents no `id`/`spec_ref`/`evidence`); `triage.py` reads the `[review]` policy **only** from the trusted `.parallax/codex.toml` (never the ledger) and **fails closed** (no validator ⇒ `escalate`, never green); and a `fixed` finding counts **only** if the verifier verified it (`verified_by=codex`) against the **current** `--current-diff` — now the `write-tree` of the *actual staged tree*, so a fix checked against an earlier tree no longer re-matches. Then act on the decision:
+    Why this can't be gamed: `merge-ledger.py` is the **only** writer of findings (it maps the verifier's review round into the ledger by fingerprint/id — Claude invents no `id`/`spec_ref`/`evidence`, and a cited id is honored only if its metadata matches that finding's fingerprint); `triage.py` reads the `[review]` policy **only** from the trusted `.parallax/codex.toml` (never the ledger) and **fails closed** (no validator ⇒ `escalate`, never green); and a `fixed` finding counts **only** if the verifier verified it (`verified_by=codex`) against the **current** `--current-diff` — the content hash of the *actual reviewed code+tests* (`git ls-files -s`, not `HEAD^{tree}`), so a fix checked against an earlier tree no longer re-matches. The green commit is **exactly** that reviewed tree plus the ledger receipt: the assembly already staged src+tests, so 2c stages **only** the ledger (`git add -- "$LEDGER"`) and commits the index — never `git add -A`, which would sweep in un-reviewed untracked files, so the promoted commit can't differ from what was verified. Then act on the decision:
        - **`block`** → route each blocker to its fault side with the arbiter's **NL framing** (`code-fault` → coder, `test-fault` → test-writer, `spec-gap`/`safety`/`anti-cheat` → `/parallax:spec` or the human) — never raw verifier text across the blindness wall. After the fix re-greens, **re-review with a fresh verifier**; it regression-checks the ledger first, and `merge-ledger.py` records the new round (+1 `rounds_used`).
        - **`escalate`** → park with the finding. The **one** thing Claude may add to the ledger is a `claude_rebuttal` (`duplicate`/`not-reproducible`/`contradicts-spec`/`out-of-scope`) — and a rebuttal can only **escalate** a blocker to a human, **never** green it; it is never a silent drop.
-       - **`green`** (no live blocker: only `low` advisories remain, or every blocker is a codex-verified fix against the current `write-tree`) → committed above (case `0`); advisories go to the run report (and verbose Telegram), not to a block.
+       - **`green`** (no live blocker: only `low` advisories remain, or every blocker is a codex-verified fix against the current reviewed-tree hash) → committed above (case `0`) as the reviewed tree + ledger receipt; advisories go to the run report (and verbose Telegram), not to a block.
   - **`limit`** (the verifier returns `limit`, meaning **every** provider in its chain was rate-limited — a single provider's limit is handled by falling back to the next, e.g. Codex → Gemini, *inside* the judge) → neither a fault nor a `concerns`: do **not** commit, escalate, or fabricate a pass. Mark the slice `green-unverified` (arbiter passed, verification still owed) and **pause the run** per *Limits, checkpointing & resume* (the judge already did short retries + fallback before returning `limit`).
   - **Verifier disabled or `codex` absent** → commit as before. Interactive falls back to the Claude-only gate; this is the default and leaves prior behavior unchanged.
 
@@ -200,12 +207,14 @@ fi
 - Never force-push. If the remote rejects (non-fast-forward on a re-run), report it and stop — do not overwrite remote history.
 - **Product-copy hold.** If any slice in this feature created or changed strings the spec marked as **product copy** (user-facing wording — dictionary text, labels, bot/UI messages), stop **before** advancing the epic and get an explicit human OK on the *words*. A green build proves the copy is wired correctly, not that it says the right thing; wording is a product decision, not an engineering one. (Numbers inside those strings are already constant-sourced per the money checklist — only the language needs sign-off.) Keep the feature out of the epic until approved.
 
-**Advancing the epic** (after the feature is green, pushed, and any product copy is approved) follows the **epic-integration contract** (see Standing rules: invariant / content / transport) — **but first a hard verification gate, because the epic is append-only.** Nothing UNVERIFIED may enter the epic: if the cross-model verifier was not a working gate for *every* integrated slice — i.e. `on_missing = "warn"` fell back so outputs are stamped `UNVERIFIED`, or any integrated slice is still `green-unverified` — then push the **feature** branch for human review but **do NOT advance the epic**; park an *epic-hold* escalation. Only a fully **VERIFIED** feature advances the epic automatically (this is the machine half of "autonomous mode leans on the verifier as the gate that replaces the human"). Then fetch first, and in the common case where the feature is linearly ahead of `origin/<epic>` the merge is degenerate and needs no checkout — advance the ref by a non-force push:
+**Advancing the epic** (after the feature is green, pushed, and any product copy is approved) follows the **epic-integration contract** (see Standing rules: invariant / content / transport) — **but first a hard verification gate, because the epic is append-only.** The gate is **computed mechanically from the COMMITTED per-slice receipts**, never a preset flag: `scripts/epic-gate.py` requires that **every integrated slice** has a committed ledger that triages GREEN (every blocker codex-verified against its reviewed tree) within budget. A slice with no committed ledger (e.g. `on_missing = "warn"` produced none) or a still-`green-unverified` slice ⇒ the gate returns **hold**: push the **feature** branch for human review but **do NOT advance the epic**; park an *epic-hold* escalation. Only when the gate passes does a fully **VERIFIED** feature advance the epic automatically. Then fetch first, and in the common case where the feature is linearly ahead of `origin/<epic>` the merge is degenerate and needs no checkout — advance the ref by a non-force push:
 ```bash
-# HARD HOLD: an UNVERIFIED run never advances the append-only epic. Set PARALLAX_VERIFIED=1 ONLY
-# when the verifier passed (per triage) for EVERY integrated slice; on_missing="warn" leaves it unset.
-if [ "${PARALLAX_VERIFIED:-0}" != "1" ]; then
-  echo "HOLD: run is UNVERIFIED — feature pushed for review; epic NOT advanced (append-only requires a verified pass). Parking an epic-hold escalation."
+# HARD HOLD computed from the COMMITTED receipts — there is NO env override to preset (v0.22 P1#4).
+# epic-gate.py: every integrated slice must have a committed ledger that triages GREEN within budget;
+# a missing/dirty/unverified receipt => hold. The integrated slice ids come from the checkpoint.
+INTEGRATED="<integrated slice ids, comma-separated, from .parallax/$SLUG/run-state.json>"
+if ! python3 scripts/epic-gate.py --policy .parallax/codex.toml --reviews-dir ".parallax/$SLUG/reviews" --slices "$INTEGRATED"; then
+  echo "HOLD: feature is UNVERIFIED per committed receipts — feature pushed for review; epic NOT advanced (append-only). Parking an epic-hold escalation."
   exit 0
 fi
 git fetch origin "<epic>"
@@ -239,15 +248,17 @@ The sequential model reuses one worktree pair and stacks slices on it. Parallel 
 - **Per-slice worktrees & branches.** For slice `S<n>`, branch `${PREFIX}$SLUG-S<n>-code` and `${PREFIX}$SLUG-S<n>-test` from the **current integration tip** of `${PREFIX}$SLUG` (which already contains every dependency that has integrated) — **record that tip as the slice's `wave_base`**, since the integration diff is taken against it. Add worktrees `$WT/S<n>/{code,test,assembly}`: the **assembly** worktree is a throwaway integration context (`git worktree add --detach "$WT/S<n>/assembly" <tip>`) where this slice's diff is applied and the arbiter runs in **isolation**, so concurrent slices never collide on the shared `${PREFIX}$SLUG` tree (without it, two arbiters get either no assembled tree or a clobbered one). Blindfold the code+test pair and **provision** all three per Step 1 — every worktree, every wave.
 - **`${PREFIX}$SLUG` is never checked out in parallel.** No persistent worktree holds the feature branch during a wave — `$ROOT` sits **detached** at the integration tip (`git -C "$ROOT" switch --detach "${PREFIX}$SLUG"` once, up front). The branch is a **ref advanced only by the CAS `update-ref`** from an assembly worktree; if `$ROOT` (or any worktree) had it checked out, moving the ref would leave that tree **stale and dirty** — its files wouldn't match the new tip (verified: a `D src/…` phantom deletion). All per-slice work — assembly, the **arbiter**, and the **post-green verifier** — runs in `$WT/S<n>/assembly` (the tree actually under review), never `$ROOT`.
 - **Waves by the dependency DAG.** Build the DAG from `slices.md` `depends on`. A slice is *ready* when all its dependencies have integrated. Dispatch **all ready slices concurrently** — each runs its own 2a → 2c independently, **assembling and arbitrating in its own per-slice integration context** (its own code+test tips in `$WT/S<n>/assembly`), never the shared `${PREFIX}$SLUG` tree, which would collide across concurrent slices. A slice with an unmet edge waits; that is the only ordering constraint.
-- **Integrate on green — transactionally, in the slice's assembly worktree.** When a slice clears 2c (arbiter green **and** the post-green verifier, if enabled), apply ONLY its delta (vs the recorded `wave_base` `WB`) **in its own `$WT/S<n>/assembly` worktree**, never the shared `${PREFIX}$SLUG` tree; advance `${PREFIX}$SLUG` only after BOTH patches apply cleanly:
+- **Integrate on green — transactionally, in the slice's assembly worktree.** When a slice clears 2c (arbiter green **and** the post-green verifier, if enabled), apply ONLY its delta (vs the recorded `wave_base` `WB`) **in its own `$WT/S<n>/assembly` worktree**, never the shared `${PREFIX}$SLUG` tree; the delta is taken **from the 2c green commit** — over reviewed code+tests **and** the review receipt (`.parallax/<slug>/reviews/`) — so the **ledger (memory, round budget, codex proof) rides into the integrated commit** instead of being dropped (v0.22 P0#2), and what integrates is exactly what was verified. Advance `${PREFIX}$SLUG` only after the patch applies cleanly:
   ```bash
   AWT="$WT/S<n>/assembly"
+  GREEN=$(git -C "$AWT" rev-parse HEAD)                       # the 2c green commit: reviewed src+tests + ledger receipt
   TIP=$(git -C "$ROOT" rev-parse "${PREFIX}$SLUG")            # current integration tip
   ( cd "$AWT" && git switch -q --detach "$TIP"
-    { git diff --binary "$WB" "${PREFIX}$SLUG-S<n>-code" -- "${SRC_PATHSPECS[@]}"  | git apply --3way --index --binary && \
-      git diff --binary "$WB" "${PREFIX}$SLUG-S<n>-test" -- "${TEST_PATHSPECS[@]}" | git apply --3way --index --binary; } || {
+    # one delta WB->GREEN over code+tests AND the review receipt — so the committed ledger is carried, not lost
+    git diff --binary "$WB" "$GREEN" -- "${SRC_PATHSPECS[@]}" "${TEST_PATHSPECS[@]}" ".parallax/$SLUG/reviews/" \
+      | git apply --3way --index --binary || {
         git reset -q --hard; echo "CONFLICT: slice S<n> is not independent"; exit 9; }   # transactional: all-or-nothing
-    git commit -q -m "S<n> assembled" )
+    git commit -q -m "S<n> assembled (reviewed tree + review receipt)" )
   # serialize the move of the shared ref (CAS old-value $TIP); on a lost race, re-detach at the new tip and re-apply (the diff is vs WB):
   git -C "$ROOT" update-ref "refs/heads/${PREFIX}$SLUG" "$(git -C "$AWT" rev-parse HEAD)" "$TIP"
   ```
@@ -260,7 +271,7 @@ With no human at the console, every place Steps 2c/3 say *"escalate to the human
 - **Escalation queue** `.parallax/<slug>/escalations.md` — append a row for each: a **spec-gap** (test and code each defensible against the spec), a **circuit-breaker** trip (3 iterations / oscillation), and any **Claude-arbiter ↔ Codex divergence** (post-green or pre-freeze). The affected slice **halts**; other independent slices **keep running their waves**. Autonomy never invents a resolution to a genuine ambiguity — it records it and moves on.
 - **Product-copy queue** `.parallax/<slug>/product-copy.md` — strings the spec marked *product copy* collect here for human wording sign-off at the epic → `main` PR; they never auto-ship.
 - **No silent green.** A parked slice is not green and is not integrated; it cannot unblock dependents. The run finishes the slices it *can* and then stops — a partial, honest result beats a fabricated one.
-- **Verifier required.** Autonomous mode leans on the cross-model verifier as the gate that replaces the human; honor `.parallax/codex.toml` `on_missing` (`refuse` — don't run autonomously without it; or `warn` + stamp every output `UNVERIFIED`). **`warn` is a feature-only license:** an UNVERIFIED run may push the *feature* branch for human review, but it **must not advance the append-only *epic*** — Step 4's verification gate (`PARALLAX_VERIFIED`) holds it and parks an epic-hold. Only a real verified pass advances the epic automatically; `warn` never does. Either way, **nothing reaches `main` without a human** (epic → `main` is always a PR + CI + review).
+- **Verifier required.** Autonomous mode leans on the cross-model verifier as the gate that replaces the human; honor `.parallax/codex.toml` `on_missing` (`refuse` — don't run autonomously without it; or `warn` + stamp every output `UNVERIFIED`). **`warn` is a feature-only license:** an UNVERIFIED run may push the *feature* branch for human review, but it **must not advance the append-only *epic*** — Step 4's mechanical gate (`scripts/epic-gate.py`, computed from the committed receipts) holds it and parks an epic-hold, because `warn` produces no committed ledger for the gate to pass. Only a real verified pass advances the epic automatically; `warn` never does. Either way, **nothing reaches `main` without a human** (epic → `main` is always a PR + CI + review).
 
 ### Autonomous report (overrides Step 5)
 End with a machine-readable summary a human reads after an unattended or scheduled run: per-slice outcome (**integrated** / **parked + why**), the **escalation queue**, the **product-copy queue**, the **decision-log** carried from the spec, and the **full commit inventory** (Step 5 already requires this — keep flagging side-commits, especially migration edits).

@@ -222,12 +222,54 @@ echo "[review_contracts]  (presence — producer-proof wiring is documented)"
 { grep -q "scripts/merge-ledger.py" commands/run.md && grep -qF "scripts/triage.py \"\$LEDGER\" --policy .parallax/codex.toml" commands/run.md && grep -q "reviews/\$SID.json" commands/run.md; } && ok "run.md wires merge-ledger + triage(--policy from toml) + per-slice ledger" || no "run.md missing producer-proof pipeline"
 grep -q "never checked out in parallel" commands/run.md && ok "run.md: feature branch not checked out in parallel (no stale worktree on CAS)" || no "run.md missing no-checkout-in-parallel"
 
-echo "[difftree]  (v0.22 P0#1 — EXECUTES: the review diff is git write-tree of the STAGED tree, not HEAD^{tree})"
-bash tests/t_difftree.sh >/tmp/parallax_dt 2>&1 && ok "write-tree catches a since-changed staged tree (HEAD^{tree} false-greens; write-tree re-blocks the stale fix)" || { no "difftree (P0#1)"; sed 's/^/      /' /tmp/parallax_dt; }
-{ grep -qF 'DIFF=$(git -C "$ASSEMBLED" write-tree)' commands/run.md \
-  && grep -qF 'git -C "$ASSEMBLED" diff --quiet' commands/run.md \
+echo "[reviewed_commit]  (v0.23 P0#1 + P1#5 — EXECUTES: commit == reviewed tree + receipt; scoped guard ignores the ledger)"
+bash tests/t_difftree.sh >/tmp/parallax_dt 2>&1 && ok "reviewed-content hash tracks code (not HEAD^{tree}); scoped guard ignores a tracked ledger (P1#5); receipt-only add keeps untracked files out (P0#1)" || { no "reviewed commit / scoped guard (P0#1/P1#5)"; sed 's/^/      /' /tmp/parallax_dt; }
+{ grep -qF 'git -C "$ASSEMBLED" ls-files -s' commands/run.md \
+  && grep -qF 'git hash-object --stdin' commands/run.md \
+  && grep -qF 'git -C "$ASSEMBLED" diff --quiet -- "${SRC_PATHSPECS[@]}"' commands/run.md \
+  && grep -qF 'git -C "$ASSEMBLED" add -- "$LEDGER"' commands/run.md \
+  && ! grep -qF 'git add -A && git commit' commands/run.md \
   && ! grep -qF 'git -C "$ASSEMBLED" rev-parse "HEAD^{tree}"' commands/run.md; } \
-  && ok "run.md computes the review DIFF via write-tree + a clean-index guard (not HEAD^{tree})" || no "run.md review diff not switched to write-tree"
+  && ok "run.md 2c: DIFF=reviewed-tree hash, scoped guard, receipt-only add (no 'git add -A && git commit'), no HEAD^{tree}" || no "run.md 2c commit/guard not hardened per v0.23"
+
+echo "[parallel_ledger]  (v0.23 P0#2 — EXECUTES: the review ledger rides into the integrated commit)"
+bash tests/t_parallel_ledger.sh >/tmp/parallax_pl 2>&1 && ok "parallel integration carries .parallax/<slug>/reviews/ into the CAS commit (ledger not dropped); integrated == reviewed" || { no "parallel integration drops the ledger (P0#2)"; sed 's/^/      /' /tmp/parallax_pl; }
+grep -qF '".parallax/$SLUG/reviews/"' commands/run.md && ok "run.md integration delta includes the review-receipt path (sourced from the green commit)" || no "run.md integration omits .parallax/<slug>/reviews/"
+
+echo "[id_consistency]  (v0.23 P1#3 — EXECUTES: a cited id with mismatched metadata cannot close a finding)"
+python3 - <<'PY' >/tmp/parallax_idc 2>&1
+import json,subprocess,tempfile,os
+T=tempfile.mkdtemp(); L=os.path.join(T,"S1.json"); D="a"*40
+def merge(d): p=os.path.join(T,"r.json"); json.dump(d,open(p,"w")); subprocess.run(["python3","scripts/merge-ledger.py",L,p,"--slice","S1","--current-diff",D,"--slug","demo"],capture_output=True,text=True,check=True)
+merge({"verdict":"concerns","findings":[{"severity":"high","kind":"safety","spec_ref":"spec#auth","where":"src/auth.ts:7","claim":"hole","evidence":"e"}],"resolved":[]})
+# resolve citing N1's id but UNRELATED metadata -> must be ignored; the safety finding stays open
+merge({"verdict":"concerns","findings":[],"resolved":[{"id":"S1-N1","kind":"missing-edge","spec_ref":"spec#OTHER","where":"src/other.ts:99","note":"bad"}]})
+bad = (json.load(open(L))["findings"][0]["status"] != "open")
+# correct id + matching metadata DOES close it
+merge({"verdict":"concerns","findings":[],"resolved":[{"id":"S1-N1","kind":"safety","spec_ref":"spec#auth","where":"src/auth.ts:7","note":"real"}]})
+g=json.load(open(L))["findings"][0]; good = (g["status"]=="fixed" and g.get("verified_by")=="codex")
+print("OK" if (not bad and good) else f"BAD bad-id-closed={bad} good-id-failed={not good}")
+PY
+R=$(cat /tmp/parallax_idc)
+[ "$R" = OK ] && ok "exact-id honored ONLY when kind/spec_ref/file match (bad-id ignored, correct-id settles)" || { no "id-consistency wrong"; echo "      $R"; }
+
+echo "[ledger_restamp]  (v0.23 — EXECUTES: a re-confirmed fix re-stamps to the current diff so multi-round slices converge, not falsely block)"
+python3 - <<'PY' >/tmp/parallax_rst 2>&1
+import json,subprocess,tempfile,os
+T=tempfile.mkdtemp(); L=os.path.join(T,"S1.json"); D1="a"*40; D2="b"*40
+def merge(d,diff): p=os.path.join(T,"r.json"); json.dump(d,open(p,"w")); subprocess.run(["python3","scripts/merge-ledger.py",L,p,"--slice","S1","--current-diff",diff,"--slug","demo"],capture_output=True,text=True,check=True)
+merge({"verdict":"concerns","findings":[{"severity":"high","kind":"code-fault","spec_ref":"s#A","where":"src/a.ts:1","claim":"A","evidence":"e"}],"resolved":[]},D1)  # r1@D1: A open
+# r2@D2 (code changed for a sibling): A re-confirmed fixed (cite id) + NEW finding B
+merge({"verdict":"concerns","findings":[{"severity":"high","kind":"code-fault","spec_ref":"s#B","where":"src/b.ts:1","claim":"B","evidence":"e"}],
+       "resolved":[{"id":"S1-N1","kind":"code-fault","spec_ref":"s#A","where":"src/a.ts:1","note":"holds"}]},D2)
+A=[f for f in json.load(open(L))["findings"] if f["id"]=="S1-N1"][0]
+ok_A = (A["status"]=="fixed" and A["last_verified_diff"]==D2)               # re-stamped to the CURRENT tree, not stale D1
+merge({"verdict":"pass","findings":[],"resolved":[{"id":"S1-N2","kind":"code-fault","spec_ref":"s#B","where":"src/b.ts:1","note":"fixed"}]},D2)  # r3@D2: B fixed
+dec=json.loads(subprocess.run(["python3","scripts/triage.py",L,"--policy","assets/codex/codex.toml.example","--current-diff",D2,"--no-schema-check"],capture_output=True,text=True).stdout)["decision"]
+print("OK" if (ok_A and dec=="green") else f"BAD ok_A={ok_A} decision={dec}")
+PY
+R=$(cat /tmp/parallax_rst)
+[ "$R" = OK ] && ok "a re-confirmed fix re-stamps last_verified_diff to the current tree (multi-round slice converges to green)" || { no "re-stamp/convergence wrong"; echo "      $R"; }
 
 echo "[pass_through_ledger]  (v0.22 P0#2 — EXECUTES: a Codex 'pass' that omits a prior open finding still blocks)"
 python3 - <<'PY' >/tmp/parallax_ptl 2>&1
@@ -273,8 +315,28 @@ PY
 R=$(cat /tmp/parallax_mlc)
 [ "$R" = OK ] && ok "two same-fingerprint defects stay distinct; resolve-by-id settles exactly one (no data loss)" || { no "merge-ledger collision handling wrong"; echo "      $R"; }
 
-echo "[epic_verify_gate]  (v0.22 P1#5 — presence: an UNVERIFIED run holds the append-only epic)"
-{ grep -qF 'PARALLAX_VERIFIED:-0' commands/run.md && grep -q "epic NOT advanced" commands/run.md; } && ok "run.md hard-holds the epic push behind a verified gate (warn pushes feature, not epic)" || no "run.md epic advance lacks the UNVERIFIED hold"
+echo "[epic_gate]  (v0.23 P1#4 — EXECUTES epic-gate.py: epic verification computed from COMMITTED receipts, not a variable)"
+python3 - <<'PY' >/tmp/parallax_eg 2>&1
+try: import jsonschema
+except ImportError: print("SKIP"); raise SystemExit
+import json,os,subprocess,tempfile
+RD=tempfile.mkdtemp(); X="d"*40
+def put(sid,o): json.dump(o,open(os.path.join(RD,sid+".json"),"w"))
+def gate(sl,env=None):
+    return subprocess.run(["python3","scripts/epic-gate.py","--policy","assets/codex/codex.toml.example","--reviews-dir",RD,"--slices",sl],capture_output=True,text=True,env=env).returncode
+put("S1",{"slug":"d","slice_id":"S1","rounds_used":1,"findings":[]})                                                                                                                                                  # clean pass
+put("S2",{"slug":"d","slice_id":"S2","rounds_used":2,"findings":[{"id":"S2-N1","fingerprint":"f","severity":"high","kind":"safety","spec_ref":"s#a","claim":"c","evidence":"e","status":"fixed","verified_by":"codex","last_verified_diff":X}]})  # codex-verified
+put("S3",{"slug":"d","slice_id":"S3","rounds_used":1,"findings":[{"id":"S3-N1","fingerprint":"f","severity":"high","kind":"safety","spec_ref":"s#a","claim":"c","evidence":"e","status":"open"}]})                    # open blocker
+v  = gate("S1,S2")==0                                            # every slice has a green committed ledger -> verified
+h1 = gate("S1,S2,S3")==1                                         # an open blocker -> hold
+h2 = gate("S1,S9")==1                                            # a missing ledger (warn produced none) -> hold
+h3 = gate("S3", env={**os.environ,"PARALLAX_VERIFIED":"1"})==1   # a preset env var CANNOT lift the hold (no env input)
+print("OK" if (v and h1 and h2 and h3) else f"BAD v={v} h1={h1} h2={h2} h3={h3}")
+PY
+R=$(cat /tmp/parallax_eg)
+if [ "$R" = SKIP ]; then echo "  · jsonschema not installed — epic-gate execution test skipped";
+elif [ "$R" = OK ]; then ok "epic-gate.py: verified only when EVERY slice has a GREEN committed ledger; open/missing/preset-env => hold"; else no "epic-gate.py wrong"; echo "      $R"; fi
+{ grep -qF 'scripts/epic-gate.py' commands/run.md && grep -q "epic NOT advanced" commands/run.md && ! grep -qF 'PARALLAX_VERIFIED:-0' commands/run.md; } && ok "run.md gates the epic push on epic-gate.py — no free PARALLAX_VERIFIED variable" || no "run.md epic gate not wired to epic-gate.py"
 grep -qF 'is a feature-only license' commands/run.md && ok "run.md: warn = feature push only, never auto-advances the epic" || no "run.md missing warn=feature-only rule"
 
 echo "[security_no_secrets]  (locks repo hygiene)"
