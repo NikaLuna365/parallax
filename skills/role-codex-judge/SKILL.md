@@ -38,11 +38,27 @@ After the Claude arbiter says GREEN (gates + seams + anti-cheat), hand Codex the
 ### Sole mode — RED arbitration (`mode = sole`)
 In `split`/`panel` the **Claude** arbiter classifies a RED (whose fault is the failure) and you only weigh in post-green. In **`sole`** the verifier *is* the arbiter for the verdict: on a RED, receive the spec section(s) + the failing test + the assembled diff + the failure output and classify the fault exactly as the arbiter would — `code-fault` (the test correctly encodes the spec; the code is wrong), `test-fault` (the code correctly implements the spec; the test misencodes it), or `spec-gap` (both faithfully follow an under-specified spec). Emit it through `assets/codex/verdict.schema.json` using the `code-fault` / `test-fault` / `spec-gap` finding kinds (now in the enum); the Claude arbiter runs only the mechanical gates/seam checks and routes the fix to the side you named. This is the **one** place the verifier's output drives a fix rather than just gating — flagged honestly as integration-validated, not unit-tested.
 
-## How the verdict is used (state it, don't enforce it yourself)
-Return the verdict to the orchestrator. The binding rule it applies:
+## Review memory across rounds — a ledger, not a session (no anchoring)
+A slice may need several review rounds (find → fix → re-review). Two naive options both fail: a **stateless** re-review keeps re-discovering the same things and never confirms a fix held (the oscillation `n → fix → m → variant-of-n`); a **persistent** Codex session (`codex exec resume <id>`) makes the judge **anchor** on confirming its own earlier findings, the non-interactive session id is fragile to capture, and it would not survive a cloud fresh-clone. So Parallax does **neither** by default: every review is a **fresh** verifier invocation (`[review] resume_codex_session = false`), and the memory lives in an **external ledger** committed to the branch — `.parallax/<slug>/review-ledger.json` (schema: `assets/codex/review-ledger.schema.json`). Because it's a file on the branch, it survives a resume and a cloud clone.
+
+Hand the fresh provider the **compact ledger** (prior findings: their `claim`, `evidence`, `spec_ref`, `status`) and have it follow this protocol, in order:
+1. **Regression pass first.** Re-check every `open` and `fixed` finding against the *current* assembled diff. A `fixed` one you can reproduce again → mark **`regressed`** (it's live again). One you cannot reproduce → leave `fixed`; do **not** re-litigate it.
+2. **Don't repeat a fixed finding** unless you can concretely reproduce it now — no "still looks risky" without evidence.
+3. **Only then, fresh scan** for genuinely new problems.
+4. **No finding without a `spec_ref` + concrete `evidence`.** Every finding must name the spec section it violates and the file:line / input that demonstrates it. A finding with no spec anchor is inadmissible (the ledger schema rejects it).
+5. **Style / refactor / preference is not a defect** unless it violates the spec. Taste does not block a slice.
+
+You still return the verdict **verbatim**; you do not merge the ledger or decide green/block yourself. The orchestrator merges your findings into the ledger and runs `scripts/triage.py` over it. Be honest about the split: the **disposition** (severity gating, always-block kinds, contest→escalate, round budget) is **mechanical** and unit-tested in the harness; this **review protocol** (regression-first, no-anchoring, spec_ref discipline) is a **directive** the provider follows — real, but not machine-enforced. Hold to it anyway.
+
+## How the verdict is used (the hybrid disposition — state it, don't hand-wave it)
+Return the verdict to the orchestrator; it merges your findings into the ledger and runs `scripts/triage.py` (the `[review]` policy). You never decide green/block yourself. The mechanical rule triage applies:
 - **Both agree** (Claude arbiter GREEN **and** Codex `pass`) → green.
-- **Divergence** (Claude GREEN but Codex `concerns`) → **never auto-green.** Escalate with *both* verdicts (interactive → human; autonomous → escalation queue). A `high`/`safety` finding is never silently shipped.
-Claude does not overrule a Codex `concerns`. That asymmetry is the entire point.
+- **`safety` / `anti-cheat` / `spec-gap`** finding, or a **reproducible functional error** → **always blocks**, at any severity; it can **never** be waived. Route the fix or escalate.
+- **`medium`/`high`** finding (other kinds) → **blocks**. Claude may **contest** it, but only via a formal, ledgered reason (`duplicate` | `not-reproducible` | `contradicts-spec` | `out-of-scope`); a contested blocking finding **escalates** (interactive → human; autonomous → park) — it is **never silently dropped and never auto-greened**.
+- **`low`** finding (non-critical kind) → **advisory**: recorded in the ledger and the run report, but it does **not** block green.
+- **Round budget:** after `[review].max_rounds` (default 2) with blockers still live → **park**, don't loop forever.
+
+So the asymmetry that matters is preserved — Claude cannot quietly overrule the verifier on anything that blocks; it can only *contest on the record*, which routes to a human. What changed from the old hard rule is only the release valve: a `low` nit is advisory, not a slice-stopper, and the loop is bounded. (Severity-gating and the always-block kinds are unit-tested in the harness; see `scripts/triage.py`.)
 
 ## If a provider hits a limit (transient — try the fallback, don't pause yet)
 A rate-limit / quota error (a 429-class error, "rate limit" / "quota" in stderr, or the limit exit code) is **transient infrastructure** — categorically different from a verdict and from "not installed". Never turn it into a `pass`, a `concerns`, or a `missing`. Retry the *same* provider a few times on a short in-process budget (seconds–minutes) for a blip; if it persists, **move to the next provider in the chain** (e.g. Codex limited → run Gemini) — a fallback verdict is a real, independent verdict; record which provider produced it. Only when **every** provider in the chain is limited do you report the outcome **`limit`** (with any `retry_after`), and the orchestrator pauses the run for an hourly resume (run.md → *Limits, checkpointing & resume*). A limit never silently becomes green and never lands in the escalation queue.

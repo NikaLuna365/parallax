@@ -20,6 +20,9 @@ d=tomllib.load(open('assets/codex/codex.toml.example','rb'))
 for k in ('enabled','points','mode','on_missing','timeout_s'): assert k in d, f"root key '{k}' swallowed by a [table]"
 assert set(d['primary'])<= {'provider','form','model'} and set(d['fallback'])<= {'provider','form','model'}
 assert d['git']['branch_prefix']=="feature/" and d['notify']['enabled'] is False
+r=d['review']; assert r['max_rounds']==2 and r['resume_codex_session'] is False and r['recheck_fixed'] is True
+assert r['block_severities']==["medium","high"] and r['advisory_severities']==["low"]
+assert set(r['always_block_kinds'])=={"safety","anti-cheat","spec-gap"}, r['always_block_kinds']
 PY
 
 echo "[schemas_valid]"
@@ -129,6 +132,56 @@ PY
 { grep -qF 'timeout "$TIMEOUT_S" codex exec' skills/role-codex-judge/SKILL.md && grep -qF 'timeout "$TIMEOUT_S" gemini' skills/role-codex-judge/SKILL.md && grep -qF 'curl --max-time "$TIMEOUT_S"' skills/role-codex-judge/SKILL.md; } \
   && ok "role-codex-judge wraps codex/gemini/curl in a real timeout_s wall-clock guard" || no "role-codex-judge missing a real timeout wrapper"
 grep -q "Sole mode — RED arbitration" skills/role-codex-judge/SKILL.md && ok "role-codex-judge documents sole-mode RED arbitration (3rd behavior)" || no "role-codex-judge missing sole RED arbitration"
+
+echo "[review_triage]  (v0.20 — EXECUTES scripts/triage.py: the mechanical severity gate)"
+python3 - <<'PY' >/tmp/parallax_triage 2>&1
+import json,subprocess
+def dec(led):
+    p=subprocess.run(["python3","scripts/triage.py","-"],input=json.dumps(led),capture_output=True,text=True)
+    try: return json.loads(p.stdout)["decision"], p.returncode
+    except Exception: return ("PARSE_ERR:"+p.stdout+p.stderr), p.returncode
+def F(**k):
+    k.setdefault("status","open"); k.setdefault("spec_ref","spec#x"); k.setdefault("claim","c"); k.setdefault("evidence","e"); return k
+cases=[
+ ({"rounds_used":0,"findings":[F(id="a",severity="low",kind="missing-edge")]},"green",0),
+ ({"rounds_used":0,"findings":[F(id="a",severity="low",kind="safety")]},"block",1),
+ ({"rounds_used":0,"findings":[F(id="a",severity="medium",kind="missing-edge")]},"block",1),
+ ({"rounds_used":0,"findings":[F(id="a",severity="medium",kind="missing-edge",claude_rebuttal={"reason":"out-of-scope"})]},"escalate",2),
+ ({"rounds_used":0,"findings":[F(id="a",severity="medium",kind="missing-edge",claude_rebuttal={"reason":"nope"})]},"block",1),
+ ({"rounds_used":0,"findings":[F(id="a",severity="high",kind="spec-gap")]},"block",1),
+ ({"rounds_used":0,"findings":[F(id="a",severity="low",kind="type-quality",functional_repro=True)]},"block",1),
+ ({"rounds_used":2,"findings":[F(id="a",severity="medium",kind="missing-edge")]},"escalate",2),
+ ({"rounds_used":0,"findings":[]},"green",0),
+]
+bad=[[led,d,rc,xd,xrc] for led,xd,xrc in cases for d,rc in [dec(led)] if d!=xd or rc!=xrc]
+print("OK" if not bad else "BAD "+json.dumps(bad))
+PY
+R=$(cat /tmp/parallax_triage)
+[ "$R" = OK ] && ok "triage: low→advisory/green · med·hi→block · safety/repro→block · contest→escalate · budget-exhausted→escalate (exit codes match)" || { no "triage disposition wrong"; echo "      $R"; }
+
+echo "[review_ledger_schema]  (EXECUTES validation — spec_ref required, vocab enforced)"
+python3 - <<'PY' >/tmp/parallax_rl 2>&1
+import json, copy
+try: import jsonschema
+except ImportError: print("SKIP"); raise SystemExit
+s=json.load(open('assets/codex/review-ledger.schema.json'))
+good={"slug":"d","rounds_used":1,"findings":[{"id":"S1-N1","severity":"low","kind":"missing-edge","spec_ref":"spec#x","claim":"c","evidence":"e","status":"open"}]}
+jsonschema.validate(good,s)
+def rej(doc):
+    try: jsonschema.validate(doc,s); return False
+    except Exception: return True
+a=copy.deepcopy(good); del a["findings"][0]["spec_ref"]                       # missing required spec_ref
+b=copy.deepcopy(good); b["findings"][0]["kind"]="nitpick"                     # off-vocabulary kind
+c=copy.deepcopy(good); c["findings"][0]["claude_rebuttal"]={"reason":"meh"}   # invalid rebuttal reason
+print("OK" if all(rej(x) for x in (a,b,c)) else "ACCEPTED_BAD")
+PY
+R=$(cat /tmp/parallax_rl)
+if [ "$R" = SKIP ]; then echo "  · jsonschema not installed — ledger-schema test skipped";
+elif [ "$R" = OK ]; then ok "review-ledger schema: accepts a valid ledger, rejects missing spec_ref / bad kind / bad rebuttal reason"; else no "review-ledger schema too lax ($R)"; fi
+
+echo "[review_contracts]  (presence — no-anchoring protocol + hybrid disposition are documented)"
+grep -qi "no anchoring" skills/role-codex-judge/SKILL.md && grep -q "resume_codex_session" skills/role-codex-judge/SKILL.md && ok "role-codex-judge documents fresh-verifier-per-round via the ledger (no anchoring session)" || no "role-codex-judge missing no-anchoring/ledger protocol"
+{ grep -q "review-ledger.json" commands/run.md && grep -q "scripts/triage.py" commands/run.md && grep -q "max_rounds" commands/run.md; } && ok "run.md wires the ledger + scripts/triage.py disposition + round budget" || no "run.md missing ledger/triage/budget wiring"
 
 echo "[security_no_secrets]  (locks repo hygiene)"
 grep -qE 'sk-[A-Za-z0-9]{16,}|AIza[0-9A-Za-z_-]{20,}|[0-9]{6,}:[A-Za-z0-9_-]{20,}' assets/codex/codex.toml.example && no "config has a secret-shaped value" || ok "config has no secret-shaped values (only *_env names)"

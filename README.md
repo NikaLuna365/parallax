@@ -20,6 +20,7 @@ Key behaviours, documented in the contracts:
 - **Autonomous & parallel** — independent slices build in dependency-DAG waves (`commands/run.md` → *Autonomous & parallel execution*).
 - **Limits & resume** — on a usage limit (Claude or Codex) the run checkpoints `.parallax/<slug>/run-state.json` and pauses; an hourly `--resume` continues from the checkpoint (`run.md` → *Limits, checkpointing & resume*).
 - **Notifications** — optional Telegram push for the autonomous flow, secrets via env vars (`run.md` → *Notifications*).
+- **Review memory & disposition** — each review is a *fresh* verifier (no anchoring session); findings carry across rounds in a committed ledger (`.parallax/<slug>/review-ledger.json`) so it re-checks fixes for regression instead of re-discovering them. Disposition is mechanical (`scripts/triage.py`): `low` = advisory (non-blocking), `medium`/`high` block, `safety`/`anti-cheat`/`spec-gap` always block; Claude can only *contest* a blocker on the record (→ escalates), never quietly overrule it. A `[review].max_rounds` budget bounds the loop so a slice parks instead of oscillating (`run.md` → *Review memory, rounds & disposition*).
 
 ## Configuration
 - `.parallax/codex.toml` — the verifier config (provider chain, points, `mode`, retry, notify). Template: `assets/codex/codex.toml.example`. **Secrets (tokens, API keys) live in env vars named by the config — never in the file.**

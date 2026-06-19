@@ -78,3 +78,26 @@ mode        = "lifecycle"          # "lifecycle" = start / limit-pause / resume 
                                    # "verbose"   = the above PLUS every phase (slice dispatched/green/verified/integrated, wave done, ...)
 token_env   = "PARALLAX_TG_BOT_TOKEN"   # name of the env var holding the bot token (the secret itself stays in the env)
 chat_id_env = "PARALLAX_TG_CHAT_ID"     # name of the env var holding the chat id
+
+
+# === Review memory & disposition (anti-oscillation + termination) ===
+# Each review is a FRESH verifier invocation (we do NOT use `codex exec resume`): a persistent
+# session makes the judge anchor on confirming its own past findings, the non-interactive session
+# id is fragile to capture, and it would not survive a cloud fresh-clone anyway. Memory instead
+# lives in an EXTERNAL ledger committed to the branch: .parallax/<slug>/review-ledger.json
+# (schema: assets/codex/review-ledger.schema.json). A fresh review is handed the compact ledger,
+# re-checks prior findings for regression, THEN scans for new ones (protocol in role-codex-judge).
+[review]
+max_rounds           = 2     # max Codex review ROUNDS per slice (separate from the 3-iteration worker breaker); then PARK, don't loop
+resume_codex_session = false # false = fresh verifier each round + external ledger (recommended). true would anchor; unsupported on cloud clones
+recheck_fixed        = true  # a fresh review first re-checks prior open+fixed findings for regression before scanning for new ones
+# Severity gating (the MECHANICAL half — see scripts/triage.py). A "low" finding is advisory:
+# recorded + reported, but it does NOT block green. medium/high block. Claude may CONTEST a
+# blocking finding only via a formal, ledgered reason (duplicate | not-reproducible |
+# contradicts-spec | out-of-scope) — a contested medium/high ESCALATES (human decides); it is
+# never silently dropped and never auto-greened.
+block_severities     = ["medium", "high"]
+advisory_severities  = ["low"]
+# These ALWAYS block regardless of severity and can NOT be waived by a Claude rebuttal; a
+# reproducible functional error (finding.functional_repro = true) always blocks too.
+always_block_kinds   = ["safety", "anti-cheat", "spec-gap"]
