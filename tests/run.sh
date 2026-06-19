@@ -309,6 +309,12 @@ R=$(cat /tmp/parallax_cf)
 [ "$R" = OK ] && ok "merge-ledger freezes contract_hash too: a mid-run spec/validation change PARKS and never re-stamps; the frozen contract proceeds" || { no "contract not frozen per run"; echo "      $R"; }
 { grep -qF 'scripts/contract-hash.sh' commands/run.md && grep -qF -- '--contract-hash "$CONTRACT_HASH"' commands/run.md; } && ok "run.md computes + stamps the frozen contract_hash (merge-ledger --contract-hash)" || no "run.md does not stamp contract_hash"
 
+echo "[contract_guard]  (v0.28 P0 — EXECUTES: the worktree contract must equal HEAD, so the stamped hash == what the verifier read)"
+bash tests/t_contract_guard.sh >/tmp/parallax_cg 2>&1 && ok "contract guard: an uncommitted spec edit (verifier reads the worktree) is caught by 'git diff --quiet HEAD -- <contract>'; an untracked contract file by ls-files --others — the src/tests guard misses both" || { no "worktree contract guard (P0)"; sed 's/^/      /' /tmp/parallax_cg; }
+{ grep -qF 'git -C "$ASSEMBLED" diff --quiet HEAD -- "${CONTRACT_PATHS[@]}"' commands/run.md \
+  && grep -qF 'ls-files --others --exclude-standard -- "${CONTRACT_PATHS[@]}"' commands/run.md; } \
+  && ok "run.md guards the worktree contract == HEAD (diff HEAD + untracked) before stamping contract_hash" || no "run.md missing the worktree-contract guard"
+
 echo "[pass_through_ledger]  (v0.22 P0#2 — EXECUTES: a Codex 'pass' that omits a prior open finding still blocks)"
 python3 - <<'PY' >/tmp/parallax_ptl 2>&1
 import json,subprocess,tempfile,os
