@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# v0.25 P0#1/P0#2/P1#4 (+ v0.24 P0/P1) — EXECUTES scripts/epic-gate.py against REAL git repos. The gate is
-# a feature-level receipt bound to the promoted commit: it reads run-state, slices.lock, every ledger AND
-# the [review] policy via `git show <ref>:…`, and verifies status=complete + slug identity + exact frozen
-# slice-set + all integrated + per-ledger (slug/slice_id identity, policy_hash == committed policy,
-# rounds_used>=1, GREEN triage) + verified_tree == recomputed code-tree hash.
+# EXECUTES scripts/epic-gate.py against REAL git repos. The gate is a feature-level receipt bound to the
+# promoted commit: it reads run-state, slices.lock, every ledger, the [review] policy AND the frozen spec
+# contract via `git show <ref>:…`, and verifies status=complete + slug identity + exact frozen slice-set +
+# all integrated + per-ledger (slug/slice_id identity, policy_hash == committed policy, contract_hash ==
+# committed spec contract, rounds_used>=1, GREEN triage) + verified_tree == recomputed code-tree hash.
 # Exit: 0 all scenarios behaved, 2 SKIP (no jsonschema — gate validates fail-closed), 1 a scenario wrong.
 set -uo pipefail
 PLUGIN="$(cd "$(dirname "$0")/.." && pwd)"
@@ -14,7 +14,8 @@ import json,os,subprocess,sys,tempfile
 PLUGIN=sys.argv[1]
 sys.path.insert(0, os.path.join(PLUGIN,"scripts")); import triage as T
 TOML=os.path.join(PLUGIN,"assets/codex/codex.toml.example")
-GATE=os.path.join(PLUGIN,"scripts/epic-gate.py"); TH=os.path.join(PLUGIN,"scripts/code-tree-hash.sh")
+GATE=os.path.join(PLUGIN,"scripts/epic-gate.py")
+TH=os.path.join(PLUGIN,"scripts/code-tree-hash.sh"); CH=os.path.join(PLUGIN,"scripts/contract-hash.sh")
 PHASH=T.policy_hash(T.load_policy(TOML)[0])
 PERM='[review]\nmax_rounds=2\nblock_severities=[]\nadvisory_severities=["low","medium","high"]\nalways_block_kinds=[]\n'
 def sh(*a): return subprocess.run(a,capture_output=True,text=True)
@@ -25,15 +26,19 @@ def build(slices_lock=("S1","S2"), rs_slices=None, ledgers=None, status="complet
     os.makedirs(R+"/src"); os.makedirs(R+"/.parallax/demo/reviews")
     open(R+"/src/a.ts","w").write("code\n")
     open(R+"/.parallax/codex.toml","w").write(open(TOML).read())               # committed STRICT policy
+    open(R+"/.parallax/demo/spec.md","w").write("spec: tax HALF_UP\n")          # frozen normative contract
+    open(R+"/.parallax/demo/slices.md","w").write("S1, S2\n")
+    open(R+"/.parallax/demo/validation.md","w").write("full: npm test (strict)\n")
     json.dump({"slug":"demo","slices":list(slices_lock)}, open(R+"/.parallax/demo/slices.lock","w"))
+    sh("git","-C",R,"add","-A"); sh("git","-C",R,"commit","-q","-m","frozen contract + code")
+    vt=sh("bash",TH,"HEAD",R).stdout.strip()
+    ch=sh("bash",CH,"HEAD","demo",R).stdout.strip()
     rs_slices = rs_slices if rs_slices is not None else [(s,"integrated") for s in slices_lock]
     led = ledgers if ledgers is not None else {s:{} for s,_ in rs_slices}
     for sid,ov in led.items():
         if ov is None: continue                                                # None => ledger NOT created
-        d={"slug":"demo","slice_id":sid,"rounds_used":1,"policy_hash":PHASH,"findings":[]}; d.update(ov)
+        d={"slug":"demo","slice_id":sid,"rounds_used":1,"policy_hash":PHASH,"contract_hash":ch,"findings":[]}; d.update(ov)
         json.dump(d, open(f"{R}/.parallax/demo/reviews/{sid}.json","w"))
-    sh("git","-C",R,"add","-A"); sh("git","-C",R,"commit","-q","-m","base")
-    vt=sh("bash",TH,"HEAD",R).stdout.strip()
     rs={"run_id":"r","slug":"demo","epic":"feature/epic","base_tip":"d"*40,"status":status,"verified_tree":vt,
         "slices":[{"id":s,"status":st} for s,st in rs_slices],"integrated":[s for s,_ in rs_slices],"updated_at":"t"}
     if status=="running": rs["lock"]={"holder":"r","acquired_at":"t","expires_at":"t2"}
@@ -44,6 +49,10 @@ def build(slices_lock=("S1","S2"), rs_slices=None, ledgers=None, status="complet
 def gate(R,slug="demo"): return sh("python3",GATE,"--feature-ref","HEAD","--slug",slug,"--repo",R).returncode
 def chg_code(R): open(R+"/src/a.ts","w").write("CHANGED\n"); sh("git","-C",R,"add","-A"); sh("git","-C",R,"commit","-q","-m","sneaky code")
 def swap_policy(R): open(R+"/.parallax/codex.toml","w").write(PERM); sh("git","-C",R,"add","-A"); sh("git","-C",R,"commit","-q","-m","swap policy permissive")
+def mutate_contract(R):
+    open(R+"/.parallax/demo/spec.md","w").write("spec: rounding unspecified\n")          # weaken the spec...
+    open(R+"/.parallax/demo/validation.md","w").write("full: true  # tests disabled\n")   # ...and the gate commands
+    sh("git","-C",R,"add","-A"); sh("git","-C",R,"commit","-q","-m","rewrite spec+validation after review")
 def bad_internal_slug(R):
     p=R+"/.parallax/demo/run-state.json"; d=json.load(open(p)); d["slug"]="evil"; json.dump(d,open(p,"w"))
     sh("git","-C",R,"add","-A"); sh("git","-C",R,"commit","-q","-m","tamper slug")
@@ -51,6 +60,7 @@ def bad_internal_slug(R):
 cases={
  "happy"                 : (gate(build()), 0),
  "code-changed-after"    : (gate(build(mutate=chg_code)), 1),                                  # verified_tree mismatch
+ "contract-mutated-after": (gate(build(mutate=mutate_contract)), 1),                           # v0.26 P0 — contract_hash mismatch
  "missing-ledger"        : (gate(build(ledgers={"S1":{},"S2":None})), 1),
  "parked-slice"          : (gate(build(rs_slices=[("S1","integrated"),("S2","parked")])), 1),
  "identity-mismatch"     : (gate(build(ledgers={"S1":{},"S2":{"slice_id":"S1"}})), 1),
@@ -58,8 +68,8 @@ cases={
  "rounds_used=0"         : (gate(build(ledgers={"S1":{"rounds_used":0},"S2":{}})), 1),
  "status!=complete"      : (gate(build(status="running")), 1),
  "sliceset-drop"         : (gate(build(slices_lock=("S1","S2"), rs_slices=[("S1","integrated")], ledgers={"S1":{}})), 1),  # P0#2
- "committed-perm-policy" : (gate(build(mutate=swap_policy)), 1),                               # P0#1 — policy_hash mismatch
- "internal-slug-tamper"  : (gate(build(mutate=bad_internal_slug)), 1),                         # P1#4 — run_state.slug != --slug
+ "committed-perm-policy" : (gate(build(mutate=swap_policy)), 1),                               # policy_hash mismatch
+ "internal-slug-tamper"  : (gate(build(mutate=bad_internal_slug)), 1),                         # run_state.slug != --slug
 }
 bad={k:cases[k][0] for k,(got,want) in cases.items() if got!=want}
 print("t_epic_gate OK" if not bad else "FAIL "+json.dumps(bad))

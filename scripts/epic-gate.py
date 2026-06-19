@@ -17,7 +17,8 @@ For ref R = --feature-ref, the feature is VERIFIED iff ALL hold:
      EXACTLY — a run (or a tampered run-state) cannot drop or add a slice relative to the frozen spec.
   4. EVERY slice has status=="integrated"; each slice's ledger `git show R:.parallax/<slug>/reviews/<id>.json`
      exists, validates (fail-closed), has slug == --slug and slice_id == that id (identity), policy_hash ==
-     the COMMITTED policy's hash (it was triaged under the policy that's committed, not a swapped one),
+     the COMMITTED policy's hash AND contract_hash == the recomputed hash of the COMMITTED normative contract
+     (spec/slices/validation/slices.lock — so neither the policy nor the spec was swapped after review),
      rounds_used >= 1 (a verifier actually ran), and triages GREEN against the diff its fixes were proven at.
 
 The policy is read from the COMMITTED .parallax/codex.toml at R (NOT the working tree — an operator could
@@ -37,6 +38,7 @@ _SCHEMA_LEDGER     = os.path.join(_HERE, "..", "assets", "codex", "review-ledger
 _SCHEMA_RUNSTATE   = os.path.join(_HERE, "..", "assets", "run-state.schema.json")
 _SCHEMA_SLICESLOCK = os.path.join(_HERE, "..", "assets", "slices-lock.schema.json")
 _TREE_HASH_SH      = os.path.join(_HERE, "code-tree-hash.sh")
+_CONTRACT_HASH_SH  = os.path.join(_HERE, "contract-hash.sh")
 
 
 def _git_show(repo, ref, path):
@@ -47,6 +49,11 @@ def _git_show(repo, ref, path):
 
 def _code_tree_hash(repo, ref):
     p = subprocess.run(["bash", _TREE_HASH_SH, ref, repo], capture_output=True, text=True)
+    return p.stdout.strip() if p.returncode == 0 else None
+
+
+def _contract_hash(repo, ref, slug):
+    p = subprocess.run(["bash", _CONTRACT_HASH_SH, ref, slug, repo], capture_output=True, text=True)
     return p.stdout.strip() if p.returncode == 0 else None
 
 
@@ -110,6 +117,11 @@ def gate(repo, ref, slug):
 
     # policy from the COMMITTED config, never the working tree (P0#1)
     policy, phash = _committed_policy(repo, ref)
+    # frozen normative contract (spec/slices/validation/slices.lock) recomputed from the committed commit
+    # (v0.26 P0) — each ledger's contract_hash must equal this, so the spec can't be rewritten after review.
+    chash = _contract_hash(repo, ref, slug)
+    if not chash:
+        return False, {"contract": "could not recompute contract hash from the committed tree"}
 
     # bind to the actual committed tree (code changed after review => mismatch => hold)
     want = rs.get("verified_tree")
@@ -158,6 +170,8 @@ def gate(repo, ref, slug):
             results[sid] = f"identity mismatch: ledger slice_id={ledger.get('slice_id')!r} != {sid!r}"; verified = False; continue
         if ledger.get("policy_hash") != phash:                      # P0#1 — same policy as committed
             results[sid] = f"policy_hash {ledger.get('policy_hash')!r} != committed-policy {phash!r}"; verified = False; continue
+        if ledger.get("contract_hash") != chash:                    # v0.26 P0 — same spec/validation as committed
+            results[sid] = f"contract_hash {ledger.get('contract_hash')!r} != committed-contract {chash!r}"; verified = False; continue
         if int(ledger.get("rounds_used", 0)) < 1:
             results[sid] = "rounds_used<1 (no verifier round ran)"; verified = False; continue
         if int(ledger.get("rounds_used", 0)) > policy["max_rounds"]:

@@ -168,26 +168,30 @@ def main(argv):
     ap.add_argument("--current-diff", dest="current_diff", required=True)
     ap.add_argument("--slug")
     ap.add_argument("--policy", help="trusted .parallax/codex.toml — records the [review] policy_hash this ledger was triaged under (epic-gate.py checks it == the committed policy).")
+    ap.add_argument("--contract-hash", dest="contract_hash", help="frozen hash of the normative spec contract (scripts/contract-hash.sh) — recorded into the ledger and frozen per run, like policy_hash.")
     a = ap.parse_args(argv)
     ledger = json.load(open(a.ledger)) if os.path.exists(a.ledger) else {}
     rnd = json.load(open(a.round)) if a.round != "-" else json.loads(sys.stdin.read())
-    # The [review] policy is FROZEN per run. The first round records its policy_hash; a LATER round whose
-    # policy differs must NOT silently re-stamp it (that let a mid-run swap to a permissive policy downgrade
-    # a prior `high` block to advisory — v0.25 P0#2). On a mismatch: refuse, PARK, require a fresh review.
     new_policy_hash = None
     if a.policy:
         import triage as T
         pol, _ = T.load_policy(a.policy)
         new_policy_hash = T.policy_hash(pol)
-        prior = ledger.get("policy_hash")
-        if prior is not None and prior != new_policy_hash:
-            print(json.dumps({"error": "policy-changed-mid-run", "frozen_policy_hash": prior,
-                              "current_policy_hash": new_policy_hash,
-                              "detail": "the [review] policy is frozen per run; PARK and require a fresh full review"}))
+    # FROZEN per run: both the [review] policy_hash and the normative contract_hash are recorded on round 1
+    # and may NOT change on a later round. A mismatch means the policy was swapped (a permissive policy would
+    # downgrade a prior `high` block to advisory — v0.25 P0#2) or the spec/validation contract was rewritten
+    # after review (v0.26 P0). Either => refuse, PARK, require a fresh full review.
+    for key, newval in (("policy_hash", new_policy_hash), ("contract_hash", a.contract_hash)):
+        prior = ledger.get(key)
+        if newval is not None and prior is not None and prior != newval:
+            print(json.dumps({"error": f"{key}-changed-mid-run", "frozen": prior, "current": newval,
+                              "detail": f"{key} is frozen per run; PARK and require a fresh full review"}))
             return 4
     out = merge(ledger, rnd, a.slice_id, a.current_diff, a.slug)
-    if new_policy_hash is not None:               # round 1 records it; later rounds are confirmed-equal above
+    if new_policy_hash is not None:               # round 1 records; later rounds confirmed-equal above
         out["policy_hash"] = new_policy_hash
+    if a.contract_hash is not None:
+        out["contract_hash"] = a.contract_hash
     if a.ledger != "-":
         os.makedirs(os.path.dirname(a.ledger) or ".", exist_ok=True)
         json.dump(out, open(a.ledger, "w"), indent=2)

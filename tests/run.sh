@@ -289,7 +289,25 @@ print("OK" if (r1==0 and r2!=0 and h1==h2 and r3==0) else f"BAD r1={r1} r2={r2} 
 PY
 R=$(cat /tmp/parallax_pf)
 [ "$R" = OK ] && ok "merge-ledger freezes policy_hash: a mid-run policy change PARKS (exit!=0) and never re-stamps; the frozen policy proceeds" || { no "policy not frozen per run"; echo "      $R"; }
-grep -qF 'PARK: review policy changed mid-run' commands/run.md && ok "run.md parks the run on a mid-run policy change (merge-ledger non-zero)" || no "run.md does not park on policy drift"
+grep -qF 'PARK: review policy or spec contract changed mid-run' commands/run.md && ok "run.md parks the run on a mid-run policy/contract change (merge-ledger non-zero)" || no "run.md does not park on policy/contract drift"
+
+echo "[contract_freeze]  (v0.27 P0 — EXECUTES: the frozen spec contract is bound; mid-run change PARKS, gate recomputes contract_hash)"
+python3 - <<'PY' >/tmp/parallax_cf 2>&1
+import json,subprocess,tempfile,os
+T=tempfile.mkdtemp(); L=os.path.join(T,"S1.json"); STRICT="assets/codex/codex.toml.example"
+def merge(rj,contract_hash):
+    p=os.path.join(T,"r.json"); json.dump(rj,open(p,"w"))
+    return subprocess.run(["python3","scripts/merge-ledger.py",L,p,"--slice","S1","--current-diff","a"*40,"--slug","demo","--policy",STRICT,"--contract-hash",contract_hash],capture_output=True,text=True).returncode
+r1=merge({"verdict":"concerns","findings":[{"severity":"high","kind":"safety","spec_ref":"s","where":"src/a:1","claim":"c","evidence":"e"}],"resolved":[]}, "contractAAAA")
+c1=json.load(open(L)).get("contract_hash")
+r2=merge({"verdict":"pass","findings":[],"resolved":[]}, "contractBBBB")    # spec rewritten mid-run -> must PARK
+c2=json.load(open(L)).get("contract_hash")
+r3=merge({"verdict":"pass","findings":[],"resolved":[]}, "contractAAAA")    # same frozen contract -> proceeds
+print("OK" if (r1==0 and r2!=0 and c1=="contractAAAA" and c2=="contractAAAA" and r3==0) else f"BAD r1={r1} r2={r2} r3={r3} c1={c1} c2={c2}")
+PY
+R=$(cat /tmp/parallax_cf)
+[ "$R" = OK ] && ok "merge-ledger freezes contract_hash too: a mid-run spec/validation change PARKS and never re-stamps; the frozen contract proceeds" || { no "contract not frozen per run"; echo "      $R"; }
+{ grep -qF 'scripts/contract-hash.sh' commands/run.md && grep -qF -- '--contract-hash "$CONTRACT_HASH"' commands/run.md; } && ok "run.md computes + stamps the frozen contract_hash (merge-ledger --contract-hash)" || no "run.md does not stamp contract_hash"
 
 echo "[pass_through_ledger]  (v0.22 P0#2 — EXECUTES: a Codex 'pass' that omits a prior open finding still blocks)"
 python3 - <<'PY' >/tmp/parallax_ptl 2>&1
@@ -335,10 +353,10 @@ PY
 R=$(cat /tmp/parallax_mlc)
 [ "$R" = OK ] && ok "two same-fingerprint defects stay distinct; resolve-by-id settles exactly one (no data loss)" || { no "merge-ledger collision handling wrong"; echo "      $R"; }
 
-echo "[epic_gate]  (v0.26 — EXECUTES epic-gate.py against REAL git repos: a feature-level receipt bound to the promoted commit)"
+echo "[epic_gate]  (v0.27 — EXECUTES epic-gate.py against REAL git repos: a feature-level receipt bound to the promoted commit)"
 bash tests/t_epic_gate.sh >/tmp/parallax_eg 2>&1; egrc=$?
 if [ "$egrc" = 2 ]; then echo "  · jsonschema not installed — epic-gate execution test skipped";
-elif [ "$egrc" = 0 ]; then ok "epic-gate.py holds on: code-changed-after-review, missing/identity-/slug-mismatched ledger, parked slice, rounds_used<1, status!=complete, dropped slice vs frozen slices.lock, committed-policy swap (policy_hash), internal-slug tamper; verifies only a clean committed complete run"; else no "epic-gate.py (git-based) wrong"; sed 's/^/      /' /tmp/parallax_eg; fi
+elif [ "$egrc" = 0 ]; then ok "epic-gate.py holds on: code-changed, spec/validation-rewritten-after-review (contract_hash), missing/identity-/slug-mismatched ledger, parked slice, rounds_used<1, status!=complete, dropped slice vs slices.lock, committed-policy swap, internal-slug tamper; verifies only a clean committed complete run"; else no "epic-gate.py (git-based) wrong"; sed 's/^/      /' /tmp/parallax_eg; fi
 bash tests/t_finalize.sh >/tmp/parallax_fin 2>&1 && ok "completion receipt lands on feature/<slug> via worktree+CAS with \$ROOT detached (parallel-safe — v0.24 P1#3)" || { no "finalize on detached HEAD (P1#3)"; sed 's/^/      /' /tmp/parallax_fin; }
 bash tests/t_immutable_oid.sh >/tmp/parallax_oid 2>&1 && ok "gate+push pin one immutable OID: pushing the OID sends the verified commit even after the ref moves (pushing the ref sends the moved tip — v0.25 P0#1)" || { no "immutable-OID gate/push (P0#1)"; sed 's/^/      /' /tmp/parallax_oid; }
 { grep -qF 'epic-gate.py --feature-ref "$VERIFIED_OID"' commands/run.md \

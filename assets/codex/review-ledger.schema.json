@@ -9,7 +9,8 @@
     "slug": { "type": "string" },
     "slice_id": { "type": "string", "description": "The slice this ledger belongs to (e.g. S1). One ledger file per slice." },
     "rounds_used": { "type": "integer", "minimum": 0, "description": "Verifier review rounds consumed for THIS slice (one per merge-ledger.py call; the initial post-green review is round 1). [review].max_rounds caps it; at the cap, live blockers PARK. This is the single source of truth for the round budget — run-state only points at this file, it does not keep a second counter." },
-    "policy_hash": { "type": ["string", "null"], "description": "OPTIONAL audit-only sha of the [review] table this ledger was triaged under. Advisory; triage NEVER reads policy from the ledger. (There is deliberately no `policy` object here — a policy-bearing ledger is rejected, fail-closed.)" },
+    "policy_hash": { "type": ["string", "null"], "description": "OPTIONAL audit-only sha of the [review] table this ledger was triaged under. Advisory; triage NEVER reads policy from the ledger. (There is deliberately no `policy` object here — a policy-bearing ledger is rejected, fail-closed.) Recorded by merge-ledger --policy, FROZEN per run, checked by epic-gate.py against the committed policy." },
+    "contract_hash": { "type": ["string", "null"], "description": "OPTIONAL frozen hash of the normative spec contract (.parallax/<slug>/{spec.md,slices.md,validation.md,slices.lock}) this slice was verified AGAINST (scripts/contract-hash.sh). Recorded by merge-ledger --contract-hash, FROZEN per run, and recomputed+checked by epic-gate.py from the pinned feature commit — so the spec/validation can't be rewritten after review (v0.26 P0)." },
     "findings": {
       "type": "array",
       "description": "Every finding ever raised for this slice, with its lifecycle. Never deleted — settled (status=fixed, codex-verified) or contested (claude_rebuttal). That history is the regression memory.",
