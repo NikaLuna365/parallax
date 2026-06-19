@@ -6,12 +6,12 @@
 set -uo pipefail
 echo "== tdd cloud-setup =="
 
-# 1) Install the verifier CLI(s) you actually use. Confirm the exact package/name for your
-#    versions, then uncomment. (The plugin is provider-agnostic — install what your config uses.)
-#    Codex (primary):    npm i -g @openai/codex
-#    Gemini (fallback):  npm i -g @google/gemini-cli
-command -v codex  >/dev/null 2>&1 && echo "codex:  $(command -v codex)"  || echo "codex:  NOT installed (add the install line above if the run uses it)"
-command -v gemini >/dev/null 2>&1 && echo "gemini: $(command -v gemini)" || echo "gemini: NOT installed (add the install line above if the run uses it)"
+# 1) Install the verifier CLI(s) you use. These are BEST-EFFORT attempts with the documented
+#    package names — adjust to the exact names/versions your account uses if they differ.
+command -v codex  >/dev/null 2>&1 || npm i -g @openai/codex      2>/dev/null || true
+command -v gemini >/dev/null 2>&1 || npm i -g @google/gemini-cli 2>/dev/null || true
+command -v codex  >/dev/null 2>&1 && echo "codex:  $(command -v codex)"  || echo "codex:  NOT installed — set the correct install command for your version"
+command -v gemini >/dev/null 2>&1 && echo "gemini: $(command -v gemini)" || echo "gemini: NOT installed — set the correct install command for your version"
 
 # 2) Project build deps so done-gates don't fail spuriously (this is provisioning, per validation.md):
 [ -f package.json ] && (npm ci 2>/dev/null || npm install 2>/dev/null) && echo "deps: installed" || echo "deps: no package.json (or install skipped)"

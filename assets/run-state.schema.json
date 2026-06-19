@@ -4,7 +4,7 @@
   "description": "Eagerly-written, branch-committed checkpoint that lets a run resume after a limit-pause (Claude or Codex) without losing progress. Lives at .tdd/<slug>/run-state.json. See commands/run.md -> 'Limits, checkpointing & resume'.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["slug", "epic", "base_tip", "status", "slices", "updated_at"],
+  "required": ["run_id", "slug", "epic", "base_tip", "status", "slices", "updated_at"],
   "properties": {
     "run_id": { "type": "string", "description": "Unique id for this run (stable across resumes)." },
     "slug": { "type": "string", "description": "Feature slug; the run lives on feature/<slug>." },
@@ -55,7 +55,15 @@
           "wave": { "type": ["integer", "null"], "description": "Dependency-DAG wave this slice belongs to." },
           "arbiter_verdict": { "type": ["string", "null"], "description": "The arbiter's owed GREEN for a 'green-unverified' slice — so a resume runs ONLY the pending cross-model verification, not the whole slice." },
           "verified_diff": { "type": ["string", "null"], "description": "Hash/ref of the assembled diff the verdict was made against — a resume re-verifies the same tree it paused on, and can detect drift." }
-        }
+        },
+        "allOf": [
+          { "if": { "properties": { "status": { "const": "green-unverified" } }, "required": ["status"] },
+            "then": { "required": ["arbiter_verdict", "verified_diff"],
+                      "properties": { "arbiter_verdict": { "type": "string" }, "verified_diff": { "type": "string" } } } },
+          { "if": { "properties": { "status": { "const": "in_progress" } }, "required": ["status"] },
+            "then": { "required": ["code_tip", "test_tip"],
+                      "properties": { "code_tip": { "type": "string" }, "test_tip": { "type": "string" } } } }
+        ]
       }
     },
     "integrated": { "type": "array", "items": { "type": "string" }, "description": "Ids of slices merged into feature/<slug>." },

@@ -19,7 +19,7 @@ You are the **orchestrator** for Phase 2-5. You author **no code and no tests** 
 ## Step 0 — Preflight
 
 1. Resolve the slug: use `$ARGUMENTS` if given, else the current `feature/<slug>` branch. **If `--resume` is passed (or a `.tdd/<slug>/run-state.json` with status `paused-on-limit` exists), this is a RESUME:** load that checkpoint and continue from it per *Limits, checkpointing & resume* — skip the fresh dispatch for already-`integrated` slices. Otherwise start fresh and create the checkpoint.
-2. `git switch feature/<slug>`. Confirm `.tdd/<slug>/spec.md`, `.tdd/<slug>/slices.md`, `.tdd/<slug>/validation.md` exist (per-feature subdirectory, not the `.tdd/` root). If not → tell the user to run `/tdd:spec` first and stop.
+2. Read `PREFIX` from `.tdd/codex.toml` `[git] branch_prefix` (default `feature/`). `git switch ${PREFIX}<slug>`. Confirm `.tdd/<slug>/spec.md`, `.tdd/<slug>/slices.md`, `.tdd/<slug>/validation.md` exist (per-feature subdirectory, not the `.tdd/` root). If not → tell the user to run `/tdd:spec` first and stop.
 3. Confirm a clean working tree and that this is a local repo (`git rev-parse --show-toplevel`). Read the three artifacts. From `.tdd/<slug>/validation.md` extract: `SRC_GLOBS`, `TEST_GLOBS`, and the commands (fast, full, lint, typecheck, build) + external setup. From `.tdd/<slug>/slices.md` extract the ordered slice list with each slice's domain and dependencies.
 4. Order the slices by dependency (topological). You will process them **one at a time**; within a slice the two tracks run **in parallel**.
 5. **Cross-branch value scan (catch duplicated business values before they merge).** The blind tracks each build from `main` independently, so neither can see a value that already lives as a named constant on a *sibling* feature branch of the same epic — but once both branches merge, the same tariff/threshold sitting as a bare literal here and a named constant there will silently drift the moment someone edits one. You are the only party that sees across branches, so check now, before dispatching:
@@ -65,10 +65,10 @@ git worktree add "$WT/test" "${PREFIX}$SLUG-test"
 # Provision gitignored build deps in EACH worktree (from validation.md -> Provisioning).
 # A freshly-added worktree has no node_modules / generated clients, so done-gates would
 # fail for the WRONG reason without this. >>> Substitute the REAL provisioning commands: <<<
+#   - dependencies: symlink the main checkout's node_modules (fast) or install
+#   - codegen: e.g. `npx prisma generate` (or omit)
 for W in "$WT/code" "$WT/test"; do
-  ( cd "$W" \
-      && ln -s "$ROOT/node_modules" node_modules \   # = validation.md Provisioning: dependencies
-      && npx prisma generate )                        # = validation.md Provisioning: codegen (or omit)
+  ( cd "$W" && ln -s "$ROOT/node_modules" node_modules && npx prisma generate )
 done
 
 # Glob handling: put EACH glob from validation.md into an array as its own
@@ -109,7 +109,9 @@ Each worker commits its own work to its own branch (`feature/$SLUG-code` / `feat
 
 ### 2b. Assemble + dispatch the arbiter
 ```bash
-cd "$ROOT" && git switch "feature/$SLUG"
+cd "$ROOT"
+PREFIX="$(awk -F'"' '/^\[git\]/{g=1} g&&/^branch_prefix/{print $2; exit}' .tdd/codex.toml 2>/dev/null)"; PREFIX="${PREFIX:-feature/}"   # as Step 1
+git switch "${PREFIX}$SLUG"
 
 # Same pathspecs as Step 1 — re-declared, since shell state doesn't persist across steps.
 SRC_PATHSPECS=(  ':(glob)src/**'  )
@@ -122,15 +124,22 @@ TEST_PATHSPECS=( ':(glob)tests/**'  ':(glob)**/*.test.*' )
 # on a track branch propagate. (Scoped to SRC/TEST pathspecs — .tdd/ + shared
 # config are never touched.)
 git rm -q -r --ignore-unmatch -- "${SRC_PATHSPECS[@]}" "${TEST_PATHSPECS[@]}"
-git checkout "feature/$SLUG-code" -- "${SRC_PATHSPECS[@]}"     # real implementation
-git checkout "feature/$SLUG-test" -- "${TEST_PATHSPECS[@]}"    # real tests
+git checkout "${PREFIX}$SLUG-code" -- "${SRC_PATHSPECS[@]}"     # real implementation
+git checkout "${PREFIX}$SLUG-test" -- "${TEST_PATHSPECS[@]}"    # real tests
 ```
 The integration tree now **mirrors** the combined state — current `src/` from the code branch + current `tests/` from the test branch, with any file a track branch *deleted* also gone here (that's what the leading `git rm` buys). The test-writer's throwaway stub is untracked, so it is never on the test branch and never pulled. Then:
 
-- → `arbiter` (cwd `$ROOT`): *"Integration tree on `feature/$SLUG`, slice `S.id` just assembled (real src + real tests). Spec: `.tdd/<slug>/spec.md`. Slice manifest: `.tdd/<slug>/slices.md`. Validation contract: `.tdd/<slug>/validation.md` — run the full check + lint + typecheck + build. Report exactly what you observe. Scan the diff for anti-cheat. Before any green, verify every integration seam this slice declares in `slices.md` actually resolves from its named entry point (a compilable smoke-import — not mere presence in `src/`); an unresolved seam is a code-fault. For a **type** seam, also probe its narrowness — a deliberately-bad literal assigned to the exported type must fail to compile; a type that silently widened (e.g. a union collapsed to `string`) is a code-fault. On red, classify each failure against the spec and route. Author nothing."*
+- → `arbiter` (cwd `$ROOT`): *"Integration tree on `${PREFIX}$SLUG`, slice `S.id` just assembled (real src + real tests). Spec: `.tdd/<slug>/spec.md`. Slice manifest: `.tdd/<slug>/slices.md`. Validation contract: `.tdd/<slug>/validation.md` — run the full check + lint + typecheck + build. Report exactly what you observe. Scan the diff for anti-cheat. Before any green, verify every integration seam this slice declares in `slices.md` actually resolves from its named entry point (a compilable smoke-import — not mere presence in `src/`); an unresolved seam is a code-fault. For a **type** seam, also probe its narrowness — a deliberately-bad literal assigned to the exported type must fail to compile; a type that silently widened (e.g. a union collapsed to `string`) is a code-fault. On red, classify each failure against the spec and route. Author nothing."*
 
 ### 2c. Route the verdict (loop until green or breaker)
 Maintain a per-slice **iteration counter** (max **3**) and a private **attempt history** per worker (hub-and-spoke: you hold it; workers never see each other's).
+
+**The verifier `mode` (from `.tdd/codex.toml`) decides *who judges* — apply it before the green/red routing:**
+- **`split`** (default, iii): the Claude **arbiter judges** the slice (the GREEN/RED routing below); a post-green verifier independently **cross-checks** a GREEN — a divergence escalates, never auto-greens. The arbiter is authoritative for RED.
+- **`panel`** (ii): same, but the verifier is **mandatory and co-equal** — a slice is green only if the arbiter GREENs **and** the verifier `pass`es; a missing/limited verifier is not a silent fallback (honor `on_missing`).
+- **`sole`** (i): the arbiter **runs** the checks (gates, seams, anti-cheat) but holds **no verdict authority** — it reports observations, and you dispatch `codex-judge` with those + the assembled diff to **judge the slice itself, for GREEN _and_ RED**. Codex `pass` → commit/integrate; Codex `concerns`/fault → route by its classification (code-fault → coder, test-fault → test-writer, spec-gap → escalate). Claude never independently greens or reds in `sole`; if the verifier is unavailable, honor `on_missing` (never fall back to Claude-as-judge).
+
+> `mode` semantics (`panel`/`sole`) are contract behaviours **executed by the orchestrating model** and validated by integration runs — the unit harness checks that the branches exist and the deterministic git/schema mechanics, not the model's judgment. The GREEN/RED routing below is written for `split`/`panel`; under `sole`, substitute the verifier as judge per above.
 
 - **GREEN** (all checks pass, pristine, no gaming, every declared integration seam resolves from its entry point) → **then the cross-model verifier, if enabled.** Read `.tdd/codex.toml`; if `enabled` and `points` includes `post_green`, dispatch `codex-judge` on this assembled slice *before* committing:
   - → `codex-judge` (cwd `$ROOT`): *"Post-green verify slice `S.id`. Spec: `.tdd/<slug>/spec.md` §<sections>. Assembled diff: real `src/` + `tests/` for this slice. Validation output: «<the gates you just ran>». Run Codex read-only per your skills; return its structured verdict verbatim — do not judge it yourself."*
@@ -141,10 +150,7 @@ Maintain a per-slice **iteration counter** (max **3**) and a private **attempt h
   - **Codex `concerns`** (divergence — arbiter GREEN but Codex flags a spec-gap / anti-cheat / safety / missing-edge / type-quality) → **do NOT commit, do NOT auto-green.** Escalate to the human now (autonomous mode: park to the escalation queue) with *both* verdicts; you never overrule a Codex `concerns`. Then treat a confirmed finding as the matching fault and route it (a `spec-gap` kind → escalate to `/tdd:spec`; an implementation/test fault → re-dispatch the relevant worker with the arbiter's NL framing of the finding).
   - **`limit`** (the verifier returns `limit`, meaning **every** provider in its chain was rate-limited — a single provider's limit is handled by falling back to the next, e.g. Codex → Gemini, *inside* the judge) → neither a fault nor a `concerns`: do **not** commit, escalate, or fabricate a pass. Mark the slice `green-unverified` (arbiter passed, verification still owed) and **pause the run** per *Limits, checkpointing & resume* (the judge already did short retries + fallback before returning `limit`).
   - **Verifier disabled or `codex` absent** → commit as before. Interactive falls back to the Claude-only gate; this is the default and leaves prior behavior unchanged.
-  - **Verifier `mode`** (from `.tdd/codex.toml`) selects how the GREEN decision combines the arbiter and the verifier — pick the branch that matches `mode`:
-    - **`split`** (default, iii): the Claude arbiter is the in-loop judge; the verifier is an independent cross-check at the leak points. Green = arbiter GREEN **and** (if the verifier ran) `pass`; if the verifier is disabled/absent, arbiter GREEN alone suffices (the fallback above). Divergence escalates.
-    - **`panel`** (ii): the verifier is **mandatory and co-equal** — green requires arbiter GREEN **and** verifier `pass`; a missing/limited verifier is **not** a silent fallback to arbiter-only (honor `on_missing`). Use when you want two independent green votes on every slice.
-    - **`sole`** (i): the verifier **is** the judge. The arbiter still runs the real checks (gates, seams, anti-cheat) and reports what it observes, but the GREEN decision is the verifier's `pass`, not a separate Claude verdict; if the verifier can't run, honor `on_missing` — do **not** fall back to Claude-as-judge (that would defeat `sole`).
+  - **Verifier `mode`:** see *"who judges"* at the top of 2c (`split` / `panel` / `sole`) — in `panel` this GREEN is green only if the verifier also `pass`es; in `sole` the verifier, not the arbiter, made the GREEN call in the first place.
 - **RED → code-fault** → re-dispatch `blind-coder-D` (cwd `$WT/code`) with the arbiter's **NL analysis only**: *"Slice `S.id`, re-dispatch. Your implementation diverges from the spec as follows: «`<arbiter analysis>`». Fix the implementation to match the spec. Do not seek the tests. Re-run your done-gate."* Then re-assemble (2b) and re-arbitrate.
 - **RED → test-fault** → re-dispatch `test-writer-D` (cwd `$WT/test`) with the arbiter's **NL analysis only**: *"Slice `S.id`, re-dispatch. Your test mis-encodes the spec as follows: «`<arbiter analysis>`». Fix the test to match the spec. Do not seek the implementation. Re-run your done-gate."* Then re-assemble (2b) and re-arbitrate.
 - **RED → spec-gap** (test and code each defend a reasonable-but-different reading) → **ESCALATE to the human now**: present the two competing readings plainly and stop this slice. Do not pick a winner; a spec-gap is fixed in the spec (re-run `/tdd:spec` on it), not buried in code or tests.
@@ -200,7 +206,15 @@ The sequential model reuses one worktree pair and stacks slices on it. Parallel 
 
 - **Per-slice worktrees & branches.** For slice `S<n>`, branch `feature/$SLUG-S<n>-code` and `feature/$SLUG-S<n>-test` from the **current integration tip** of `feature/$SLUG` (which already contains every dependency that has integrated), and add worktrees `$WT/S<n>/{code,test}`. Blindfold **and provision** each pair exactly per Step 1 — per worktree, every wave.
 - **Waves by the dependency DAG.** Build the DAG from `slices.md` `depends on`. A slice is *ready* when all its dependencies have integrated. Dispatch **all ready slices concurrently** — each runs its own 2a → 2c independently, **assembling and arbitrating in its own per-slice integration context** (its own code+test tips), never the shared `feature/$SLUG` tree, which would collide across concurrent slices. A slice with an unmet edge waits; that is the only ordering constraint.
-- **Integrate on green, then unblock — by assembly, NOT merge.** When a slice clears 2c (arbiter green **and** the post-green verifier, if enabled), integrate it into `feature/$SLUG` exactly as **Step 2b assembles**: `git rm` the slice's `SRC_GLOBS`+`TEST_GLOBS`, then `git checkout <slice-code-branch> -- SRC_GLOBS` and `git checkout <slice-test-branch> -- TEST_GLOBS`, and commit. **Never `git merge` the track branches** — they carry blindfold-deletion commits (the code branch `git rm`'d `tests/`, the test branch `git rm`'d `src/`), and merging them propagates those deletions: a *clean* merge with no conflict that silently wipes the other side off `feature/$SLUG` (pure data loss, verified). The committed assembly advances the integration tip and makes dependents *ready* for the next wave. Re-run the **seam check** (and the post-green verifier, if enabled) after each integration. (Merge is reserved for **epic** integration, feature → epic, where the tree is already clean — see the three-level contract.)
+- **Integrate on green, then unblock — by per-slice DIFF, never a mirror.** When a slice clears 2c (arbiter green **and** the post-green verifier, if enabled), apply ONLY this slice's delta — its track branches against the **wave base** they forked from — onto the current integration tip:
+  ```bash
+  WB="<wave base: the feature tip this slice's track branches were forked from>"
+  git switch "${PREFIX}$SLUG"
+  git diff "$WB" "${PREFIX}$SLUG-S<n>-code" -- "${SRC_PATHSPECS[@]}"  | git apply --3way --index
+  git diff "$WB" "${PREFIX}$SLUG-S<n>-test" -- "${TEST_PATHSPECS[@]}" | git apply --3way --index
+  git commit -q -m "S<n> integrated (diff onto wave)"
+  ```
+  Applying only the delta **preserves slices already integrated in this wave**. Do **NOT** mirror `src/**`+`tests/**` from one slice branch (`git rm` globs + `git checkout <branch> -- globs`): that wipes every *other* already-integrated slice off the tip — a clean, silent data loss (verified with two slices). And **never `git merge` the track branches** — they carry blindfold-deletion commits. A `git apply --3way` **conflict** means two slices changed the same lines → they weren't independent: give them a dependency edge (or escalate), never force. Re-run the **seam check** (and the post-green verifier, if enabled) after each integration. (Sequential mode's Step 2b mirror is correct — there a single track branch accumulates *all* slices. Merge stays reserved for **epic** integration, feature → epic, clean tree.)
 - **Isolation caveats.** Concurrent slices must not share a mutable external (one test DB, one fixture file): give each wave-member its own (per-slice DB name/schema), or give them a dependency edge in the manifest so they don't overlap. Per-slice worktrees multiply provisioning cost — **symlinking** deps rather than reinstalling matters here (Step 1 / domain skills).
 
 ### Autonomous handling of stops (`--autonomous`)
@@ -230,7 +244,10 @@ Written **eagerly** — after every state transition (a slice integrated, parked
 
 ### Resume (`--resume <slug>`, hourly)
 A resume is a normal headless invocation that happens to find a paused checkpoint:
-1. **Take the run lease (mutual exclusion).** Atomically create the lock ref `refs/heads/${PREFIX}lock/<slug>` by compare-and-swap: `git update-ref refs/heads/${PREFIX}lock/<slug> <run_id> 0000000000000000000000000000000000000000` (the all-zero old-value means "create only if absent"; the command fails otherwise). It lives under the configured branch namespace, so a **cloud routine can push it to origin** for shared mutual exclusion across fresh clones, within the `claude/*` policy. If a **live** lock is held (the checkpoint's `lock.expires_at` hasn't passed) → **another resume is already running, exit now** — this is what stops two overlapping hourly fires from double-running the slug. If the lock exists but is **expired**, steal it (force-update). Renew `expires_at` as you work; **release** it (`git update-ref -d refs/heads/${PREFIX}lock/<slug>`, and delete it on origin for a cloud run) on pause or completion.
+1. **Take the run lease (mutual exclusion).** The lock is a ref under the branch namespace; the **run_id and `expires_at` live in `run-state.lock`** (a git ref can only point at an *object*, not a string like a run-id).
+   - **Local (one machine):** create it pointing at the current commit, only-if-absent — `git update-ref refs/heads/${PREFIX}lock/<slug> $(git rev-parse HEAD) 0000000000000000000000000000000000000000` (the all-zero old-value means "create only if absent"; the command fails if it already exists).
+   - **Cloud (fresh clones racing):** the atomic gate is the **push** of a newly-created ref — `git push origin refs/heads/${PREFIX}lock/<slug>`; the server accepts the first and **rejects** every later create, so exactly one clone wins (both within the `claude/*` policy).
+   If a **live** lock is held (the checkpoint's `lock.expires_at` hasn't passed) → **another resume is already running, exit now** — this stops two overlapping hourly fires from double-running the slug. If the lock is **expired**, steal it (force-update / `--force` push) and overwrite `lock.holder`. Renew `expires_at` as you work; **release** it (`git update-ref -d refs/heads/${PREFIX}lock/<slug>`, and delete it on origin for a cloud run) on pause or completion.
 2. Re-fetch `origin/<epic>` and re-run the **provenance** check (a resume must still start from the fresh remote tip — Step 0.6), then rebuild/verify the per-slice worktrees **at their recorded `code_tip`/`test_tip`**.
 3. **Fail fast if still limited:** try one cheap operation; if the limit is still in force, re-checkpoint `paused-on-limit`, **release the lease**, and exit — don't burn quota idling.
 4. Otherwise continue from the checkpoint: skip `integrated` slices; for a `green-unverified` slice run **only** the owed verification against its recorded `verified_diff` (don't rebuild it); resume `in_progress` slices from their `code_tip`/`test_tip`; dispatch `pending` slices as their deps integrate. Idempotent — nothing already done is redone.

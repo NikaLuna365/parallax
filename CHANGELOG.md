@@ -2,6 +2,16 @@
 
 All notable changes to the tdd plugin. Versions are cumulative.
 
+## 0.17.0 — second-audit remediation (parallel data-loss + executable harness)
+- **P0 (data loss, fixed):** parallel slice integration applies the **per-slice diff** (`git diff wave-base..tip | git apply --3way`) onto the integration tip, instead of mirroring `src/**`+`tests/**` from one slice branch — which silently deleted every *other* already-integrated slice of the wave (reproduced with 2 slices). Sequential Step 2b mirror is unchanged (correct there).
+- **P0 (cloud, fixed):** `branch_prefix` applied **everywhere** — preflight switch, Step 2b assembly, arbiter dispatch — not just Step 1/push. A `claude/`-prefixed run no longer dies at `git switch` with `fatal: invalid reference`.
+- **P1 (lock, fixed):** the lock ref points at a real object (`$(git rev-parse HEAD)`), not a run-id string (`git update-ref` rejects that); run-id/expiry live in `run-state.lock`; cross-clone mutual exclusion is via `git push` of the ref (server-atomic).
+- **P1 (schema, fixed):** run-state now **requires** `run_id`, and conditionally requires `arbiter_verdict`+`verified_diff` for `green-unverified` and `code_tip`+`test_tip` for `in_progress` — an incomplete "exact resume" checkpoint is now rejected.
+- **P1 (syntax, fixed):** the provisioning example is valid shell again; a harness check runs `bash -n` on **every** fenced bash block in run.md.
+- **#6:** `cloud-setup.sh` actually attempts the CLI installs; README says "best-effort".
+- **#7 (sole):** `mode` decides *who judges* before routing — in `sole` the verifier judges **GREEN and RED** (the arbiter only runs checks). Flagged honestly: mode semantics are integration-validated, not unit-tested.
+- **#8 (harness):** the harness now **executes** the mechanics (multi-slice integration, the `claude/` prefix cycle, the real lock + cross-clone race, `bash -n`, schema-reject) instead of grepping — which is why earlier "21 passed" coexisted with broken prefix/lock/cloud. 20 executable checks.
+
 ## 0.16.0 — laptop-off (cloud) runs + secret hygiene
 - **Configurable branch namespace:** `[git] branch_prefix` (default `feature/`, set `claude/` for Claude Code **web/cloud routines**, whose push policy allows only `claude/*`). Consumed by `run.md` (Step 1 branch/worktree setup, Step 4 push, the lock ref) and `spec.md` freeze — so an autonomous run can execute in the cloud **with the laptop off** without loosening branch protection.
 - **Cloud setup:** `scripts/cloud-setup.sh` — the routine "Setup script": installs the codex/gemini CLIs + project deps, checks secret presence (never prints values), reminds the prefix.

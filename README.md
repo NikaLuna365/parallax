@@ -32,7 +32,7 @@ Three ways to run on a cadence (per Claude Code docs):
 For an **overnight / laptop-off** autonomous run, use a **Claude Code web scheduled task**. Because it's a fresh cloud clone, set it up so the plugin can actually run:
 
 1. **Plugin in the repo** (or installed via the routine setup) so `commands/`/`agents/`/`skills/` are present.
-2. **Setup script** = `scripts/cloud-setup.sh` — installs the `codex`/`gemini` CLIs + project deps.
+2. **Setup script** = `scripts/cloud-setup.sh` — **best-effort** installs the `codex`/`gemini` CLIs (adjust the package names for your versions if they differ) + project deps, and checks the required secrets are present.
 3. **Secrets** in the routine **Environment variables** (codex/gemini keys, `TDD_TG_*`, git push creds) — never in the repo (`SECURITY.md`).
 4. **Branch policy:** cloud routines push only to `claude/*` by default. Set `[git] branch_prefix = "claude/"` in `.tdd/codex.toml` (and use a `claude/`-prefixed epic) so the whole run stays in-policy — no need to enable "Allow unrestricted branch pushes".
 5. Prompt the routine with `/tdd:auto <brief>` (or `/tdd:run --resume <slug>` for the hourly resume).
