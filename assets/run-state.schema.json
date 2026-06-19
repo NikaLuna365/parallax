@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "tdd run-state checkpoint",
+  "description": "Eagerly-written, branch-committed checkpoint that lets a run resume after a limit-pause (Claude or Codex) without losing progress. Lives at .tdd/<slug>/run-state.json. See commands/run.md -> 'Limits, checkpointing & resume'.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["slug", "epic", "base_tip", "status", "slices", "updated_at"],
+  "properties": {
+    "run_id": { "type": "string", "description": "Unique id for this run (stable across resumes)." },
+    "slug": { "type": "string", "description": "Feature slug; the run lives on feature/<slug>." },
+    "mode": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "autonomous": { "type": "boolean" },
+        "parallel": { "type": "boolean" }
+      }
+    },
+    "epic": { "type": "string", "description": "The integration/epic branch this feature targets (e.g. feature/flex-cis)." },
+    "base_tip": { "type": "string", "description": "origin/<epic> commit sha the run started from (provenance anchor)." },
+    "status": {
+      "enum": ["running", "paused-on-limit", "complete", "stuck"],
+      "description": "Run-level status. A resume that finds 'complete' no-ops and self-terminates the schedule."
+    },
+    "paused": {
+      "type": ["object", "null"],
+      "description": "Set when status is paused-on-limit; null otherwise.",
+      "additionalProperties": false,
+      "required": ["service", "at"],
+      "properties": {
+        "service": { "enum": ["claude", "codex"], "description": "Which service's limit caused the pause." },
+        "at": { "type": "string", "description": "ISO timestamp of the pause." },
+        "reason": { "type": "string" },
+        "retry_after": { "type": ["string", "null"], "description": "ISO timestamp the limit error said to retry after, if any; a smart scheduler prefers this over blind hourly." }
+      }
+    },
+    "slices": {
+      "type": "array",
+      "description": "Per-slice progress. A resume skips 'integrated', runs only the owed verification for 'green-unverified', and continues 'in_progress'/'pending'.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "status": {
+            "enum": ["pending", "in_progress", "green-unverified", "integrated", "parked"],
+            "description": "green-unverified = arbiter passed but the cross-model verification is still owed (e.g. paused on a Codex limit); NOT integrated."
+          },
+          "iterations": { "type": "integer", "minimum": 0, "description": "Iteration counter, so the circuit breaker (max 3) survives a resume." },
+          "attempts": { "type": "array", "items": { "type": "string" }, "description": "Per-worker attempt history (hub-and-spoke; survives resume)." },
+          "parked_reason": { "type": ["string", "null"], "description": "Set when status is parked: spec-gap | breaker | divergence." }
+        }
+      }
+    },
+    "integrated": { "type": "array", "items": { "type": "string" }, "description": "Ids of slices merged into feature/<slug>." },
+    "queues": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "escalations": { "type": "string", "description": "Path to .tdd/<slug>/escalations.md (genuine ambiguity only — never limit-pauses)." },
+        "product_copy": { "type": "string", "description": "Path to .tdd/<slug>/product-copy.md (wording awaiting human sign-off)." }
+      }
+    },
+    "updated_at": { "type": "string", "description": "ISO timestamp of this checkpoint write." }
+  }
+}

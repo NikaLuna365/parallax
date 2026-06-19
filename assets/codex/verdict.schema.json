@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "tdd codex-judge post-green verdict",
+  "description": "Structured verdict from the independent cross-model verifier after a slice goes green. Passed to `codex exec --output-schema`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "findings"],
+  "properties": {
+    "verdict": {
+      "enum": ["pass", "concerns"],
+      "description": "pass = implementation faithfully satisfies the spec, no gaming, edges covered. concerns = at least one finding."
+    },
+    "findings": {
+      "type": "array",
+      "description": "Empty when verdict is pass. Each finding is one concrete, independently-checkable problem.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "kind", "where", "detail"],
+        "properties": {
+          "severity": { "enum": ["low", "medium", "high"] },
+          "kind": {
+            "enum": ["spec-gap", "anti-cheat", "safety", "missing-edge", "type-quality"],
+            "description": "spec-gap = code+tests agree but both diverge from intent; anti-cheat = gamed gate; safety = a harm path; missing-edge = real input/garbage not covered; type-quality = public type wider than spec."
+          },
+          "where": { "type": "string", "description": "File/symbol/section the finding concerns." },
+          "detail": { "type": "string", "description": "What is wrong and why it matters, concretely enough to act on." }
+        }
+      }
+    }
+  }
+}

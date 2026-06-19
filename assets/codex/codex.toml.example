@@ -1,0 +1,71 @@
+# Cross-model verifier config for the tdd pipeline.
+# Copy to your repo as `.tdd/codex.toml` and edit. If this file is absent or
+# `enabled = false`, the pipeline runs exactly as before (Claude-only gates),
+# so the verifier is strictly additive and opt-in.
+#
+# TOML note: every bare key below MUST sit ABOVE the first [table] header, or TOML
+# assigns it to that table. So: root scalars first, then the tables.
+
+enabled    = true
+
+# Which insertion points are active. Either or both:
+#   "pre_freeze" — adversarial review of the frozen-candidate spec, before the blind tracks.
+#   "post_green" — adversarial spec-gap + anti-cheat pass after a slice goes green.
+points     = ["pre_freeze", "post_green"]
+
+# Judge architecture:
+#   "split" = (iii) Claude stays the in-loop arbiter; the verifier checks at the points above. (default)
+#   "panel" = (ii)  Claude AND the verifier both judge post-green; a slice is green only if both pass.
+#   "sole"  = (i)   the verifier replaces the Claude arbiter as the judge.
+mode       = "split"
+
+# What to do when EVERY provider in the chain is unavailable / errors (not just the primary):
+#   interactive mode always falls back to the human gate (with a warning).
+#   autonomous mode honors this:
+#     "refuse" — do not run autonomously without a working verifier (recommended).
+#     "warn"   — run, but stamp every output "UNVERIFIED — human review required".
+on_missing = "refuse"
+
+# Hard timeout per verifier invocation (seconds).
+timeout_s  = 600
+
+
+# === Verifier provider chain ===
+# The judge always runs a model that is NOT Claude — that independence is the whole
+# point. Fallbacks are tried in order when the previous provider is rate-limited or
+# unavailable, so a Codex limit falls back to Gemini instead of pausing the run; the
+# run pauses ONLY if every provider is exhausted. Each provider, whatever its form,
+# must return a verdict matching assets/codex/verdict.schema.json.
+
+[primary]
+provider = "codex"     # model family: codex | gemini
+form     = "cli"       # cli | api
+model    = "gpt-5.5"   # confirm vs your installed `codex` (/model). Not a *-mini — the judge wants the strongest reasoning.
+# codex CLI enforces the schema natively (codex exec --output-schema).
+
+[fallback]
+provider = "gemini"
+form     = "cli"
+model    = "gemini-3-pro"   # EXAMPLE — confirm the id your `gemini` exposes; don't hardcode a version.
+# Gemini CLI has NO custom output-schema: the judge embeds verdict.schema.json IN THE
+# PROMPT and validates the returned JSON itself. For the API form instead: set
+# form="api" and add  key_env = "GEMINI_API_KEY"  (secret via env var, never in this file).
+
+
+# Resume/retry policy for limit-pauses (applies to BOTH Claude and Codex limits).
+# On a sustained limit the run checkpoints and pauses; an external scheduler
+# (cron / CI / Cowork) re-fires `--resume` on this cadence until the run completes.
+[retry]
+interval_minutes      = 60   # hourly resume attempts (or honor the error's retry_after)
+in_process_budget_min = 5    # short in-process retries for a blip before pausing the run
+
+
+# Telegram notifications for the AUTONOMOUS flow (off by default; send-only).
+# Secrets live in ENV VARS named here — NEVER put the bot token in this committed file.
+[notify]
+enabled     = false
+channel     = "telegram"
+mode        = "lifecycle"          # "lifecycle" = start / limit-pause / resume / complete / needs-human only
+                                   # "verbose"   = the above PLUS every phase (slice dispatched/green/verified/integrated, wave done, ...)
+token_env   = "TDD_TG_BOT_TOKEN"   # name of the env var holding the bot token (the secret itself stays in the env)
+chat_id_env = "TDD_TG_CHAT_ID"     # name of the env var holding the chat id

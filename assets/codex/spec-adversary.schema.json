@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "tdd codex-judge pre-freeze spec-adversary verdict",
+  "description": "Structured verdict from the independent cross-model verifier reviewing the frozen-candidate spec BEFORE the blind tracks run. Passed to `codex exec --output-schema`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "findings"],
+  "properties": {
+    "verdict": {
+      "enum": ["pass", "concerns"],
+      "description": "pass = spec is unambiguous and complete enough to freeze. concerns = at least one gap that two blind tracks would faithfully inherit."
+    },
+    "findings": {
+      "type": "array",
+      "description": "Empty when verdict is pass.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "kind", "where", "detail"],
+        "properties": {
+          "severity": { "enum": ["low", "medium", "high"] },
+          "kind": {
+            "enum": ["under-specified", "spec-gap", "safety", "unconstrained-format", "validation-realism", "interface-quality"],
+            "description": "under-specified = readable two ways; spec-gap = silent on a needed behavior; safety = a harm path the spec doesn't close; unconstrained-format = a format that accepts garbage; validation-realism = rejects likely real input or accepts obvious garbage; interface-quality = type/nullability/naming weakness that will reach the code."
+          },
+          "where": { "type": "string", "description": "Spec section / behavior / field the finding concerns." },
+          "detail": { "type": "string", "description": "The gap and the concrete failure it would cause downstream (e.g. 'allergen keys compared raw -> Peanuts vs peanut leaks')." }
+        }
+      }
+    }
+  }
+}

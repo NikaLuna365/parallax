@@ -1,0 +1,13 @@
+{
+  "name": "niko-local",
+  "owner": {
+    "name": "niko"
+  },
+  "plugins": [
+    {
+      "name": "tdd",
+      "source": "./",
+      "description": "Spec-driven, parallel, blind-coder TDD pipeline: a read-only spec drives a test-writer and a blind-coder independently; a whole-seeing arbiter loops until green, then pushes a feature branch."
+    }
+  ]
+}
