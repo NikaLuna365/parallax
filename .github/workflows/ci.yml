@@ -1,4 +1,4 @@
-name: tdd-plugin-ci
+name: parallax-plugin-ci
 
 on:
   push:

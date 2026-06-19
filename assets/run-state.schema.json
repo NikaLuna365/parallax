@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "tdd run-state checkpoint",
-  "description": "Eagerly-written, branch-committed checkpoint that lets a run resume after a limit-pause (Claude or Codex) without losing progress. Lives at .tdd/<slug>/run-state.json. See commands/run.md -> 'Limits, checkpointing & resume'.",
+  "description": "Eagerly-written, branch-committed checkpoint that lets a run resume after a limit-pause (Claude or Codex) without losing progress. Lives at .parallax/<slug>/run-state.json. See commands/run.md -> 'Limits, checkpointing & resume'.",
   "type": "object",
   "additionalProperties": false,
   "required": ["run_id", "slug", "epic", "base_tip", "status", "slices", "updated_at"],
@@ -71,14 +71,14 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "escalations": { "type": "string", "description": "Path to .tdd/<slug>/escalations.md (genuine ambiguity only — never limit-pauses)." },
-        "product_copy": { "type": "string", "description": "Path to .tdd/<slug>/product-copy.md (wording awaiting human sign-off)." }
+        "escalations": { "type": "string", "description": "Path to .parallax/<slug>/escalations.md (genuine ambiguity only — never limit-pauses)." },
+        "product_copy": { "type": "string", "description": "Path to .parallax/<slug>/product-copy.md (wording awaiting human sign-off)." }
       }
     },
     "updated_at": { "type": "string", "description": "ISO timestamp of this checkpoint write." },
     "lock": {
       "type": ["object", "null"],
-      "description": "Mutual-exclusion lease so two concurrent resumes (e.g. overlapping cron fires) cannot run the same slug at once. The ATOMIC primitive is a git ref refs/tdd/lock/<slug> created via compare-and-swap; this records it for visibility. A resume refuses to start while a live (unexpired) lock is held; it may steal an expired one.",
+      "description": "Mutual-exclusion lease so two concurrent resumes (e.g. overlapping cron fires) cannot run the same slug at once. The ATOMIC primitive is a git ref refs/parallax/lock/<slug> created via compare-and-swap; this records it for visibility. A resume refuses to start while a live (unexpired) lock is held; it may steal an expired one.",
       "additionalProperties": false,
       "required": ["holder", "acquired_at", "expires_at"],
       "properties": {

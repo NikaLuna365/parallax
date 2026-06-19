@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cloud-routine setup for the tdd plugin (Claude Code on the web / "web scheduled task").
+# Cloud-routine setup for the Parallax plugin (Claude Code on the web / "web scheduled task").
 # Paste this as the routine Environment's "Setup script". A cloud run is a FRESH CLONE with
 # no local tooling, so install the verifier CLIs + project deps here. SECRETS come from the
 # routine's Environment variables (never the repo) — see SECURITY.md.
@@ -21,11 +21,11 @@ command -v gemini >/dev/null 2>&1 && echo "gemini: $(command -v gemini)" || echo
 pip install jsonschema 2>/dev/null || pip install --user jsonschema 2>/dev/null || true
 
 # 4) Secret presence check — NEVER print values, only whether they're set. Set these in the
-#    routine Environment (not the repo). Names match what .tdd/codex.toml references.
-for v in OPENAI_API_KEY GEMINI_API_KEY TDD_TG_BOT_TOKEN TDD_TG_CHAT_ID; do
+#    routine Environment (not the repo). Names match what .parallax/codex.toml references.
+for v in OPENAI_API_KEY GEMINI_API_KEY PARALLAX_TG_BOT_TOKEN PARALLAX_TG_CHAT_ID; do
   [ -n "${!v:-}" ] && echo "env: $v set" || echo "env: $v NOT set (set in the routine Environment if the run needs it)"
 done
 
 # 5) Reminder for the claude/* push policy of cloud routines:
-echo "reminder: set  [git] branch_prefix = \"claude/\"  in .tdd/codex.toml so the run stays in the allowed namespace."
+echo "reminder: set  [git] branch_prefix = \"claude/\"  in .parallax/codex.toml so the run stays in the allowed namespace."
 echo "== cloud-setup done =="

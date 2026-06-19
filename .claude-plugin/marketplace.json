@@ -5,9 +5,9 @@
   },
   "plugins": [
     {
-      "name": "tdd",
+      "name": "parallax",
       "source": "./",
-      "description": "Spec-driven, parallel, blind-coder TDD pipeline: a read-only spec drives a test-writer and a blind-coder independently; a whole-seeing arbiter loops until green, then pushes a feature branch."
+      "description": "Parallax — independent paths, one verified result. A spec-driven, parallel, blind-coder TDD pipeline: a read-only spec drives a test-writer and a blind-coder independently; a whole-seeing arbiter loops until green, then pushes a feature branch."
     }
   ]
 }

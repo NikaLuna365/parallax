@@ -1,5 +1,5 @@
-# Cross-model verifier config for the tdd pipeline.
-# Copy to your repo as `.tdd/codex.toml` and edit. If this file is absent or
+# Cross-model verifier config for the Parallax pipeline.
+# Copy to your repo as `.parallax/codex.toml` and edit. If this file is absent or
 # `enabled = false`, the pipeline runs exactly as before (Claude-only gates),
 # so the verifier is strictly additive and opt-in.
 #
@@ -76,5 +76,5 @@ enabled     = false
 channel     = "telegram"
 mode        = "lifecycle"          # "lifecycle" = start / limit-pause / resume / complete / needs-human only
                                    # "verbose"   = the above PLUS every phase (slice dispatched/green/verified/integrated, wave done, ...)
-token_env   = "TDD_TG_BOT_TOKEN"   # name of the env var holding the bot token (the secret itself stays in the env)
-chat_id_env = "TDD_TG_CHAT_ID"     # name of the env var holding the chat id
+token_env   = "PARALLAX_TG_BOT_TOKEN"   # name of the env var holding the bot token (the secret itself stays in the env)
+chat_id_env = "PARALLAX_TG_CHAT_ID"     # name of the env var holding the chat id

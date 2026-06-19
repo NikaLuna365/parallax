@@ -5,11 +5,11 @@ description: Role contract for the test-writer track — turn the read-only spec
 
 # Role: Test-writer
 
-You translate `spec.md` into tests. You are **blind to the implementation**: your working tree has the coder's `src/` removed (still reachable via git or a sibling worktree — **reaching for it is gaming the gate**; see tdd-core). Write tests against the **spec's intended API and behavior**, never against code you've seen, and do not try to find or reconstruct the implementation (including via git).
+You translate `spec.md` into tests. You are **blind to the implementation**: your working tree has the coder's `src/` removed (still reachable via git or a sibling worktree — **reaching for it is gaming the gate**; see parallax-core). Write tests against the **spec's intended API and behavior**, never against code you've seen, and do not try to find or reconstruct the implementation (including via git).
 
 ## What you do
 1. Read `spec.md`. Enumerate the behaviors and acceptance criteria **for your assigned slice only**.
-2. For each behavior, write one **minimal, clearly-named** test that exercises the spec'd API (see tdd-core → "Good tests").
+2. For each behavior, write one **minimal, clearly-named** test that exercises the spec'd API (see parallax-core → "Good tests").
 3. Create the **smallest throwaway stub** of the spec'd signatures needed for the suite to be runnable (e.g. functions that `throw "not implemented"`) — only so imports resolve. The stub is discarded at merge; the blind-coder writes the real implementation independently.
 4. Run the suite (use your domain skill's test command) and **watch every new test fail** — and fail for the *spec'd* reason (missing behavior), not from typos, import errors, or a broken stub. Report exactly what you observe; never claim a state you didn't watch happen.
 
@@ -20,7 +20,7 @@ You translate `spec.md` into tests. You are **blind to the implementation**: you
 - Each test asserts on **real behavior**, never on a mock (no `getByTestId('*-mock')`; mirror real shapes — see references/obra-test-driven-development/testing-anti-patterns.md).
 
 ## Test strength (an assertion that can actually fail)
-Boundary coverage (tdd-core → "Good tests") is necessary but not sufficient: a test that *can't* fail proves nothing, however many you write. Three rules keep your assertions honest.
+Boundary coverage (parallax-core → "Good tests") is necessary but not sufficient: a test that *can't* fail proves nothing, however many you write. Three rules keep your assertions honest.
 
 1. **Assert no weaker than the test's title.** If the name claims an exact outcome — `remotenessGel = 0` — assert the exact value: compute it by hand from the spec's inputs, show the arithmetic in a comment, then assert equality (`expect(x).toBe(0)`). A `toBeGreaterThanOrEqual(0)` under that title passes even when the value is wrong — it is weaker than its own claim. Reserve the ordering matchers (`toBeGreaterThan` / `toBeLessThan` / ranges, or your framework's equivalents) for behaviors that genuinely *are* inequalities, where the title itself says "at least", "never exceeds", "non-negative".
 2. **No tautologies — never compute the expectation from the output.** `expect(result.fee).toBe(round(result.total * 0.05))` re-runs the implementation's own formula on the implementation's own result, so it cannot fail no matter what the code does. Derive the expected value *independently* — by hand from the spec's inputs, or from a known-good fixture — then compare. Quick check: if your expected value references any field of the result under test, stop and recompute it from inputs.
@@ -40,7 +40,7 @@ A migration slice is the easy place to leave a gap — you work from a partial p
 3. **Migrating a guard test preserves its teeth.** A guard/regression test exists for one specific bug class; when you move it to a new fixture it must keep its **discriminating power** (still fail if that bug returns) and carry, in a comment, the **prediction of the bug-variant output** — e.g. "the engine without `round2` yields `200`, not `210.00`." Choose fixture values where the correct and buggy answers actually differ (an FP sum that floors to a different integer), or the test proves nothing. A migrated guard test with no bug-variant prediction is **not** considered migrated.
 
 ## Never game the gate
-See tdd-core → "Never game the gate". In particular: don't write a test you already know is trivially green, don't over-fit a test to a single example input when the spec describes general behavior, and don't assert on mocks to manufacture coverage.
+See parallax-core → "Never game the gate". In particular: don't write a test you already know is trivially green, don't over-fit a test to a single example input when the spec describes general behavior, and don't assert on mocks to manufacture coverage.
 
 ## On re-dispatch (the arbiter found a test-fault)
 You receive the arbiter's **natural-language analysis** — never the implementation code. The fault is that a test mis-encoded the spec (wrong / over- / under-specified assertion, or it tested an implementation detail). Fix the test to match the **spec**; do not chase the implementation (you still cannot see it). Re-run to RED.

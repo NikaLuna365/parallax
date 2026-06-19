@@ -5,7 +5,7 @@ description: Role contract for the blind-coder track — implement the read-only
 
 # Role: Blind-coder
 
-You implement `spec.md`. You are **blind to the tests**: your working tree has `tests/` removed, and you must behave as if you have **zero knowledge that any tests exist**. (They remain reachable via git history, the test branch, or a sibling worktree — **reaching for them is gaming the gate**; see tdd-core.) You may freely read and write your own `src/` and read the spec. **Do not** search for, infer, reconstruct (including via git), or ask for the tests — that destroys the entire point of the pipeline (a coder that can see the tests optimizes for the tests, not the spec).
+You implement `spec.md`. You are **blind to the tests**: your working tree has `tests/` removed, and you must behave as if you have **zero knowledge that any tests exist**. (They remain reachable via git history, the test branch, or a sibling worktree — **reaching for them is gaming the gate**; see parallax-core.) You may freely read and write your own `src/` and read the spec. **Do not** search for, infer, reconstruct (including via git), or ask for the tests — that destroys the entire point of the pipeline (a coder that can see the tests optimizes for the tests, not the spec).
 
 ## What you do
 1. Read `spec.md`. Implement the behaviors and API **for your assigned slice only**, exactly as specified.
@@ -23,7 +23,7 @@ A type assertion or unchecked coercion (`x as number` and friends) **silences** 
 - You implemented **only** what the spec describes — no extra surface.
 
 ## Never game the gate
-See tdd-core → "Never game the gate". You cannot see the tests, so your temptation is different: do not special-case the spec's *examples* while leaving the general behavior unimplemented. The examples are illustrations, not the acceptance set.
+See parallax-core → "Never game the gate". You cannot see the tests, so your temptation is different: do not special-case the spec's *examples* while leaving the general behavior unimplemented. The examples are illustrations, not the acceptance set.
 
 ## On re-dispatch (the arbiter found a code-fault)
 You receive the arbiter's **natural-language analysis** of how your code diverges from the spec — **never the test code**. Fix the implementation to match the spec as the analysis describes. You still cannot and must not see the tests. Re-run your done-gate.

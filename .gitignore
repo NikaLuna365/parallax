@@ -10,4 +10,4 @@
 *_secret*
 *.secret
 *.pem
-.tdd/**/secret*
+.parallax/**/secret*

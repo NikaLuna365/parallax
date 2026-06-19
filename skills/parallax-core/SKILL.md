@@ -1,9 +1,9 @@
 ---
-name: tdd-core
+name: parallax-core
 description: Shared TDD contract for the spec-driven blind-coder pipeline — the read-only spec is the only source of truth; RED→GREEN→verify is split across independent agents; blindness and see-it-fail-first are non-negotiable.
 ---
 
-# TDD Core — shared contract
+# Parallax Core — the shared TDD contract
 
 This is the common floor every pipeline agent stands on (test-writer, blind-coder, arbiter). Your **role** skill says which part of the cycle you own; this skill says what is true for everyone.
 
@@ -29,7 +29,7 @@ In an ordinary TDD session one person does red → green → refactor. Here the 
 
 You own only your part. You never do another role's part "to help."
 
-**Independent verification (optional, cross-model).** Verification may be reinforced by a *different* frontier model — Codex, operated through the `codex-judge` role — reviewing the frozen spec before the blind tracks run (pre-freeze) and the assembled green slice after (post-green). The point is structural independence: the mind that *produced* the work is not the only one that *certifies* it (a model rarely catches its own blind angle). In autonomous mode this cross-model verifier replaces the human OK-gate; a divergence between the Claude arbiter and Codex escalates rather than auto-greening, and the arbiter never overrules a Codex `concerns`. It is opt-in via `.tdd/codex.toml`; absent it, the pipeline runs Claude-only exactly as before.
+**Independent verification (optional, cross-model).** Verification may be reinforced by a *different* frontier model — Codex, operated through the `codex-judge` role — reviewing the frozen spec before the blind tracks run (pre-freeze) and the assembled green slice after (post-green). The point is structural independence: the mind that *produced* the work is not the only one that *certifies* it (a model rarely catches its own blind angle). In autonomous mode this cross-model verifier replaces the human OK-gate; a divergence between the Claude arbiter and Codex escalates rather than auto-greening, and the arbiter never overrules a Codex `concerns`. It is opt-in via `.parallax/codex.toml`; absent it, the pipeline runs Claude-only exactly as before.
 
 ## The blindness wall (non-negotiable)
 

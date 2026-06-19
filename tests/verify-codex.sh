@@ -12,7 +12,7 @@
 set -uo pipefail
 
 SCHEMA="${1:-./assets/codex/verdict.schema.json}"
-TOML="${TDD_CODEX_TOML:-.tdd/codex.toml}"
+TOML="${PARALLAX_CODEX_TOML:-.parallax/codex.toml}"
 
 echo "== codex verifier smoke test =="
 

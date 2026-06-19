@@ -1,6 +1,9 @@
 # Changelog
 
-All notable changes to the tdd plugin. Versions are cumulative.
+All notable changes to the Parallax plugin. Versions are cumulative.
+
+## 0.18.0 — renamed to Parallax
+- Symbolic rename `tdd` → **Parallax**: the plugin `name`, the `/parallax:spec` · `/parallax:run` · `/parallax:auto` namespace, the `.parallax/` artifact dir, the `parallax-core` skill, and `PARALLAX_*` env-var names. Slogan: **Independent paths. One verified result.** — two independent lines of sight on one spec, whose divergence exposes the hidden defect. No behavior change; the methodology is still TDD.
 
 ## 0.17.0 — second-audit remediation (parallel data-loss + executable harness)
 - **P0 (data loss, fixed):** parallel slice integration applies the **per-slice diff** (`git diff wave-base..tip | git apply --3way`) onto the integration tip, instead of mirroring `src/**`+`tests/**` from one slice branch — which silently deleted every *other* already-integrated slice of the wave (reproduced with 2 slices). Sequential Step 2b mirror is unchanged (correct there).
@@ -20,8 +23,8 @@ All notable changes to the tdd plugin. Versions are cumulative.
 - This is enablement + docs, not new pipeline behavior — the local default (`feature/`) is unchanged.
 
 ## 0.15.0 — audit remediation (round 2: correctness & honesty)
-- **P4 (resume, fixed):** the checkpoint now records per-slice code/test branch **SHAs**, the **owed arbiter verdict + verified-diff ref**, and **wave**; plus a run-level **lock lease**. Resume takes an atomic `refs/tdd/lock/<slug>` (compare-and-swap) so two overlapping hourly resumes can't double-run, and continues from the recorded SHA / re-verifies the same diff.
-- **P5 (honesty, fixed):** "blindness" wording downgraded from "provably / physically cannot" to "removed from the working tree" across `tdd-core`, the role contracts, the 6 agent files, and `spec.md`. Added an explicit anti-cheat rule: reaching the hidden side via git (history / other branch / sibling worktree / reflog) is **gaming the gate**. Blindness = enforced separation + discipline, not a hard sandbox.
+- **P4 (resume, fixed):** the checkpoint now records per-slice code/test branch **SHAs**, the **owed arbiter verdict + verified-diff ref**, and **wave**; plus a run-level **lock lease**. Resume takes an atomic `refs/parallax/lock/<slug>` (compare-and-swap) so two overlapping hourly resumes can't double-run, and continues from the recorded SHA / re-verifies the same diff.
+- **P5 (honesty, fixed):** "blindness" wording downgraded from "provably / physically cannot" to "removed from the working tree" across `parallax-core`, the role contracts, the 6 agent files, and `spec.md`. Added an explicit anti-cheat rule: reaching the hidden side via git (history / other branch / sibling worktree / reflog) is **gaming the gate**. Blindness = enforced separation + discipline, not a hard sandbox.
 - **P6 (modes, wired):** `run.md` Step 2c now has explicit branches for `split` (default), `panel` (arbiter **and** verifier both must pass; verifier mandatory), and `sole` (verifier is the judge; arbiter still runs the checks). The `api` provider form is consumed by `role-codex-judge`.
 - Harness grew to **13 checks** (added `no_overclaims`, `runstate_lock` with an atomic-CAS mutual-exclusion test, `mode_branches`).
 - Deferred (optional v0.16.0): real *physical* track isolation (separate clones per track) if discipline proves insufficient.
@@ -40,16 +43,16 @@ All notable changes to the tdd plugin. Versions are cumulative.
 - `[primary]` + `[fallback]` providers (codex / gemini, cli / api); fallback-on-limit before pausing. Gemini CLI has no native output-schema → schema embedded in the prompt + self-validated.
 
 ## 0.11.0 — limits, checkpoint & resume
-- `.tdd/<slug>/run-state.json` checkpoint; `limit` outcome distinct from a verdict; pause-on-limit + hourly `--resume`; `assets/run-state.schema.json`; `[retry]` config.
+- `.parallax/<slug>/run-state.json` checkpoint; `limit` outcome distinct from a verdict; pause-on-limit + hourly `--resume`; `assets/run-state.schema.json`; `[retry]` config.
 
 ## 0.10.x — autonomous + parallel
-- `/tdd:auto` driver; parallel slice waves over the dependency DAG with per-slice worktrees; autonomous stop-handling (escalation / product-copy queues). (0.10.1: model id refresh to gpt-5.5.)
+- `/parallax:auto` driver; parallel slice waves over the dependency DAG with per-slice worktrees; autonomous stop-handling (escalation / product-copy queues). (0.10.1: model id refresh to gpt-5.5.)
 
 ## 0.9.0 — autonomous spec + pre-freeze adversary
 - Autonomous spec phase (`--from-doc`, decision log); Codex pre-freeze spec review replaces the human OK gate.
 
 ## 0.8.0 — cross-model verifier scaffolding
-- `role-codex-judge` + `codex-judge` agent + verdict/spec-adversary schemas + `.tdd/codex.toml`; post-green verifier wired in; build-dep provisioning.
+- `role-codex-judge` + `codex-judge` agent + verdict/spec-adversary schemas + `.parallax/codex.toml`; post-green verifier wired in; build-dep provisioning.
 
 ## 0.1.0–0.7.0 — pipeline hardening (rounds 1–6)
-- Arbiter seam + type-narrowness checks; numeric/money, interface, validator, blast-radius, foresight, product-copy, validation-realism spec passes; per-feature `.tdd/<slug>/` namespacing; epic provenance (origin tip, ancestor scan, known-deviations registry); three-level epic-integration contract; dispatch-points-not-paraphrase; migration completeness + guard-test rules; full commit inventory.
+- Arbiter seam + type-narrowness checks; numeric/money, interface, validator, blast-radius, foresight, product-copy, validation-realism spec passes; per-feature `.parallax/<slug>/` namespacing; epic provenance (origin tip, ancestor scan, known-deviations registry); three-level epic-integration contract; dispatch-points-not-paraphrase; migration completeness + guard-test rules; full commit inventory.

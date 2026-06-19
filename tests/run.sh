@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Self-test harness for the tdd plugin. Run from anywhere: `bash tests/run.sh`.
+# Self-test harness for the Parallax plugin. Run from anywhere: `bash tests/run.sh`.
 # Where it can, it EXECUTES the real mechanic (git integration, the lock, bash -n on every
 # code block, schema validation) rather than grepping for a string — grep gave false
 # confidence in earlier versions. LLM-orchestration semantics (mode judgments, timeouts)
@@ -11,7 +11,7 @@ PASS=0; FAIL=0
 ok(){ echo "  ✓ $1"; PASS=$((PASS+1)); }
 no(){ echo "  ✗ $1"; FAIL=$((FAIL+1)); }
 
-echo "== tdd plugin self-tests =="
+echo "== Parallax plugin self-tests =="
 
 echo "[toml_semantics]"
 python3 - <<'PY' && ok "config: root scalars at root; tables hold only their keys" || no "TOML semantics"
@@ -52,23 +52,23 @@ import re
 t=open('commands/run.md').read(); n=0
 for m in re.findall(r'```bash\n(.*?)```', t, re.S):
     s=re.sub(r'<[^>\n]*>','PH',m)           # neutralize <placeholders>
-    open(f'/tmp/tdd_blk{n}.sh','w').write(s); n+=1
-open('/tmp/tdd_nblk','w').write(str(n))
+    open(f'/tmp/parallax_blk{n}.sh','w').write(s); n+=1
+open('/tmp/parallax_nblk','w').write(str(n))
 PY
-nblk=$(cat /tmp/tdd_nblk); bad=0
-for i in $(seq 0 $((nblk-1))); do bash -n "/tmp/tdd_blk$i.sh" 2>/tmp/tdd_syn || { bad=1; echo "      block $i: $(cat /tmp/tdd_syn)"; }; done
+nblk=$(cat /tmp/parallax_nblk); bad=0
+for i in $(seq 0 $((nblk-1))); do bash -n "/tmp/parallax_blk$i.sh" 2>/tmp/parallax_syn || { bad=1; echo "      block $i: $(cat /tmp/parallax_syn)"; }; done
 [ "$bad" = 0 ] && ok "all $nblk run.md bash blocks pass bash -n" || no "a run.md bash block has a shell syntax error"
 
 echo "[integration]  (EXECUTES the parallel wave — locks P0 #1 data-loss + #2 branch prefix)"
-bash tests/t_assembly.sh feature/ >/tmp/tdd_int1 2>&1 && ok "per-slice diff integration preserves a 2-slice wave (prefix feature/)" || { no "integration (feature/)"; sed 's/^/      /' /tmp/tdd_int1; }
-bash tests/t_assembly.sh claude/  >/tmp/tdd_int2 2>&1 && ok "same works under a non-default prefix (claude/ — cloud routine)" || { no "integration (claude/)"; sed 's/^/      /' /tmp/tdd_int2; }
+bash tests/t_assembly.sh feature/ >/tmp/parallax_int1 2>&1 && ok "per-slice diff integration preserves a 2-slice wave (prefix feature/)" || { no "integration (feature/)"; sed 's/^/      /' /tmp/parallax_int1; }
+bash tests/t_assembly.sh claude/  >/tmp/parallax_int2 2>&1 && ok "same works under a non-default prefix (claude/ — cloud routine)" || { no "integration (claude/)"; sed 's/^/      /' /tmp/parallax_int2; }
 grep -q "per-slice DIFF" commands/run.md && ok "run.md documents per-slice DIFF integration (not mirror)" || no "run.md still documents mirror integration"
 
 echo "[lock]  (EXECUTES the documented lock — locks P1 #3)"
-bash tests/t_lock.sh >/tmp/tdd_lock 2>&1 && ok "lock: documented command works + cross-clone push yields one winner" || { no "lock"; sed 's/^/      /' /tmp/tdd_lock; }
+bash tests/t_lock.sh >/tmp/parallax_lock 2>&1 && ok "lock: documented command works + cross-clone push yields one winner" || { no "lock"; sed 's/^/      /' /tmp/parallax_lock; }
 
 echo "[runstate_schema]  (EXECUTES validation — locks P1 #4 exact-resume completeness)"
-python3 - <<'PY' >/tmp/tdd_rs 2>&1
+python3 - <<'PY' >/tmp/parallax_rs 2>&1
 import json
 try: import jsonschema
 except ImportError: print("SKIP"); raise SystemExit
@@ -82,7 +82,7 @@ bad={"run_id":"r","slug":"d","epic":"e","base_tip":"b","status":"running","slice
 try: jsonschema.validate(bad,s); print("ACCEPTED_BAD")
 except Exception: print("OK")
 PY
-R=$(cat /tmp/tdd_rs)
+R=$(cat /tmp/parallax_rs)
 if [ "$R" = "SKIP" ]; then echo "  · jsonschema not installed — schema-completeness test skipped";
 elif [ "$R" = "OK" ]; then ok "schema accepts a complete checkpoint and REJECTS an incomplete green-unverified"; else no "schema accepts incomplete green-unverified ($R)"; fi
 
@@ -103,7 +103,7 @@ grep -REq 'echo[^|]*\|[[:space:]]*python3[[:space:]]+-[^<]*<<' tests/verify-*.sh
 
 echo "[no_overclaims]  (locks P5 honesty)"
 grep -rEn "provably (blind|tested)|physically (lacks|has no|does not contain|hide)" skills/ agents/ commands/ >/dev/null 2>&1 && no "blindness overclaim phrases present" || ok "no blindness overclaims"
-grep -q "Reaching the hidden side" skills/tdd-core/SKILL.md && ok "tdd-core has the no-peeking-via-git anti-cheat rule" || no "missing git-peek rule"
+grep -q "Reaching the hidden side" skills/parallax-core/SKILL.md && ok "parallax-core has the no-peeking-via-git anti-cheat rule" || no "missing git-peek rule"
 
 echo "[mode_branches]  (presence check — semantics are integration-validated, not unit-tested)"
 miss=""; for m in split panel sole; do grep -q "\*\*\`$m\`\*\*" commands/run.md || miss="$miss $m"; done
