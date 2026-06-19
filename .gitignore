@@ -2,6 +2,11 @@
 *.zip
 *.bundle
 
+# python bytecode — NEVER ship: a stale/valid .pyc can be executed instead of the source (v0.23 P2)
+__pycache__/
+*.pyc
+*.pyo
+
 # secrets — NEVER commit (see SECURITY.md). The plugin references env-var NAMES only.
 .env
 .env.*

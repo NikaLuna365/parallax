@@ -18,6 +18,7 @@
     },
     "epic": { "type": "string", "description": "The integration/epic branch this feature targets (e.g. feature/flex-cis)." },
     "base_tip": { "type": "string", "pattern": "^[0-9a-f]{7,64}$", "description": "origin/<epic> commit sha the run started from (provenance anchor)." },
+    "verified_tree": { "type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$", "description": "Feature-level receipt bound to the committed feature tip: the content hash of ALL tracked non-.parallax/ files (code+tests+config) at the tip when the run COMPLETED and every slice was verified (canonical form: `git ls-tree -r <tip> | grep -v <TAB>.parallax/ | git hash-object --stdin`). scripts/epic-gate.py recomputes this from the promoted feature commit and requires equality, so a code change after review (which leaves the per-slice ledgers untouched) is mechanically caught. REQUIRED once status=complete." },
     "status": {
       "enum": ["running", "paused-on-limit", "complete", "stuck"],
       "description": "Run-level status. A resume that finds 'complete' no-ops and self-terminates the schedule."
@@ -95,6 +96,8 @@
     { "if": { "properties": { "status": { "const": "running" } }, "required": ["status"] },
       "then": { "required": ["lock"], "properties": { "lock": { "type": "object" } } } },
     { "if": { "properties": { "status": { "const": "paused-on-limit" } }, "required": ["status"] },
-      "then": { "required": ["paused"], "properties": { "paused": { "type": "object" } } } }
+      "then": { "required": ["paused"], "properties": { "paused": { "type": "object" } } } },
+    { "if": { "properties": { "status": { "const": "complete" } }, "required": ["status"] },
+      "then": { "required": ["verified_tree"], "properties": { "verified_tree": { "type": "string", "pattern": "^[0-9a-f]{7,64}$" } } } }
   ]
 }

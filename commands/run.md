@@ -207,14 +207,19 @@ fi
 - Never force-push. If the remote rejects (non-fast-forward on a re-run), report it and stop — do not overwrite remote history.
 - **Product-copy hold.** If any slice in this feature created or changed strings the spec marked as **product copy** (user-facing wording — dictionary text, labels, bot/UI messages), stop **before** advancing the epic and get an explicit human OK on the *words*. A green build proves the copy is wired correctly, not that it says the right thing; wording is a product decision, not an engineering one. (Numbers inside those strings are already constant-sourced per the money checklist — only the language needs sign-off.) Keep the feature out of the epic until approved.
 
-**Advancing the epic** (after the feature is green, pushed, and any product copy is approved) follows the **epic-integration contract** (see Standing rules: invariant / content / transport) — **but first a hard verification gate, because the epic is append-only.** The gate is **computed mechanically from the COMMITTED per-slice receipts**, never a preset flag: `scripts/epic-gate.py` requires that **every integrated slice** has a committed ledger that triages GREEN (every blocker codex-verified against its reviewed tree) within budget. A slice with no committed ledger (e.g. `on_missing = "warn"` produced none) or a still-`green-unverified` slice ⇒ the gate returns **hold**: push the **feature** branch for human review but **do NOT advance the epic**; park an *epic-hold* escalation. Only when the gate passes does a fully **VERIFIED** feature advance the epic automatically. Then fetch first, and in the common case where the feature is linearly ahead of `origin/<epic>` the merge is degenerate and needs no checkout — advance the ref by a non-force push:
+**Advancing the epic** (after the feature is green, pushed, and any product copy is approved) follows the **epic-integration contract** (see Standing rules: invariant / content / transport) — **but first a hard verification gate, because the epic is append-only.** The gate is a **feature-level receipt bound to the actual promoted commit**, computed by `scripts/epic-gate.py` entirely from the COMMITTED feature ref (never the working tree, never a CLI-supplied slice list, never a preset flag). It reads `run-state.json` and every slice ledger via `git show <feature-ref>:…`, requires `status = complete` with **every** slice `integrated`, checks each ledger's **identity** (`slice_id` matches), **at least one verifier round** (`rounds_used ≥ 1`) and a GREEN triage, and requires the run-state `verified_tree` to equal the **recomputed** code-tree hash of the promoted commit — so a code change after review (which leaves the per-slice ledgers untouched) is caught. Any failure ⇒ **hold**: push the **feature** branch for human review but **do NOT advance the epic**; park an *epic-hold* escalation. Only when the gate passes does a fully **VERIFIED** feature advance the epic automatically. So first finalize the receipt, then gate, then (if verified) fetch and advance by a non-force push:
 ```bash
-# HARD HOLD computed from the COMMITTED receipts — there is NO env override to preset (v0.22 P1#4).
-# epic-gate.py: every integrated slice must have a committed ledger that triages GREEN within budget;
-# a missing/dirty/unverified receipt => hold. The integrated slice ids come from the checkpoint.
-INTEGRATED="<integrated slice ids, comma-separated, from .parallax/$SLUG/run-state.json>"
-if ! python3 scripts/epic-gate.py --policy .parallax/codex.toml --reviews-dir ".parallax/$SLUG/reviews" --slices "$INTEGRATED"; then
-  echo "HOLD: feature is UNVERIFIED per committed receipts — feature pushed for review; epic NOT advanced (append-only). Parking an epic-hold escalation."
+TIP_REF="${PREFIX}$SLUG"
+# (a) Finalize the feature-level receipt: record the verified code-tree hash (every tracked non-.parallax/
+#     file at the tip — the SAME canonical hash the gate recomputes) and mark the run complete, then COMMIT.
+VT=$(bash scripts/code-tree-hash.sh "$TIP_REF")
+# Write .parallax/$SLUG/run-state.json with status="complete" and verified_tree="$VT" (the schema requires
+# verified_tree once complete). The commit touches only .parallax/, so it does NOT move $VT.
+git add -- ".parallax/$SLUG/run-state.json"
+git commit -q -m "$SLUG: run complete (feature-level verified_tree receipt)"
+# (b) HARD HOLD computed by epic-gate.py FROM THE COMMITTED feature ref — bound to this exact commit.
+if ! python3 scripts/epic-gate.py --feature-ref "$TIP_REF" --slug "$SLUG" --policy .parallax/codex.toml; then
+  echo "HOLD: feature is UNVERIFIED per the committed feature-level receipt — feature pushed for review; epic NOT advanced (append-only). Parking an epic-hold escalation."
   exit 0
 fi
 git fetch origin "<epic>"

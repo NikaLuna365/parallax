@@ -6,6 +6,7 @@
 # are NOT unit-tested here; those are for integration runs / the Ralphex benchmark.
 # Deps: python3 (+ optional jsonschema), git.
 set -uo pipefail
+export PYTHONDONTWRITEBYTECODE=1     # don't let the harness's python invocations create __pycache__ (see [no_pyc])
 cd "$(dirname "$0")/.."
 PASS=0; FAIL=0
 ok(){ echo "  ✓ $1"; PASS=$((PASS+1)); }
@@ -315,29 +316,24 @@ PY
 R=$(cat /tmp/parallax_mlc)
 [ "$R" = OK ] && ok "two same-fingerprint defects stay distinct; resolve-by-id settles exactly one (no data loss)" || { no "merge-ledger collision handling wrong"; echo "      $R"; }
 
-echo "[epic_gate]  (v0.23 P1#4 — EXECUTES epic-gate.py: epic verification computed from COMMITTED receipts, not a variable)"
-python3 - <<'PY' >/tmp/parallax_eg 2>&1
-try: import jsonschema
-except ImportError: print("SKIP"); raise SystemExit
-import json,os,subprocess,tempfile
-RD=tempfile.mkdtemp(); X="d"*40
-def put(sid,o): json.dump(o,open(os.path.join(RD,sid+".json"),"w"))
-def gate(sl,env=None):
-    return subprocess.run(["python3","scripts/epic-gate.py","--policy","assets/codex/codex.toml.example","--reviews-dir",RD,"--slices",sl],capture_output=True,text=True,env=env).returncode
-put("S1",{"slug":"d","slice_id":"S1","rounds_used":1,"findings":[]})                                                                                                                                                  # clean pass
-put("S2",{"slug":"d","slice_id":"S2","rounds_used":2,"findings":[{"id":"S2-N1","fingerprint":"f","severity":"high","kind":"safety","spec_ref":"s#a","claim":"c","evidence":"e","status":"fixed","verified_by":"codex","last_verified_diff":X}]})  # codex-verified
-put("S3",{"slug":"d","slice_id":"S3","rounds_used":1,"findings":[{"id":"S3-N1","fingerprint":"f","severity":"high","kind":"safety","spec_ref":"s#a","claim":"c","evidence":"e","status":"open"}]})                    # open blocker
-v  = gate("S1,S2")==0                                            # every slice has a green committed ledger -> verified
-h1 = gate("S1,S2,S3")==1                                         # an open blocker -> hold
-h2 = gate("S1,S9")==1                                            # a missing ledger (warn produced none) -> hold
-h3 = gate("S3", env={**os.environ,"PARALLAX_VERIFIED":"1"})==1   # a preset env var CANNOT lift the hold (no env input)
-print("OK" if (v and h1 and h2 and h3) else f"BAD v={v} h1={h1} h2={h2} h3={h3}")
-PY
-R=$(cat /tmp/parallax_eg)
-if [ "$R" = SKIP ]; then echo "  · jsonschema not installed — epic-gate execution test skipped";
-elif [ "$R" = OK ]; then ok "epic-gate.py: verified only when EVERY slice has a GREEN committed ledger; open/missing/preset-env => hold"; else no "epic-gate.py wrong"; echo "      $R"; fi
-{ grep -qF 'scripts/epic-gate.py' commands/run.md && grep -q "epic NOT advanced" commands/run.md && ! grep -qF 'PARALLAX_VERIFIED:-0' commands/run.md; } && ok "run.md gates the epic push on epic-gate.py — no free PARALLAX_VERIFIED variable" || no "run.md epic gate not wired to epic-gate.py"
+echo "[epic_gate]  (v0.24 P0#1/P0#2/P1#3 — EXECUTES epic-gate.py against REAL git repos: a feature-level receipt bound to the promoted commit)"
+bash tests/t_epic_gate.sh >/tmp/parallax_eg 2>&1; egrc=$?
+if [ "$egrc" = 2 ]; then echo "  · jsonschema not installed — epic-gate execution test skipped";
+elif [ "$egrc" = 0 ]; then ok "epic-gate.py: verified only for a committed, complete run whose verified_tree matches the promoted commit; code-changed-after-review / uncommitted-or-missing ledger / parked slice / identity-mismatch / rounds_used<1 / status!=complete => hold"; else no "epic-gate.py (git-based) wrong"; sed 's/^/      /' /tmp/parallax_eg; fi
+{ grep -qF 'epic-gate.py --feature-ref' commands/run.md \
+  && grep -qF 'scripts/code-tree-hash.sh' commands/run.md \
+  && grep -qF 'verified_tree' commands/run.md \
+  && ! grep -qF -- '--slices' commands/run.md \
+  && ! grep -qF 'PARALLAX_VERIFIED' commands/run.md; } \
+  && ok "run.md gates the epic push on epic-gate.py --feature-ref + records the verified_tree receipt (no --slices, no PARALLAX_VERIFIED)" || no "run.md epic gate not wired to the committed-feature-ref gate"
 grep -qF 'is a feature-only license' commands/run.md && ok "run.md: warn = feature push only, never auto-advances the epic" || no "run.md missing warn=feature-only rule"
+
+echo "[no_pyc]  (v0.24 P2 — no compiled bytecode is tracked/shipped)"
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  { ! git ls-files | grep -qE '(^|/)__pycache__/|\.py[co]$' && grep -qE '\*\.pyc' .gitignore; } && ok "no __pycache__/*.pyc tracked in git; .gitignore excludes them" || no "compiled bytecode tracked, or .gitignore missing *.pyc"
+else
+  { [ -z "$(find . -name '*.py[co]' 2>/dev/null)" ] && grep -qE '\*\.pyc' .gitignore; } && ok "no *.pyc in the shipped tree; .gitignore excludes them" || no "shipped tree contains *.pyc"
+fi
 
 echo "[security_no_secrets]  (locks repo hygiene)"
 grep -qE 'sk-[A-Za-z0-9]{16,}|AIza[0-9A-Za-z_-]{20,}|[0-9]{6,}:[A-Za-z0-9_-]{20,}' assets/codex/codex.toml.example && no "config has a secret-shaped value" || ok "config has no secret-shaped values (only *_env names)"
