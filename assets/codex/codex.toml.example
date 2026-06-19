@@ -84,9 +84,10 @@ chat_id_env = "PARALLAX_TG_CHAT_ID"     # name of the env var holding the chat i
 # Each review is a FRESH verifier invocation (we do NOT use `codex exec resume`): a persistent
 # session makes the judge anchor on confirming its own past findings, the non-interactive session
 # id is fragile to capture, and it would not survive a cloud fresh-clone anyway. Memory instead
-# lives in an EXTERNAL ledger committed to the branch: .parallax/<slug>/review-ledger.json
-# (schema: assets/codex/review-ledger.schema.json). A fresh review is handed the compact ledger,
-# re-checks prior findings for regression, THEN scans for new ones (protocol in role-codex-judge).
+# lives in PER-SLICE ledgers committed to the branch: .parallax/<slug>/reviews/<slice_id>.json
+# (schema: assets/codex/review-ledger.schema.json). The verifier emits a review-round
+# (assets/codex/review-round.schema.json); scripts/merge-ledger.py merges it mechanically and
+# scripts/triage.py disposes — reading THIS policy from this trusted file, never from the ledger.
 [review]
 max_rounds           = 2     # max Codex review ROUNDS per slice (separate from the 3-iteration worker breaker); then PARK, don't loop
 resume_codex_session = false # false = fresh verifier each round + external ledger (recommended). true would anchor; unsupported on cloud clones

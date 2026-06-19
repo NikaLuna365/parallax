@@ -42,4 +42,19 @@ git -C "$T/c1" push -q origin --delete "$REF" 2>/dev/null || true   # reset orig
 { { [ "$r1" = win ] && [ "$r2" = lose ]; } || { [ "$r1" = lose ] && [ "$r2" = win ]; }; } \
   || { echo "FAIL: unique-commit + force-with-lease did not yield exactly one winner ($r1/$r2)"; exit 1; }
 
+# 3) EXPIRED-lock steal must be lease-PINNED to the observed oid — a bare --force lets BOTH stealers win.
+git -C "$T/c1" push -q origin --delete "$REF" 2>/dev/null || true
+( cd "$T/c1" && git update-ref "$REF" "$(mklock EXPIRED)"; git push -q origin --force-with-lease="$REF": "$REF" )   # seed an expired lock
+OLD=$(git -C "$T/c1" ls-remote origin "$REF" | awk '{print $1}')
+( cd "$T/c1" && git fetch -q origin && git update-ref "$REF" "$(mklock STEALA)"; git push -q origin --force-with-lease="$REF:$OLD" "$REF" 2>/dev/null ) && s1=win || s1=lose
+( cd "$T/c2" && git fetch -q origin && git update-ref "$REF" "$(mklock STEALB)"; git push -q origin --force-with-lease="$REF:$OLD" "$REF" 2>/dev/null ) && s2=win || s2=lose
+{ { [ "$s1" = win ] && [ "$s2" = lose ]; } || { [ "$s1" = lose ] && [ "$s2" = win ]; }; } \
+  || { echo "FAIL: expired-lock steal not mutually exclusive — both --force-with-lease=<ref>:<oid> stealers got $s1/$s2"; exit 1; }
+
+# 4) Fenced release: a release whose lease points at the WRONG oid must NOT delete the lock.
+WRONG=1111111111111111111111111111111111111111
+( cd "$T/c2" && git push -q origin --force-with-lease="$REF:$WRONG" ":$REF" 2>/dev/null ) && rel=deleted || rel=fenced
+[ "$rel" = fenced ] || { echo "FAIL: a wrong-oid lease deleted the lock (fence broken)"; exit 1; }
+[ -n "$(git -C "$T/c1" ls-remote origin "$REF")" ] || { echo "FAIL: lock vanished after a fenced (should-fail) release"; exit 1; }
+
 echo "OK"

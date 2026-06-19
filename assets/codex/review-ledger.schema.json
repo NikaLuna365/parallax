@@ -1,50 +1,59 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "parallax cross-model review ledger",
-  "description": "Per-slice memory of the cross-model verifier's findings across review ROUNDS. A fresh verifier is handed this compact ledger each round so it re-checks prior findings for regression (instead of re-discovering them) without a persistent, anchoring session. Committed to the branch as .parallax/<slug>/review-ledger.json so it survives a resume / cloud fresh-clone. The orchestrator merges new findings here and runs scripts/triage.py over it to decide green/block/escalate. See commands/run.md -> 'Review memory, rounds & disposition' and skills/role-codex-judge.",
+  "title": "parallax cross-model review ledger (per-slice)",
+  "description": "Per-SLICE memory of the cross-model verifier's findings across review rounds. Lives at .parallax/<slug>/reviews/<slice_id>.json (one file per slice, so a slice cannot spend another's review budget). It is written ONLY by scripts/merge-ledger.py from the verifier's review-round output — never hand-edited by the orchestrating Claude (the producer must not author its own certification). It carries NO trusted policy: scripts/triage.py reads the [review] policy from .parallax/codex.toml, never from here. See commands/run.md -> 'Review memory, rounds & disposition'.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["slug", "rounds_used", "findings"],
+  "required": ["slug", "slice_id", "rounds_used", "findings"],
   "properties": {
     "slug": { "type": "string" },
-    "rounds_used": { "type": "integer", "minimum": 0, "description": "How many Codex review rounds this slice has consumed (bounded by [review].max_rounds; at the cap, remaining blockers PARK rather than loop)." },
-    "policy": {
-      "type": "object",
-      "description": "Optional snapshot of the [review] policy this ledger was triaged under (else triage uses the config / its defaults).",
-      "additionalProperties": true
-    },
+    "slice_id": { "type": "string", "description": "The slice this ledger belongs to (e.g. S1). One ledger file per slice." },
+    "rounds_used": { "type": "integer", "minimum": 0, "description": "Verifier review rounds consumed for THIS slice (one per merge-ledger.py call; the initial post-green review is round 1). [review].max_rounds caps it; at the cap, live blockers PARK. This is the single source of truth for the round budget — run-state only points at this file, it does not keep a second counter." },
+    "policy_hash": { "type": ["string", "null"], "description": "OPTIONAL audit-only sha of the [review] table this ledger was triaged under. Advisory; triage NEVER reads policy from the ledger. (There is deliberately no `policy` object here — a policy-bearing ledger is rejected, fail-closed.)" },
     "findings": {
       "type": "array",
-      "description": "Every finding ever raised for this slice, with its lifecycle. Never delete — settle (status=fixed) or contest (claude_rebuttal). That history is the regression memory.",
+      "description": "Every finding ever raised for this slice, with its lifecycle. Never deleted — settled (status=fixed, codex-verified) or contested (claude_rebuttal). That history is the regression memory.",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "severity", "kind", "spec_ref", "claim", "evidence", "status"],
+        "required": ["id", "fingerprint", "severity", "kind", "spec_ref", "claim", "evidence", "status"],
         "properties": {
-          "id": { "type": "string", "description": "Stable id, e.g. S2-N3 (slice + finding number)." },
+          "id": { "type": "string", "description": "Stable id, e.g. S2-N3 (slice + finding number), assigned by merge-ledger.py." },
+          "fingerprint": { "type": "string", "description": "sha256(kind | spec_ref | file(where))[:16] — keys the SAME defect to the SAME id across rounds (stable across rephrasing and line shifts)." },
           "severity": { "enum": ["low", "medium", "high"] },
-          "kind": { "enum": ["spec-gap", "anti-cheat", "safety", "missing-edge", "type-quality", "code-fault", "test-fault"], "description": "Same vocabulary as verdict.schema.json." },
-          "spec_ref": { "type": "string", "minLength": 1, "description": "REQUIRED — the spec section/anchor the finding is grounded in. A finding with no spec reference is not admissible (it would be a style/preference opinion)." },
+          "kind": { "enum": ["spec-gap", "anti-cheat", "safety", "missing-edge", "type-quality", "code-fault", "test-fault"] },
+          "spec_ref": { "type": "string", "minLength": 1, "description": "REQUIRED — the spec section/anchor the finding is grounded in. A finding with no spec reference is inadmissible." },
+          "where": { "type": "string", "description": "Location (file[:line]); the file part feeds the fingerprint." },
           "claim": { "type": "string", "description": "What is wrong, in one concrete sentence." },
-          "evidence": { "type": "string", "description": "The concrete, independently-checkable evidence (file:line, input, observed vs spec'd)." },
-          "status": { "enum": ["open", "fixed", "regressed"], "description": "open = live, unresolved; fixed = resolved + verified against last_verified_diff; regressed = a previously-fixed finding reproduced again (live)." },
-          "functional_repro": { "type": "boolean", "description": "True if this is a reproducible functional error — always blocks regardless of severity." },
-          "resolution": { "type": ["string", "null"], "description": "How it was fixed (status=fixed), or why contested." },
+          "evidence": { "type": "string", "description": "Concrete, independently-checkable evidence (file:line, input, observed vs spec'd)." },
+          "status": { "enum": ["open", "fixed", "regressed"], "description": "open = live; fixed = the INDEPENDENT model verified the fix against last_verified_diff; regressed = a previously-fixed finding the verifier reproduced again (live)." },
+          "functional_repro": { "type": "boolean", "description": "True if a reproducible functional error — always blocks regardless of severity." },
+          "verified_by": { "enum": ["codex", null], "description": "Who verified a `fixed`. MUST be \"codex\" for a fix to count as settled — Claude cannot self-assert a fix (triage treats a non-codex `fixed` as still live)." },
+          "resolution": { "type": ["string", "null"], "description": "How it was resolved (the verifier's note), or why contested." },
           "claude_rebuttal": {
             "type": ["object", "null"],
-            "description": "Set ONLY when Claude contests the finding. A contested blocking finding ESCALATES (human decides) — it is never silently dropped or auto-greened. Ignored for always-block kinds and reproducible functional errors.",
+            "description": "Set ONLY when Claude contests. A contested BLOCKING finding ESCALATES (human decides); it is never silently dropped or auto-greened. Ignored for always-block kinds and reproducible functional errors.",
             "additionalProperties": false,
             "required": ["reason"],
             "properties": {
-              "reason": { "enum": ["duplicate", "not-reproducible", "contradicts-spec", "out-of-scope"], "description": "The only admissible grounds for contesting; anything else is not a valid rebuttal and the finding still blocks." },
+              "reason": { "enum": ["duplicate", "not-reproducible", "contradicts-spec", "out-of-scope"] },
               "note": { "type": "string" },
-              "at": { "type": "string", "description": "ISO timestamp." }
+              "at": { "type": "string" }
             }
           },
-          "round": { "type": "integer", "minimum": 1, "description": "Review round in which this finding was first raised." },
-          "first_seen_diff": { "type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$", "description": "Assembled-diff SHA where the finding was first raised." },
-          "last_verified_diff": { "type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$", "description": "Assembled-diff SHA the finding's status was last checked against (so a later round can detect drift / regression)." }
-        }
+          "round": { "type": "integer", "minimum": 1, "description": "Round in which this finding was first raised." },
+          "first_seen_diff": { "type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$" },
+          "last_verified_diff": { "type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$", "description": "Assembled-diff SHA the status was last checked against. For a `fixed` finding triage requires this to equal the CURRENT diff, else the fix is stale and the finding is live again." }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "status": { "const": "fixed" } }, "required": ["status"] },
+            "then": {
+              "required": ["verified_by", "last_verified_diff"],
+              "properties": { "verified_by": { "const": "codex" }, "last_verified_diff": { "type": "string", "pattern": "^[0-9a-f]{7,64}$" } }
+            }
+          }
+        ]
       }
     }
   }

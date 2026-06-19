@@ -133,55 +133,94 @@ PY
   && ok "role-codex-judge wraps codex/gemini/curl in a real timeout_s wall-clock guard" || no "role-codex-judge missing a real timeout wrapper"
 grep -q "Sole mode — RED arbitration" skills/role-codex-judge/SKILL.md && ok "role-codex-judge documents sole-mode RED arbitration (3rd behavior)" || no "role-codex-judge missing sole RED arbitration"
 
-echo "[review_triage]  (v0.20 — EXECUTES scripts/triage.py: the mechanical severity gate)"
+echo "[review_triage]  (v0.21 — EXECUTES triage.py: policy from TRUSTED toml only; fixed needs codex proof)"
 python3 - <<'PY' >/tmp/parallax_triage 2>&1
 import json,subprocess
-def dec(led):
-    p=subprocess.run(["python3","scripts/triage.py","-"],input=json.dumps(led),capture_output=True,text=True)
+TOML="assets/codex/codex.toml.example"; D="a"*40; E="b"*40
+def dec(led,diff=D):
+    # --schema /nonexistent isolates triage LOGIC (schema rejection is tested separately)
+    p=subprocess.run(["python3","scripts/triage.py","-","--policy",TOML,"--current-diff",diff,"--schema","/nonexistent"],
+                     input=json.dumps(led),capture_output=True,text=True)
     try: return json.loads(p.stdout)["decision"], p.returncode
     except Exception: return ("PARSE_ERR:"+p.stdout+p.stderr), p.returncode
 def F(**k):
-    k.setdefault("status","open"); k.setdefault("spec_ref","spec#x"); k.setdefault("claim","c"); k.setdefault("evidence","e"); return k
+    k.setdefault("status","open"); k.setdefault("spec_ref","spec#x"); k.setdefault("where","src/x.ts:1")
+    k.setdefault("claim","c"); k.setdefault("evidence","e"); k.setdefault("fingerprint","f"); return k
+PERMISSIVE={"always_block_kinds":[],"block_severities":[],"advisory_severities":["low","medium","high"]}
 cases=[
- ({"rounds_used":0,"findings":[F(id="a",severity="low",kind="missing-edge")]},"green",0),
- ({"rounds_used":0,"findings":[F(id="a",severity="low",kind="safety")]},"block",1),
- ({"rounds_used":0,"findings":[F(id="a",severity="medium",kind="missing-edge")]},"block",1),
- ({"rounds_used":0,"findings":[F(id="a",severity="medium",kind="missing-edge",claude_rebuttal={"reason":"out-of-scope"})]},"escalate",2),
- ({"rounds_used":0,"findings":[F(id="a",severity="medium",kind="missing-edge",claude_rebuttal={"reason":"nope"})]},"block",1),
- ({"rounds_used":0,"findings":[F(id="a",severity="high",kind="spec-gap")]},"block",1),
- ({"rounds_used":0,"findings":[F(id="a",severity="low",kind="type-quality",functional_repro=True)]},"block",1),
- ({"rounds_used":2,"findings":[F(id="a",severity="medium",kind="missing-edge")]},"escalate",2),
- ({"rounds_used":0,"findings":[]},"green",0),
+ ("low->advisory/green",         {"rounds_used":0,"findings":[F(id="a",severity="low",kind="missing-edge")]},               D,"green",0),
+ ("high safety->block",          {"rounds_used":0,"findings":[F(id="a",severity="high",kind="safety")]},                    D,"block",1),
+ ("P0#1 ledger policy IGNORED",  {"rounds_used":0,"policy":PERMISSIVE,"findings":[F(id="a",severity="high",kind="safety")]},D,"block",1),
+ ("P0#2 faked fixed (no codex)", {"rounds_used":1,"findings":[F(id="a",severity="high",kind="safety",status="fixed")]},     D,"block",1),
+ ("codex-verified fixed@D",      {"rounds_used":1,"findings":[F(id="a",severity="high",kind="safety",status="fixed",verified_by="codex",last_verified_diff=D)]},D,"green",0),
+ ("stale verify (tree moved)",   {"rounds_used":1,"findings":[F(id="a",severity="high",kind="safety",status="fixed",verified_by="codex",last_verified_diff=D)]},E,"block",1),
+ ("medium->block",               {"rounds_used":0,"findings":[F(id="a",severity="medium",kind="missing-edge")]},            D,"block",1),
+ ("contest medium->escalate",    {"rounds_used":0,"findings":[F(id="a",severity="medium",kind="missing-edge",claude_rebuttal={"reason":"out-of-scope"})]},D,"escalate",2),
+ ("bogus rebuttal->block",       {"rounds_used":0,"findings":[F(id="a",severity="medium",kind="missing-edge",claude_rebuttal={"reason":"nope"})]},D,"block",1),
+ ("budget exhausted->escalate",  {"rounds_used":2,"findings":[F(id="a",severity="medium",kind="missing-edge")]},            D,"escalate",2),
 ]
-bad=[[led,d,rc,xd,xrc] for led,xd,xrc in cases for d,rc in [dec(led)] if d!=xd or rc!=xrc]
+bad=[[n,d,rc,xd,xrc] for n,led,diff,xd,xrc in cases for d,rc in [dec(led,diff)] if d!=xd or rc!=xrc]
 print("OK" if not bad else "BAD "+json.dumps(bad))
 PY
 R=$(cat /tmp/parallax_triage)
-[ "$R" = OK ] && ok "triage: low→advisory/green · med·hi→block · safety/repro→block · contest→escalate · budget-exhausted→escalate (exit codes match)" || { no "triage disposition wrong"; echo "      $R"; }
+[ "$R" = OK ] && ok "triage: ledger-policy IGNORED, faked-fixed BLOCKS, only codex-verified-vs-current-diff settles, stale verify re-blocks" || { no "triage hardening wrong"; echo "      $R"; }
 
-echo "[review_ledger_schema]  (EXECUTES validation — spec_ref required, vocab enforced)"
-python3 - <<'PY' >/tmp/parallax_rl 2>&1
+echo "[merge_ledger]  (EXECUTES merge-ledger.py: the producer never authors findings)"
+python3 - <<'PY' >/tmp/parallax_ml 2>&1
+import json,subprocess,tempfile,os
+T=tempfile.mkdtemp(); L=os.path.join(T,"S1.json"); D1="a"*40; D2="b"*40; D3="c"*40
+def rnd(d): p=os.path.join(T,"r.json"); json.dump(d,open(p,"w")); return p
+def merge(rp,diff): subprocess.run(["python3","scripts/merge-ledger.py",L,rp,"--slice","S1","--current-diff",diff,"--slug","demo"],capture_output=True,text=True,check=True)
+# round 1: a high safety finding
+merge(rnd({"verdict":"concerns","findings":[{"severity":"high","kind":"safety","spec_ref":"spec#a","where":"src/x.ts:42","claim":"c","evidence":"e"}],"resolved":[]}),D1)
+l=json.load(open(L)); f=l["findings"][0]
+assert len(l["findings"])==1 and f["status"]=="open" and f.get("fingerprint") and l["rounds_used"]==1, ("r1",l)
+# round 2: verifier positively RESOLVES it -> fixed + verified_by=codex (Claude cannot do this)
+merge(rnd({"verdict":"pass","findings":[],"resolved":[{"kind":"safety","spec_ref":"spec#a","where":"src/x.ts:99","note":"fixed"}]}),D2)
+l=json.load(open(L)); f=l["findings"][0]
+assert f["status"]=="fixed" and f["verified_by"]=="codex" and f["last_verified_diff"]==D2 and l["rounds_used"]==2, ("r2",l)
+# round 3: SAME defect re-reported, rephrased + new line -> SAME id (fingerprint), status regressed, no new finding
+merge(rnd({"verdict":"concerns","findings":[{"severity":"high","kind":"safety","spec_ref":"spec#a","where":"src/x.ts:120","claim":"again","evidence":"retry"}],"resolved":[]}),D3)
+l=json.load(open(L))
+assert len(l["findings"])==1 and l["findings"][0]["status"]=="regressed" and l["rounds_used"]==3, ("r3",l)
+print("OK")
+PY
+R=$(cat /tmp/parallax_ml)
+[ "$R" = OK ] && ok "merge-ledger: verifier-authored findings, resolved->fixed+verified_by=codex, fingerprint reuses the id, rounds_used++" || { no "merge-ledger wrong"; echo "      $R"; }
+
+echo "[review_schemas]  (EXECUTES validation — ledger fixed needs codex proof; round verdict↔findings consistent)"
+python3 - <<'PY' >/tmp/parallax_rs2 2>&1
 import json, copy
 try: import jsonschema
 except ImportError: print("SKIP"); raise SystemExit
-s=json.load(open('assets/codex/review-ledger.schema.json'))
-good={"slug":"d","rounds_used":1,"findings":[{"id":"S1-N1","severity":"low","kind":"missing-edge","spec_ref":"spec#x","claim":"c","evidence":"e","status":"open"}]}
-jsonschema.validate(good,s)
-def rej(doc):
+LS=json.load(open('assets/codex/review-ledger.schema.json')); RS=json.load(open('assets/codex/review-round.schema.json')); VS=json.load(open('assets/codex/verdict.schema.json'))
+def rej(doc,s):
     try: jsonschema.validate(doc,s); return False
     except Exception: return True
-a=copy.deepcopy(good); del a["findings"][0]["spec_ref"]                       # missing required spec_ref
-b=copy.deepcopy(good); b["findings"][0]["kind"]="nitpick"                     # off-vocabulary kind
-c=copy.deepcopy(good); c["findings"][0]["claude_rebuttal"]={"reason":"meh"}   # invalid rebuttal reason
-print("OK" if all(rej(x) for x in (a,b,c)) else "ACCEPTED_BAD")
+gl={"slug":"d","slice_id":"S1","rounds_used":1,"findings":[{"id":"S1-N1","fingerprint":"f","severity":"low","kind":"missing-edge","spec_ref":"spec#x","claim":"c","evidence":"e","status":"open"}]}
+jsonschema.validate(gl,LS)
+l_nospec=copy.deepcopy(gl); del l_nospec["findings"][0]["spec_ref"]
+l_noslice=copy.deepcopy(gl); del l_noslice["slice_id"]
+l_fixed_noproof=copy.deepcopy(gl); l_fixed_noproof["findings"][0]["status"]="fixed"          # P0#2 at schema layer
+l_policy=copy.deepcopy(gl); l_policy["policy"]={"always_block_kinds":[]}                       # P0#1 at schema layer
+gr={"verdict":"concerns","findings":[{"severity":"high","kind":"safety","spec_ref":"s#x","where":"src/x:1","claim":"c","evidence":"e"}]}
+jsonschema.validate(gr,RS); jsonschema.validate({"verdict":"pass","findings":[]},RS)
+r_passnonempty={"verdict":"pass","findings":[{"severity":"low","kind":"missing-edge","spec_ref":"s","where":"w","claim":"c","evidence":"e"}]}
+r_concernsempty={"verdict":"concerns","findings":[]}
+r_nospec={"verdict":"concerns","findings":[{"severity":"low","kind":"missing-edge","where":"w","claim":"c","evidence":"e"}]}
+v_passnonempty={"verdict":"pass","findings":[{"severity":"low","kind":"missing-edge","where":"w","detail":"d"}]}
+checks=[rej(l_nospec,LS),rej(l_noslice,LS),rej(l_fixed_noproof,LS),rej(l_policy,LS),
+        rej(r_passnonempty,RS),rej(r_concernsempty,RS),rej(r_nospec,RS),rej(v_passnonempty,VS)]
+print("OK" if all(checks) else "ACCEPTED_BAD "+json.dumps(checks))
 PY
-R=$(cat /tmp/parallax_rl)
-if [ "$R" = SKIP ]; then echo "  · jsonschema not installed — ledger-schema test skipped";
-elif [ "$R" = OK ]; then ok "review-ledger schema: accepts a valid ledger, rejects missing spec_ref / bad kind / bad rebuttal reason"; else no "review-ledger schema too lax ($R)"; fi
+R=$(cat /tmp/parallax_rs2)
+if [ "$R" = SKIP ]; then echo "  · jsonschema not installed — schema-hardening test skipped";
+elif [ "$R" = OK ]; then ok "schemas reject: fixed-without-codex-proof, a policy-bearing ledger, missing slice_id/spec_ref, and pass+findings / concerns+empty"; else no "schema hardening too lax ($R)"; fi
 
-echo "[review_contracts]  (presence — no-anchoring protocol + hybrid disposition are documented)"
-grep -qi "no anchoring" skills/role-codex-judge/SKILL.md && grep -q "resume_codex_session" skills/role-codex-judge/SKILL.md && ok "role-codex-judge documents fresh-verifier-per-round via the ledger (no anchoring session)" || no "role-codex-judge missing no-anchoring/ledger protocol"
-{ grep -q "review-ledger.json" commands/run.md && grep -q "scripts/triage.py" commands/run.md && grep -q "max_rounds" commands/run.md; } && ok "run.md wires the ledger + scripts/triage.py disposition + round budget" || no "run.md missing ledger/triage/budget wiring"
+echo "[review_contracts]  (presence — producer-proof wiring is documented)"
+{ grep -qi "no anchoring" skills/role-codex-judge/SKILL.md && grep -q "review-round" skills/role-codex-judge/SKILL.md && grep -q "merge-ledger.py" skills/role-codex-judge/SKILL.md && grep -q "reviews/<slice_id>.json" skills/role-codex-judge/SKILL.md; } && ok "role-codex-judge: fresh per-slice review, emits a review-round, mechanical merge" || no "role-codex-judge missing v0.21 producer-proof protocol"
+{ grep -q "scripts/merge-ledger.py" commands/run.md && grep -qF "scripts/triage.py \"\$LEDGER\" --policy .parallax/codex.toml" commands/run.md && grep -q "reviews/\$SID.json" commands/run.md; } && ok "run.md wires merge-ledger + triage(--policy from toml) + per-slice ledger" || no "run.md missing producer-proof pipeline"
+grep -q "never checked out in parallel" commands/run.md && ok "run.md: feature branch not checked out in parallel (no stale worktree on CAS)" || no "run.md missing no-checkout-in-parallel"
 
 echo "[security_no_secrets]  (locks repo hygiene)"
 grep -qE 'sk-[A-Za-z0-9]{16,}|AIza[0-9A-Za-z_-]{20,}|[0-9]{6,}:[A-Za-z0-9_-]{20,}' assets/codex/codex.toml.example && no "config has a secret-shaped value" || ok "config has no secret-shaped values (only *_env names)"

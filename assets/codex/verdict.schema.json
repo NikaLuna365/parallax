@@ -28,5 +28,11 @@
         }
       }
     }
-  }
+  },
+  "allOf": [
+    { "if": { "properties": { "verdict": { "const": "pass" } }, "required": ["verdict"] },
+      "then": { "properties": { "findings": { "maxItems": 0 } } } },
+    { "if": { "properties": { "verdict": { "const": "concerns" } }, "required": ["verdict"] },
+      "then": { "properties": { "findings": { "minItems": 1 } } } }
+  ]
 }

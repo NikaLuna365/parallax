@@ -54,7 +54,7 @@
           "test_tip": { "type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$", "description": "SHA of the slice's test track branch tip." },
           "wave_base": { "type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$", "description": "SHA of the integration tip this slice's tracks forked from — the diff base for parallel integration (git diff wave_base..tip | git apply --3way). Required once a slice is in_progress or green-unverified." },
           "wave": { "type": ["integer", "null"], "description": "Dependency-DAG wave this slice belongs to." },
-          "review_rounds": { "type": "integer", "minimum": 0, "description": "Cross-model review rounds consumed by this slice (bounded by [review].max_rounds; at the cap, remaining blockers PARK rather than loop). Distinct from the worker iteration breaker (max 3)." },
+          "review_ledger": { "type": ["string", "null"], "description": "Path to this slice's review ledger (.parallax/<slug>/reviews/<id>.json). The ledger's rounds_used is the SINGLE source of truth for the review budget — run-state deliberately keeps no second counter that could diverge from it." },
           "arbiter_verdict": { "type": ["string", "null"], "description": "The arbiter's owed GREEN for a 'green-unverified' slice — so a resume runs ONLY the pending cross-model verification, not the whole slice." },
           "verified_diff": { "type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$", "description": "SHA/hash of the assembled diff the verdict was made against — a resume re-verifies the same tree it paused on, and can detect drift." }
         },
@@ -75,7 +75,7 @@
       "properties": {
         "escalations": { "type": "string", "description": "Path to .parallax/<slug>/escalations.md (genuine ambiguity only — never limit-pauses)." },
         "product_copy": { "type": "string", "description": "Path to .parallax/<slug>/product-copy.md (wording awaiting human sign-off)." },
-        "review_ledger": { "type": "string", "description": "Path to .parallax/<slug>/review-ledger.json (cross-model findings + their lifecycle across review rounds; schema assets/codex/review-ledger.schema.json)." }
+        "reviews_dir": { "type": "string", "description": "Path to .parallax/<slug>/reviews/ — one ledger file per slice (<id>.json; schema assets/codex/review-ledger.schema.json), so a slice cannot spend another's review budget." }
       }
     },
     "updated_at": { "type": "string", "description": "ISO timestamp of this checkpoint write." },

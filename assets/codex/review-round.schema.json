@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "parallax cross-model review round (verifier output)",
+  "description": "What the independent verifier emits for ONE review round of a slice. It is the single, unified shape the verifier authors — so the ledger can be built mechanically by scripts/merge-ledger.py without the orchestrating Claude inventing spec_refs, evidence, ids or lifecycle (which Parallax forbids: the producer must not author its own certification). `findings` are the problems the verifier currently sees; `resolved` are prior findings it has POSITIVELY re-verified as now satisfying the spec (absence alone never resolves a finding). Used at post_green and for sole-mode RED arbitration; pre-freeze uses spec-adversary.schema.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "findings"],
+  "properties": {
+    "verdict": { "enum": ["pass", "concerns"], "description": "pass = nothing blocking this round (findings MUST be empty); concerns = at least one finding." },
+    "findings": {
+      "type": "array",
+      "description": "Problems the verifier sees in the CURRENT assembled tree. Each must be spec-grounded with concrete evidence.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "kind", "spec_ref", "where", "claim", "evidence"],
+        "properties": {
+          "severity": { "enum": ["low", "medium", "high"] },
+          "kind": { "enum": ["spec-gap", "anti-cheat", "safety", "missing-edge", "type-quality", "code-fault", "test-fault"] },
+          "spec_ref": { "type": "string", "minLength": 1, "description": "The spec section/anchor violated — REQUIRED (no spec_ref => inadmissible style opinion)." },
+          "where": { "type": "string", "minLength": 1, "description": "Location file[:line]; the file part is the stable fingerprint key." },
+          "claim": { "type": "string", "minLength": 1 },
+          "evidence": { "type": "string", "minLength": 1 },
+          "functional_repro": { "type": "boolean", "description": "True if a reproducible functional error (always blocks regardless of severity)." }
+        }
+      }
+    },
+    "resolved": {
+      "type": "array",
+      "description": "Prior findings the verifier RE-CHECKED and confirms now satisfy the spec against the current tree. merge-ledger.py marks the matching ledger finding fixed + verified_by=codex. Only the verifier may populate this — it is the positive confirmation that a fix held.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "spec_ref", "where"],
+        "properties": {
+          "kind": { "enum": ["spec-gap", "anti-cheat", "safety", "missing-edge", "type-quality", "code-fault", "test-fault"] },
+          "spec_ref": { "type": "string", "minLength": 1 },
+          "where": { "type": "string", "minLength": 1 },
+          "note": { "type": "string" }
+        }
+      }
+    }
+  },
+  "allOf": [
+    { "if": { "properties": { "verdict": { "const": "pass" } }, "required": ["verdict"] },
+      "then": { "properties": { "findings": { "maxItems": 0 } } } },
+    { "if": { "properties": { "verdict": { "const": "concerns" } }, "required": ["verdict"] },
+      "then": { "properties": { "findings": { "minItems": 1 } } } }
+  ]
+}
