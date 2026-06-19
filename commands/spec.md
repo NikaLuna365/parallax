@@ -85,6 +85,7 @@ This is stricter than ordinary brainstorming, and the reason is structural. In `
 10. **Freeze.** On a passed gate only (interactive: explicit human OK; autonomous: clean self-review **and** Codex `pass`):
     - Confirm/derive a feature slug and create branch `<prefix><slug>` from the current HEAD (`<prefix>` from `.parallax/codex.toml` `[git] branch_prefix`, default `feature/`; set `claude/` for Claude Code web/cloud routines).
     - Create the directory `.parallax/<slug>/` and write `.parallax/<slug>/spec.md`, `.parallax/<slug>/slices.md`, `.parallax/<slug>/validation.md` into it (per-feature subdirectory — never the `.parallax/` root — so sibling feature branches can't collide on these paths at merge).
+    - Also write `.parallax/<slug>/slices.lock` — the **machine-readable frozen slice manifest** (`assets/slices-lock.schema.json`): `{"slug": "<slug>", "slices": ["S1","S2",…]}`, exactly the slice ids declared in `slices.md`. This is the authoritative set the epic-gate later requires the run-state's integrated slices to **equal**, so a build can't silently drop a slice. Freeze it once here; never edit it after.
     - Commit them to `feature/<slug>` (these artifacts live in `.parallax/<slug>/`, which every worktree keeps; only the project's `src/`/`tests/` get sparsely hidden).
     - Tell the user: spec frozen on `feature/<slug>` — run **`/parallax:run`** to build it.
 

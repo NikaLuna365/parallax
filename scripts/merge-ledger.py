@@ -167,10 +167,15 @@ def main(argv):
     ap.add_argument("--slice", dest="slice_id", required=True)
     ap.add_argument("--current-diff", dest="current_diff", required=True)
     ap.add_argument("--slug")
+    ap.add_argument("--policy", help="trusted .parallax/codex.toml — records the [review] policy_hash this ledger was triaged under (epic-gate.py checks it == the committed policy).")
     a = ap.parse_args(argv)
     ledger = json.load(open(a.ledger)) if os.path.exists(a.ledger) else {}
     rnd = json.load(open(a.round)) if a.round != "-" else json.loads(sys.stdin.read())
     out = merge(ledger, rnd, a.slice_id, a.current_diff, a.slug)
+    if a.policy:                                  # stamp which policy this ledger was triaged under
+        import triage as T
+        pol, _ = T.load_policy(a.policy)
+        out["policy_hash"] = T.policy_hash(pol)
     if a.ledger != "-":
         os.makedirs(os.path.dirname(a.ledger) or ".", exist_ok=True)
         json.dump(out, open(a.ledger, "w"), indent=2)

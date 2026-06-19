@@ -42,6 +42,15 @@ VALID_REBUTTALS = {"duplicate", "not-reproducible", "contradicts-spec", "out-of-
 _POLICY_KEYS = ("max_rounds", "block_severities", "advisory_severities", "always_block_kinds")
 
 
+def policy_hash(policy):
+    """Stable 16-hex hash of the [review] policy triage uses (order-insensitive within list values).
+    merge-ledger.py records it into each ledger; epic-gate.py recomputes it from the COMMITTED
+    .parallax/codex.toml and requires the match — so a receipt can't be re-triaged under a different
+    (e.g. permissive) policy than the one it was produced under."""
+    canon = {k: (sorted(policy[k]) if isinstance(policy.get(k), list) else policy.get(k)) for k in _POLICY_KEYS}
+    return hashlib.sha256(json.dumps(canon, sort_keys=True).encode()).hexdigest()[:16]
+
+
 def load_policy(toml_path):
     """Policy from the TRUSTED toml only. Never from the ledger. Fail-closed to strict defaults."""
     pol = dict(DEFAULT_POLICY)

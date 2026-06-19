@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "parallax frozen slice manifest (machine-readable)",
+  "description": "Frozen at spec-freeze (commands/spec.md step 10) and committed to .parallax/<slug>/slices.lock — the authoritative, machine-readable set of slice ids for the feature, parsed from the frozen slices.md. epic-gate.py requires the run-state's slice set to EQUAL this set EXACTLY, so a run (or a tampered run-state) cannot silently drop or add a slice relative to what was frozen. It is written once at freeze and never edited.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["slug", "slices"],
+  "properties": {
+    "slug": { "type": "string", "description": "The feature slug this manifest belongs to (must match the feature being promoted)." },
+    "slices": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Every slice id the frozen spec defines, e.g. [\"S1\",\"S2\",\"S3\"]. The gate requires run-state's integrated slices to be exactly this set."
+    }
+  }
+}

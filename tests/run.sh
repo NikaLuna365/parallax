@@ -316,16 +316,20 @@ PY
 R=$(cat /tmp/parallax_mlc)
 [ "$R" = OK ] && ok "two same-fingerprint defects stay distinct; resolve-by-id settles exactly one (no data loss)" || { no "merge-ledger collision handling wrong"; echo "      $R"; }
 
-echo "[epic_gate]  (v0.24 P0#1/P0#2/P1#3 — EXECUTES epic-gate.py against REAL git repos: a feature-level receipt bound to the promoted commit)"
+echo "[epic_gate]  (v0.25 P0#1/P0#2/P1#4 — EXECUTES epic-gate.py against REAL git repos: a feature-level receipt bound to the promoted commit)"
 bash tests/t_epic_gate.sh >/tmp/parallax_eg 2>&1; egrc=$?
 if [ "$egrc" = 2 ]; then echo "  · jsonschema not installed — epic-gate execution test skipped";
-elif [ "$egrc" = 0 ]; then ok "epic-gate.py: verified only for a committed, complete run whose verified_tree matches the promoted commit; code-changed-after-review / uncommitted-or-missing ledger / parked slice / identity-mismatch / rounds_used<1 / status!=complete => hold"; else no "epic-gate.py (git-based) wrong"; sed 's/^/      /' /tmp/parallax_eg; fi
+elif [ "$egrc" = 0 ]; then ok "epic-gate.py holds on: code-changed-after-review, missing/identity-/slug-mismatched ledger, parked slice, rounds_used<1, status!=complete, dropped slice vs frozen slices.lock, committed-policy swap (policy_hash), internal-slug tamper; verifies only a clean committed complete run"; else no "epic-gate.py (git-based) wrong"; sed 's/^/      /' /tmp/parallax_eg; fi
+bash tests/t_finalize.sh >/tmp/parallax_fin 2>&1 && ok "completion receipt lands on feature/<slug> via worktree+CAS with \$ROOT detached (parallel-safe — v0.24 P1#3)" || { no "finalize on detached HEAD (P1#3)"; sed 's/^/      /' /tmp/parallax_fin; }
 { grep -qF 'epic-gate.py --feature-ref' commands/run.md \
   && grep -qF 'scripts/code-tree-hash.sh' commands/run.md \
   && grep -qF 'verified_tree' commands/run.md \
+  && grep -qF 'slices.lock' commands/run.md \
+  && grep -qF -- '--slug "$SLUG" --policy .parallax/codex.toml' commands/run.md \
+  && grep -qF 'update-ref "refs/heads/$TIP_REF"' commands/run.md \
   && ! grep -qF -- '--slices' commands/run.md \
   && ! grep -qF 'PARALLAX_VERIFIED' commands/run.md; } \
-  && ok "run.md gates the epic push on epic-gate.py --feature-ref + records the verified_tree receipt (no --slices, no PARALLAX_VERIFIED)" || no "run.md epic gate not wired to the committed-feature-ref gate"
+  && ok "run.md: epic-gate --feature-ref, verified_tree + slices.lock + policy_hash wiring, worktree+CAS finalize (no --slices / PARALLAX_VERIFIED)" || no "run.md epic gate/finalize not fully wired to the committed-feature-ref gate"
 grep -qF 'is a feature-only license' commands/run.md && ok "run.md: warn = feature push only, never auto-advances the epic" || no "run.md missing warn=feature-only rule"
 
 echo "[no_pyc]  (v0.24 P2 — no compiled bytecode is tracked/shipped)"

@@ -8,31 +8,35 @@ an operator-narrowed slice list, a receipt whose identity doesn't match, or a "v
 verifier rounds.
 
 For ref R = --feature-ref, the feature is VERIFIED iff ALL hold:
-  1. run-state `git show R:.parallax/<slug>/run-state.json` exists, validates (fail-closed), status=="complete".
-  2. run-state.verified_tree == code-tree-hash(R)  — the recomputed hash of every tracked non-.parallax/
+  1. run-state `git show R:.parallax/<slug>/run-state.json` exists, validates (fail-closed), status=="complete",
+     and its own slug == --slug (receipts must belong to THIS feature, not another with matching ids).
+  2. run-state.verified_tree == code-tree-hash(R) — the recomputed hash of every tracked non-.parallax/
      file at R. Binds the verdict to the ACTUAL committed tree: a code/test/config change after the run
      completed (which leaves the per-slice ledgers untouched) moves this hash => HOLD.
-  3. run-state.slices is non-empty and EVERY slice has status=="integrated" (no parked/pending/
-     green-unverified). The slice set comes from the COMMITTED run-state, not a free CLI arg.
-  4. each slice's ledger `git show R:.parallax/<slug>/reviews/<id>.json` exists, validates (fail-closed),
-     has slice_id == that id (identity), rounds_used >= 1 (a verifier actually ran), and triages GREEN
-     against the diff its own fix-proofs were verified at.
+  3. the run-state slice set EQUALS the FROZEN, machine-readable manifest `git show R:.parallax/<slug>/slices.lock`
+     EXACTLY — a run (or a tampered run-state) cannot drop or add a slice relative to the frozen spec.
+  4. EVERY slice has status=="integrated"; each slice's ledger `git show R:.parallax/<slug>/reviews/<id>.json`
+     exists, validates (fail-closed), has slug == --slug and slice_id == that id (identity), policy_hash ==
+     the COMMITTED policy's hash (it was triaged under the policy that's committed, not a swapped one),
+     rounds_used >= 1 (a verifier actually ran), and triages GREEN against the diff its fixes were proven at.
 
-Reads policy ONLY from the trusted .parallax/codex.toml; validates run-state + every ledger fail-closed
+The policy is read from the COMMITTED .parallax/codex.toml at R (NOT the working tree — an operator could
+swap a permissive one in at gate time). run-state, every ledger and slices.lock are validated fail-closed
 (no jsonschema / invalid => HOLD). Exit: 0 verified (advance), 1 hold (do NOT advance), 3 bad input.
 
 Usage:
-    epic-gate.py --feature-ref <ref> --slug <slug> --policy .parallax/codex.toml [--repo <dir>]
+    epic-gate.py --feature-ref <ref> --slug <slug> [--repo <dir>]
 """
-import argparse, json, os, subprocess, sys
+import argparse, json, os, subprocess, sys, tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import triage as T
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_SCHEMA_LEDGER   = os.path.join(_HERE, "..", "assets", "codex", "review-ledger.schema.json")
-_SCHEMA_RUNSTATE = os.path.join(_HERE, "..", "assets", "run-state.schema.json")
-_TREE_HASH_SH    = os.path.join(_HERE, "code-tree-hash.sh")
+_SCHEMA_LEDGER     = os.path.join(_HERE, "..", "assets", "codex", "review-ledger.schema.json")
+_SCHEMA_RUNSTATE   = os.path.join(_HERE, "..", "assets", "run-state.schema.json")
+_SCHEMA_SLICESLOCK = os.path.join(_HERE, "..", "assets", "slices-lock.schema.json")
+_TREE_HASH_SH      = os.path.join(_HERE, "code-tree-hash.sh")
 
 
 def _git_show(repo, ref, path):
@@ -71,7 +75,23 @@ def _verified_diff(ledger):
     return (next(iter(diffs)) if diffs else "no-fixed-findings"), None
 
 
-def gate(repo, ref, slug, policy):
+def _committed_policy(repo, ref):
+    """Policy + its hash from the COMMITTED .parallax/codex.toml at <ref> (NOT the working tree, which an
+    operator could swap to a permissive one at gate time — v0.24 P0#1). Absent => strict defaults."""
+    raw = _git_show(repo, ref, ".parallax/codex.toml")
+    if raw is None:
+        pol, _ = T.load_policy(None)
+        return pol, T.policy_hash(pol)
+    fd, tmp = tempfile.mkstemp(suffix=".toml")
+    try:
+        os.write(fd, raw.encode()); os.close(fd)
+        pol, _ = T.load_policy(tmp)
+    finally:
+        os.unlink(tmp)
+    return pol, T.policy_hash(pol)
+
+
+def gate(repo, ref, slug):
     rs_path = f".parallax/{slug}/run-state.json"
     raw = _git_show(repo, ref, rs_path)
     if raw is None:
@@ -85,24 +105,42 @@ def gate(repo, ref, slug, policy):
         return False, {"run_state": err}
     if rs.get("status") != "complete":
         return False, {"run_state": f"status={rs.get('status')!r} (require 'complete')"}
+    if rs.get("slug") != slug:                                       # P1#4 — receipts must be THIS feature's
+        return False, {"run_state": f"slug={rs.get('slug')!r} != {slug!r}"}
 
-    # (2) bind to the actual committed tree
+    # policy from the COMMITTED config, never the working tree (P0#1)
+    policy, phash = _committed_policy(repo, ref)
+
+    # bind to the actual committed tree (code changed after review => mismatch => hold)
     want = rs.get("verified_tree")
     got = _code_tree_hash(repo, ref)
     if not want or not got or want != got:
         return False, {"verified_tree": f"receipt {want!r} != recomputed {got!r} (code changed after review, or missing)"}
 
-    # (3) slice set from the COMMITTED run-state; every slice must be integrated
-    slices = rs.get("slices", [])
-    if not slices:
-        return False, {"slices": "run-state lists no slices"}
+    # exact slice-set equality vs the FROZEN, machine-readable manifest (P0#2) — a run cannot drop a slice
+    lockraw = _git_show(repo, ref, f".parallax/{slug}/slices.lock")
+    if lockraw is None:
+        return False, {"slices_lock": f"no committed .parallax/{slug}/slices.lock (frozen slice manifest)"}
+    try:
+        lock = json.loads(lockraw)
+    except Exception as e:
+        return False, {"slices_lock": f"bad json: {e}"}
+    lerr = _validate(lock, _SCHEMA_SLICESLOCK)
+    if lerr:
+        return False, {"slices_lock": lerr}
+    if lock.get("slug") != slug:
+        return False, {"slices_lock": f"slug={lock.get('slug')!r} != {slug!r}"}
+    frozen = set(lock.get("slices", []))
+    rs_ids = set(s.get("id") for s in rs.get("slices", []))
+    if frozen != rs_ids:
+        return False, {"slices_lock": f"run-state slices {sorted(rs_ids)} != frozen {sorted(frozen)}"}
+
     results = {}
     verified = True
-    for s in slices:
+    for s in rs.get("slices", []):
         sid = s.get("id")
         if s.get("status") != "integrated":
-            results[sid] = f"slice status={s.get('status')!r} (not integrated)"; verified = False; continue
-        # (4) the slice's COMMITTED ledger
+            results[sid] = f"status={s.get('status')!r} (not integrated)"; verified = False; continue
         led_path = f".parallax/{slug}/reviews/{sid}.json"
         lraw = _git_show(repo, ref, led_path)
         if lraw is None:
@@ -111,11 +149,15 @@ def gate(repo, ref, slug, policy):
             ledger = json.loads(lraw)
         except Exception as e:
             results[sid] = f"bad ledger json: {e}"; verified = False; continue
-        lerr = _validate(ledger, _SCHEMA_LEDGER)
-        if lerr:
-            results[sid] = lerr; verified = False; continue
+        verr = _validate(ledger, _SCHEMA_LEDGER)
+        if verr:
+            results[sid] = verr; verified = False; continue
+        if ledger.get("slug") != slug:                              # P1#4
+            results[sid] = f"ledger slug={ledger.get('slug')!r} != {slug!r}"; verified = False; continue
         if ledger.get("slice_id") != sid:
             results[sid] = f"identity mismatch: ledger slice_id={ledger.get('slice_id')!r} != {sid!r}"; verified = False; continue
+        if ledger.get("policy_hash") != phash:                      # P0#1 — same policy as committed
+            results[sid] = f"policy_hash {ledger.get('policy_hash')!r} != committed-policy {phash!r}"; verified = False; continue
         if int(ledger.get("rounds_used", 0)) < 1:
             results[sid] = "rounds_used<1 (no verifier round ran)"; verified = False; continue
         if int(ledger.get("rounds_used", 0)) > policy["max_rounds"]:
@@ -134,11 +176,9 @@ def main(argv):
     ap = argparse.ArgumentParser()
     ap.add_argument("--feature-ref", required=True, help="the feature branch/commit being promoted")
     ap.add_argument("--slug", required=True)
-    ap.add_argument("--policy", help="path to the TRUSTED .parallax/codex.toml")
     ap.add_argument("--repo", default=".")
     a = ap.parse_args(argv)
-    policy, _note = T.load_policy(a.policy)
-    okq, results = gate(a.repo, a.feature_ref, a.slug, policy)
+    okq, results = gate(a.repo, a.feature_ref, a.slug)
     print(json.dumps({"verdict": "verified" if okq else "hold", "feature_ref": a.feature_ref, "detail": results}))
     return 0 if okq else 1
 
