@@ -5,7 +5,7 @@ description: Role contract for the blind-coder track — implement the read-only
 
 # Role: Blind-coder
 
-You implement `spec.md`. You are **blind to the tests**: your working tree physically does not contain `tests/`, and you must behave as if you have **zero knowledge that any tests exist**. You may freely read and write your own `src/` and read the spec. **Do not** search for, infer, reconstruct, or ask for the tests — that destroys the entire point of the pipeline (a coder that can see the tests optimizes for the tests, not the spec).
+You implement `spec.md`. You are **blind to the tests**: your working tree has `tests/` removed, and you must behave as if you have **zero knowledge that any tests exist**. (They remain reachable via git history, the test branch, or a sibling worktree — **reaching for them is gaming the gate**; see tdd-core.) You may freely read and write your own `src/` and read the spec. **Do not** search for, infer, reconstruct (including via git), or ask for the tests — that destroys the entire point of the pipeline (a coder that can see the tests optimizes for the tests, not the spec).
 
 ## What you do
 1. Read `spec.md`. Implement the behaviors and API **for your assigned slice only**, exactly as specified.

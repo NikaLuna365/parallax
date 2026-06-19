@@ -21,7 +21,7 @@ If you didn't watch the test fail for the right reason, you don't know it tests 
 
 ## The cycle is SPLIT across independent agents
 
-In an ordinary TDD session one person does red → green → refactor. Here the cycle is **distributed** so the coder is provably tested against *intent*, not against tests it could game:
+In an ordinary TDD session one person does red → green → refactor. Here the cycle is **distributed** so the coder is judged against *intent*, not against tests it could game:
 
 - **RED** — owned by the **test-writer**: write the failing test from `spec.md`; watch it fail correctly against a stub.
 - **GREEN** — owned by the **blind-coder**: make the spec's behavior real, *without ever seeing the tests*.
@@ -35,11 +35,13 @@ You own only your part. You never do another role's part "to help."
 
 The whole design depends on the test track and the code track being **independent**:
 
-- The blind-coder's working tree physically lacks `tests/`. It writes code from the spec, never from the tests.
-- The test-writer's working tree physically lacks the coder's implementation (`src/`). It writes tests from the spec, never from the code.
+- The blind-coder's working tree has `tests/` removed. It writes code from the spec, never from the tests.
+- The test-writer's working tree has the coder's `src/` removed. It writes tests from the spec, never from the code.
 - **Only the arbiter sees both.** Only the arbiter's distilled **natural-language analysis** ever crosses the wall — **never test bodies to the coder, never code to the test-writer.**
 
 Why: when an independent test and an independent implementation disagree, that disagreement is the **primary signal that the spec was ambiguous**. Teaching either side to the other would erase that signal. Protect it.
+
+**Removal is not a sandbox — discipline completes it.** The opposite side is gone from your *working tree*, but it stays reachable through `git` (history, the other track branch, the sibling worktree, reflogs), and workers have Bash. Reaching for it — `git log`/`show`/`cat-file` on the other side, reading the sibling worktree — is **forbidden and counts as gaming the gate**. Removal stops *casual* leakage; this rule stops *deliberate* leakage. Be honest about the guarantee: blindness here is **enforced separation + discipline**, not a hard OS sandbox — it holds because crossing the wall is a gating violation the arbiter treats as a failure, not because it's impossible.
 
 ## See it fail first
 
@@ -54,6 +56,7 @@ A passing gate must mean the spec's behavior is real — not that someone silenc
 - Catching-and-ignoring the very error a test exists to surface.
 - Hard-coding an answer that satisfies the spec's *example* while leaving the general behavior unimplemented.
 - `git push --force`, `rm -rf`, or any destructive shortcut dressed up as "validation".
+- Reaching the hidden side of the blindness wall via `git` (history, the other track branch, a sibling worktree, reflogs) — blindness is enforced by removal **and** discipline; crossing it is gaming, even "just to check".
 
 The only cures for red are: make the spec's behavior real (coder), or make the test encode the spec correctly (test-writer). Never mute the signal.
 

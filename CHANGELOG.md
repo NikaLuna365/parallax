@@ -2,6 +2,13 @@
 
 All notable changes to the tdd plugin. Versions are cumulative.
 
+## 0.15.0 — audit remediation (round 2: correctness & honesty)
+- **P4 (resume, fixed):** the checkpoint now records per-slice code/test branch **SHAs**, the **owed arbiter verdict + verified-diff ref**, and **wave**; plus a run-level **lock lease**. Resume takes an atomic `refs/tdd/lock/<slug>` (compare-and-swap) so two overlapping hourly resumes can't double-run, and continues from the recorded SHA / re-verifies the same diff.
+- **P5 (honesty, fixed):** "blindness" wording downgraded from "provably / physically cannot" to "removed from the working tree" across `tdd-core`, the role contracts, the 6 agent files, and `spec.md`. Added an explicit anti-cheat rule: reaching the hidden side via git (history / other branch / sibling worktree / reflog) is **gaming the gate**. Blindness = enforced separation + discipline, not a hard sandbox.
+- **P6 (modes, wired):** `run.md` Step 2c now has explicit branches for `split` (default), `panel` (arbiter **and** verifier both must pass; verifier mandatory), and `sole` (verifier is the judge; arbiter still runs the checks). The `api` provider form is consumed by `role-codex-judge`.
+- Harness grew to **13 checks** (added `no_overclaims`, `runstate_lock` with an atomic-CAS mutual-exclusion test, `mode_branches`).
+- Deferred (optional v0.16.0): real *physical* track isolation (separate clones per track) if discipline proves insufficient.
+
 ## 0.14.0 — audit remediation (foundation + critical bug fixes)
 - **P1 (data loss, fixed):** parallel slice integration is now **assembly** (`git rm` globs + `git checkout <branch> -- globs`, as Step 2b), **never `git merge`** of the blindfold track branches — merging them propagated their `git rm tests/` / `git rm src/` commits and silently wiped the tree. Three-level contract clarified: merge is **feature → epic** only.
 - **P2 (config, fixed):** `codex.toml.example` reordered so root scalars (`enabled/points/mode/on_missing/timeout_s`) sit above the first `[table]`; previously they were swallowed by `[fallback]`.

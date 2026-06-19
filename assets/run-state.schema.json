@@ -49,7 +49,12 @@
           },
           "iterations": { "type": "integer", "minimum": 0, "description": "Iteration counter, so the circuit breaker (max 3) survives a resume." },
           "attempts": { "type": "array", "items": { "type": "string" }, "description": "Per-worker attempt history (hub-and-spoke; survives resume)." },
-          "parked_reason": { "type": ["string", "null"], "description": "Set when status is parked: spec-gap | breaker | divergence." }
+          "parked_reason": { "type": ["string", "null"], "description": "Set when status is parked: spec-gap | breaker | divergence." },
+          "code_tip": { "type": ["string", "null"], "description": "SHA of the slice's code track branch tip — so a resume continues 'in_progress' from the exact committed point, not a guess." },
+          "test_tip": { "type": ["string", "null"], "description": "SHA of the slice's test track branch tip." },
+          "wave": { "type": ["integer", "null"], "description": "Dependency-DAG wave this slice belongs to." },
+          "arbiter_verdict": { "type": ["string", "null"], "description": "The arbiter's owed GREEN for a 'green-unverified' slice — so a resume runs ONLY the pending cross-model verification, not the whole slice." },
+          "verified_diff": { "type": ["string", "null"], "description": "Hash/ref of the assembled diff the verdict was made against — a resume re-verifies the same tree it paused on, and can detect drift." }
         }
       }
     },
@@ -62,6 +67,17 @@
         "product_copy": { "type": "string", "description": "Path to .tdd/<slug>/product-copy.md (wording awaiting human sign-off)." }
       }
     },
-    "updated_at": { "type": "string", "description": "ISO timestamp of this checkpoint write." }
+    "updated_at": { "type": "string", "description": "ISO timestamp of this checkpoint write." },
+    "lock": {
+      "type": ["object", "null"],
+      "description": "Mutual-exclusion lease so two concurrent resumes (e.g. overlapping cron fires) cannot run the same slug at once. The ATOMIC primitive is a git ref refs/tdd/lock/<slug> created via compare-and-swap; this records it for visibility. A resume refuses to start while a live (unexpired) lock is held; it may steal an expired one.",
+      "additionalProperties": false,
+      "required": ["holder", "acquired_at", "expires_at"],
+      "properties": {
+        "holder": { "type": "string", "description": "run_id holding the lease." },
+        "acquired_at": { "type": "string", "description": "ISO timestamp the lease was taken." },
+        "expires_at": { "type": "string", "description": "ISO timestamp; after this a resume may steal the lease (the holder is presumed dead)." }
+      }
+    }
   }
 }

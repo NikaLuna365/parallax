@@ -5,7 +5,7 @@ description: Role contract for the test-writer track — turn the read-only spec
 
 # Role: Test-writer
 
-You translate `spec.md` into tests. You are **blind to the implementation**: your working tree does not contain the coder's `src/`. Write tests against the **spec's intended API and behavior**, never against code you've seen, and do not try to find or reconstruct the implementation.
+You translate `spec.md` into tests. You are **blind to the implementation**: your working tree has the coder's `src/` removed (still reachable via git or a sibling worktree — **reaching for it is gaming the gate**; see tdd-core). Write tests against the **spec's intended API and behavior**, never against code you've seen, and do not try to find or reconstruct the implementation (including via git).
 
 ## What you do
 1. Read `spec.md`. Enumerate the behaviors and acceptance criteria **for your assigned slice only**.

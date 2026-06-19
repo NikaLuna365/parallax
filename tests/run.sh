@@ -76,6 +76,42 @@ if ls tests/verify-*.sh >/dev/null 2>&1; then
   else ok "verify-*.sh free of the heredoc/pipe bug (read JSON via env var)"; fi
 fi
 
+echo "[no_overclaims]  (locks P5: blindness is honest — removal + discipline, not 'provably/physically cannot')"
+if grep -rEn "provably (blind|tested)|physically (lacks|has no|does not contain|hide)" skills/ agents/ commands/ >/dev/null 2>&1; then
+  no "blindness overclaim phrases still present"; grep -rEn "provably (blind|tested)|physically (lacks|has no|does not contain|hide)" skills/ agents/ commands/ | sed 's/^/      /'
+else ok "no blindness overclaims (honest 'removed from working tree' wording)"; fi
+grep -q "Reaching the hidden side" skills/tdd-core/SKILL.md && ok "tdd-core has the no-peeking-via-git anti-cheat rule" || no "missing the git-peek anti-cheat rule"
+
+echo "[runstate_lock]  (locks P4: resume state completeness + atomic mutual exclusion)"
+python3 - <<'PY' && ok "run-state schema accepts SHAs/verdict/wave/lock; round-trips" || no "run-state schema round-trip"
+import json
+try: import jsonschema
+except ImportError:
+    import sys; print("   (jsonschema not installed — basic check only)");
+schema=json.load(open('assets/run-state.schema.json'))
+sp=schema['properties']['slices']['items']['properties']
+for k in ('code_tip','test_tip','wave','arbiter_verdict','verified_diff'): assert k in sp, f"slice missing {k}"
+assert 'lock' in schema['properties'], "no run-level lock"
+st={"slug":"d","epic":"feature/e","base_tip":"abc","status":"paused-on-limit",
+    "slices":[{"id":"S1","status":"in_progress","code_tip":"aaa","test_tip":"bbb","wave":0,"arbiter_verdict":None,"verified_diff":None}],
+    "lock":{"holder":"run1","acquired_at":"2026-06-19T10:00:00Z","expires_at":"2026-06-19T11:00:00Z"},
+    "updated_at":"2026-06-19T10:00:00Z"}
+try:
+    import jsonschema; jsonschema.validate(st, schema)
+except ImportError: pass
+PY
+LT=$(mktemp -d); ( cd "$LT" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m x
+  A=$(git rev-parse HEAD); Z=0000000000000000000000000000000000000000
+  git update-ref refs/tdd/lock/d "$A" "$Z" 2>/dev/null && r1=win || r1=lose      # create-if-absent
+  git update-ref refs/tdd/lock/d "$A" "$Z" 2>/dev/null && r2=win || r2=lose      # second must fail (exists)
+  [ "$r1" = win ] && [ "$r2" = lose ] ) \
+  && ok "atomic lock: two concurrent CAS acquires -> exactly one wins (no double-run)" || no "lock mutual exclusion"
+rm -rf "$LT"
+
+echo "[mode_branches]  (locks P6: every config mode has a contract branch in run.md)"
+miss=""; for m in split panel sole; do grep -q "\*\*\`$m\`\*\*" commands/run.md || miss="$miss $m"; done
+[ -z "$miss" ] && ok "run.md has a branch for every verifier mode (split / panel / sole)" || no "run.md missing mode branch:$miss"
+
 echo ""
 echo "== $PASS passed, $FAIL failed =="
 [ "$FAIL" -eq 0 ]
