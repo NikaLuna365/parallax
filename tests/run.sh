@@ -220,7 +220,7 @@ elif [ "$R" = OK ]; then ok "schemas reject: fixed-without-codex-proof, a policy
 
 echo "[review_contracts]  (presence — producer-proof wiring is documented)"
 { grep -qi "no anchoring" skills/role-codex-judge/SKILL.md && grep -q "review-round" skills/role-codex-judge/SKILL.md && grep -q "merge-ledger.py" skills/role-codex-judge/SKILL.md && grep -q "reviews/<slice_id>.json" skills/role-codex-judge/SKILL.md; } && ok "role-codex-judge: fresh per-slice review, emits a review-round, mechanical merge" || no "role-codex-judge missing v0.21 producer-proof protocol"
-{ grep -q "scripts/merge-ledger.py" commands/run.md && grep -qF "scripts/triage.py \"\$LEDGER\" --policy .parallax/codex.toml" commands/run.md && grep -q "reviews/\$SID.json" commands/run.md; } && ok "run.md wires merge-ledger + triage(--policy from toml) + per-slice ledger" || no "run.md missing producer-proof pipeline"
+{ grep -q "scripts/merge-ledger.py" commands/run.md && grep -qF "scripts/triage.py \"\$LEDGER\" --policy \"\$POLICY\"" commands/run.md && grep -q "reviews/\$SID.json" commands/run.md && grep -qF 'LEDGER="$ASSEMBLED/$REL_LEDGER"' commands/run.md; } && ok "run.md wires merge-ledger + triage(--policy from committed toml) + per-slice ledger bound to the assembly worktree" || no "run.md missing producer-proof pipeline"
 grep -q "never checked out in parallel" commands/run.md && ok "run.md: feature branch not checked out in parallel (no stale worktree on CAS)" || no "run.md missing no-checkout-in-parallel"
 
 echo "[reviewed_commit]  (v0.23 P0#1 + P1#5 — EXECUTES: commit == reviewed tree + receipt; scoped guard ignores the ledger)"
@@ -228,7 +228,7 @@ bash tests/t_difftree.sh >/tmp/parallax_dt 2>&1 && ok "reviewed-content hash tra
 { grep -qF 'git -C "$ASSEMBLED" ls-files -s' commands/run.md \
   && grep -qF 'git hash-object --stdin' commands/run.md \
   && grep -qF 'git -C "$ASSEMBLED" diff --quiet -- "${SRC_PATHSPECS[@]}"' commands/run.md \
-  && grep -qF 'git -C "$ASSEMBLED" add -- "$LEDGER"' commands/run.md \
+  && grep -qF 'git -C "$ASSEMBLED" add -- "$REL_LEDGER"' commands/run.md \
   && ! grep -qF 'git add -A && git commit' commands/run.md \
   && ! grep -qF 'git -C "$ASSEMBLED" rev-parse "HEAD^{tree}"' commands/run.md; } \
   && ok "run.md 2c: DIFF=reviewed-tree hash, scoped guard, receipt-only add (no 'git add -A && git commit'), no HEAD^{tree}" || no "run.md 2c commit/guard not hardened per v0.23"
@@ -271,6 +271,25 @@ print("OK" if (ok_A and dec=="green") else f"BAD ok_A={ok_A} decision={dec}")
 PY
 R=$(cat /tmp/parallax_rst)
 [ "$R" = OK ] && ok "a re-confirmed fix re-stamps last_verified_diff to the current tree (multi-round slice converges to green)" || { no "re-stamp/convergence wrong"; echo "      $R"; }
+
+echo "[policy_freeze]  (v0.26 P0#2 — EXECUTES: the [review] policy is frozen per run; a mid-run swap PARKS, never re-stamps policy_hash)"
+python3 - <<'PY' >/tmp/parallax_pf 2>&1
+import json,subprocess,tempfile,os
+T=tempfile.mkdtemp(); L=os.path.join(T,"S1.json"); STRICT="assets/codex/codex.toml.example"
+PERM=os.path.join(T,"perm.toml"); open(PERM,"w").write('[review]\nmax_rounds=2\nblock_severities=[]\nadvisory_severities=["low","medium","high"]\nalways_block_kinds=[]\n')
+def merge(rj,policy):
+    p=os.path.join(T,"r.json"); json.dump(rj,open(p,"w"))
+    return subprocess.run(["python3","scripts/merge-ledger.py",L,p,"--slice","S1","--current-diff","a"*40,"--slug","demo","--policy",policy],capture_output=True,text=True).returncode
+r1=merge({"verdict":"concerns","findings":[{"severity":"high","kind":"safety","spec_ref":"s","where":"src/a:1","claim":"c","evidence":"e"}],"resolved":[]}, STRICT)
+h1=json.load(open(L)).get("policy_hash")
+r2=merge({"verdict":"pass","findings":[],"resolved":[]}, PERM)        # mid-run swap to permissive -> must PARK
+h2=json.load(open(L)).get("policy_hash")
+r3=merge({"verdict":"pass","findings":[],"resolved":[]}, STRICT)      # same frozen policy -> proceeds
+print("OK" if (r1==0 and r2!=0 and h1==h2 and r3==0) else f"BAD r1={r1} r2={r2} r3={r3} unchanged={h1==h2}")
+PY
+R=$(cat /tmp/parallax_pf)
+[ "$R" = OK ] && ok "merge-ledger freezes policy_hash: a mid-run policy change PARKS (exit!=0) and never re-stamps; the frozen policy proceeds" || { no "policy not frozen per run"; echo "      $R"; }
+grep -qF 'PARK: review policy changed mid-run' commands/run.md && ok "run.md parks the run on a mid-run policy change (merge-ledger non-zero)" || no "run.md does not park on policy drift"
 
 echo "[pass_through_ledger]  (v0.22 P0#2 — EXECUTES: a Codex 'pass' that omits a prior open finding still blocks)"
 python3 - <<'PY' >/tmp/parallax_ptl 2>&1
@@ -316,20 +335,23 @@ PY
 R=$(cat /tmp/parallax_mlc)
 [ "$R" = OK ] && ok "two same-fingerprint defects stay distinct; resolve-by-id settles exactly one (no data loss)" || { no "merge-ledger collision handling wrong"; echo "      $R"; }
 
-echo "[epic_gate]  (v0.25 P0#1/P0#2/P1#4 — EXECUTES epic-gate.py against REAL git repos: a feature-level receipt bound to the promoted commit)"
+echo "[epic_gate]  (v0.26 — EXECUTES epic-gate.py against REAL git repos: a feature-level receipt bound to the promoted commit)"
 bash tests/t_epic_gate.sh >/tmp/parallax_eg 2>&1; egrc=$?
 if [ "$egrc" = 2 ]; then echo "  · jsonschema not installed — epic-gate execution test skipped";
 elif [ "$egrc" = 0 ]; then ok "epic-gate.py holds on: code-changed-after-review, missing/identity-/slug-mismatched ledger, parked slice, rounds_used<1, status!=complete, dropped slice vs frozen slices.lock, committed-policy swap (policy_hash), internal-slug tamper; verifies only a clean committed complete run"; else no "epic-gate.py (git-based) wrong"; sed 's/^/      /' /tmp/parallax_eg; fi
 bash tests/t_finalize.sh >/tmp/parallax_fin 2>&1 && ok "completion receipt lands on feature/<slug> via worktree+CAS with \$ROOT detached (parallel-safe — v0.24 P1#3)" || { no "finalize on detached HEAD (P1#3)"; sed 's/^/      /' /tmp/parallax_fin; }
-{ grep -qF 'epic-gate.py --feature-ref' commands/run.md \
+bash tests/t_immutable_oid.sh >/tmp/parallax_oid 2>&1 && ok "gate+push pin one immutable OID: pushing the OID sends the verified commit even after the ref moves (pushing the ref sends the moved tip — v0.25 P0#1)" || { no "immutable-OID gate/push (P0#1)"; sed 's/^/      /' /tmp/parallax_oid; }
+{ grep -qF 'epic-gate.py --feature-ref "$VERIFIED_OID"' commands/run.md \
+  && grep -qF 'VERIFIED_OID=$(git -C "$ROOT" rev-parse "$TIP_REF")' commands/run.md \
+  && grep -qF 'push origin "$VERIFIED_OID:' commands/run.md \
   && grep -qF 'scripts/code-tree-hash.sh' commands/run.md \
   && grep -qF 'verified_tree' commands/run.md \
   && grep -qF 'slices.lock' commands/run.md \
-  && grep -qF -- '--slug "$SLUG" --policy .parallax/codex.toml' commands/run.md \
+  && grep -qF -- '--slug "$SLUG" --policy "$POLICY"' commands/run.md \
   && grep -qF 'update-ref "refs/heads/$TIP_REF"' commands/run.md \
   && ! grep -qF -- '--slices' commands/run.md \
   && ! grep -qF 'PARALLAX_VERIFIED' commands/run.md; } \
-  && ok "run.md: epic-gate --feature-ref, verified_tree + slices.lock + policy_hash wiring, worktree+CAS finalize (no --slices / PARALLAX_VERIFIED)" || no "run.md epic gate/finalize not fully wired to the committed-feature-ref gate"
+  && ok "run.md: gate+push use one pinned VERIFIED_OID; verified_tree + slices.lock + policy_hash wiring; worktree+CAS finalize (no --slices / PARALLAX_VERIFIED)" || no "run.md epic gate/finalize/OID not fully wired"
 grep -qF 'is a feature-only license' commands/run.md && ok "run.md: warn = feature push only, never auto-advances the epic" || no "run.md missing warn=feature-only rule"
 
 echo "[no_pyc]  (v0.24 P2 — no compiled bytecode is tracked/shipped)"

@@ -171,11 +171,23 @@ def main(argv):
     a = ap.parse_args(argv)
     ledger = json.load(open(a.ledger)) if os.path.exists(a.ledger) else {}
     rnd = json.load(open(a.round)) if a.round != "-" else json.loads(sys.stdin.read())
-    out = merge(ledger, rnd, a.slice_id, a.current_diff, a.slug)
-    if a.policy:                                  # stamp which policy this ledger was triaged under
+    # The [review] policy is FROZEN per run. The first round records its policy_hash; a LATER round whose
+    # policy differs must NOT silently re-stamp it (that let a mid-run swap to a permissive policy downgrade
+    # a prior `high` block to advisory — v0.25 P0#2). On a mismatch: refuse, PARK, require a fresh review.
+    new_policy_hash = None
+    if a.policy:
         import triage as T
         pol, _ = T.load_policy(a.policy)
-        out["policy_hash"] = T.policy_hash(pol)
+        new_policy_hash = T.policy_hash(pol)
+        prior = ledger.get("policy_hash")
+        if prior is not None and prior != new_policy_hash:
+            print(json.dumps({"error": "policy-changed-mid-run", "frozen_policy_hash": prior,
+                              "current_policy_hash": new_policy_hash,
+                              "detail": "the [review] policy is frozen per run; PARK and require a fresh full review"}))
+            return 4
+    out = merge(ledger, rnd, a.slice_id, a.current_diff, a.slug)
+    if new_policy_hash is not None:               # round 1 records it; later rounds are confirmed-equal above
+        out["policy_hash"] = new_policy_hash
     if a.ledger != "-":
         os.makedirs(os.path.dirname(a.ledger) or ".", exist_ok=True)
         json.dump(out, open(a.ledger, "w"), indent=2)

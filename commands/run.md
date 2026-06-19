@@ -146,8 +146,11 @@ Maintain a per-slice **iteration counter** (max **3**) and a private **attempt h
   - → `codex-judge` (cwd = the **assembled tree**: sequential `$ROOT`; **parallel `$WT/S<n>/assembly`** — the judge must see the tree actually under review, not the shared root): *"Review slice `S.id`. Spec: `.parallax/<slug>/spec.md` §<sections>. Assembled tree: current `src/` + `tests/` for this slice. Validation output: «<the gates you just ran>». Prior findings to regression-check FIRST: «<the open+fixed findings from `.parallax/<slug>/reviews/S<n>.json`, **with their ids**>». Run the verifier read-only per your skills; emit a **review round** (`assets/codex/review-round.schema.json`): the findings you see now (echo the **id** of any prior finding you are re-reporting) + the prior ones you positively re-verified as `resolved` (cite their **id**, so a fix is matched precisely even when two defects share a file+section). Do not judge, filter, or merge it yourself."*
   - **The verifier round is dispositioned MECHANICALLY — a `pass` does NOT bypass the ledger.** Whatever the verdict (`pass` **or** `concerns`), do **not** commit by hand: fold the round into the per-slice ledger and let `triage.py` decide. A bare `pass` that merely omits a still-open prior finding must not slip through — `triage.py` re-judges the **whole** ledger, so any prior `open`/`regressed` finding the verifier did not positively list under `resolved` is still live and still blocks (verified: routing such a pass through merge+triage yields `escalate`/`block`, never green). Claude never authors the ledger or decides green by hand:
     ```bash
-    SID="S<n>"; LEDGER=".parallax/$SLUG/reviews/$SID.json"           # ONE ledger PER SLICE
+    SID="S<n>"
     ASSEMBLED="$ROOT"                                                 # sequential; PARALLEL: "$WT/$SID/assembly"
+    REL_LEDGER=".parallax/$SLUG/reviews/$SID.json"                    # ONE ledger PER SLICE
+    LEDGER="$ASSEMBLED/$REL_LEDGER"                                   # bind paths to the worktree under review,
+    POLICY="$ASSEMBLED/.parallax/codex.toml"                          # not the shell cwd (parallel: $ASSEMBLED != $ROOT)
     SRC_PATHSPECS=(  ':(glob)src/**'  )                              # = Step 1 (re-declared; shell state doesn't persist)
     TEST_PATHSPECS=( ':(glob)tests/**'  ':(glob)**/*.test.*' )
     # Guard ONLY the reviewed scope (src+tests), NEVER .parallax/: the review ledger is metadata that
@@ -160,9 +163,11 @@ Maintain a per-slice **iteration counter** (max **3**) and a private **attempt h
     # DIFF = content hash of EXACTLY the reviewed code+tests in the index (mode+blob+path per file) —
     # the tree Codex reviewed. Stable against .parallax/ churn, and never HEAD^{tree} (v0.21/v0.22 P0#1).
     DIFF=$(git -C "$ASSEMBLED" ls-files -s -- "${SRC_PATHSPECS[@]}" "${TEST_PATHSPECS[@]}" | git hash-object --stdin)
-    python3 scripts/merge-ledger.py "$LEDGER" "$ROUND_JSON" --slice "$SID" --current-diff "$DIFF" --slug "$SLUG" --policy .parallax/codex.toml   # --policy stamps the policy_hash epic-gate later checks
-    python3 scripts/triage.py "$LEDGER" --policy .parallax/codex.toml --current-diff "$DIFF"; case $? in   # 0 green / 1 block / 2 escalate
-      0) git -C "$ASSEMBLED" add -- "$LEDGER"      # reviewed src+tests are ALREADY staged by 2b assembly; stage ONLY the receipt. NEVER 'git add -A' (it would sweep in un-reviewed untracked files — v0.22 P0#1). Committing the index = reviewed tree + receipt, nothing else.
+    # merge-ledger stamps the [review] policy_hash (FROZEN per run); a mid-run policy change => exit!=0 => PARK.
+    python3 scripts/merge-ledger.py "$LEDGER" "$ROUND_JSON" --slice "$SID" --current-diff "$DIFF" --slug "$SLUG" --policy "$POLICY" \
+      || { echo "PARK: review policy changed mid-run (frozen per run) — requires a fresh full review"; exit 2; }
+    python3 scripts/triage.py "$LEDGER" --policy "$POLICY" --current-diff "$DIFF"; case $? in   # 0 green / 1 block / 2 escalate
+      0) git -C "$ASSEMBLED" add -- "$REL_LEDGER"      # reviewed src+tests already staged by 2b; stage ONLY the receipt. NEVER 'git add -A' (it would sweep in un-reviewed untracked files — v0.22 P0#1). Committing the index = reviewed tree + receipt.
          git -C "$ASSEMBLED" commit -q -m "$SID ${S.id}: green (reviewed tree + review receipt)";;
       1) echo "BLOCK: route each blocker to its fault side, fix, then re-review (FRESH verifier, +1 round)";;
       2) echo "ESCALATE/PARK: escalation queue (finding + Claude's ledgered rebuttal, if contesting)";;
@@ -193,28 +198,16 @@ A slice can take several review rounds. Two things make that converge instead of
 ## Step 3 — Final whole-feature check
 After the last slice greens, run the contract's **full check + lint + typecheck + build** once more on the complete integration tree, **and re-verify that every integration seam in `slices.md` still resolves from its entry point** (a later slice can regress a re-export an earlier seam relied on) — to catch cross-slice regressions at the seams. If red, treat it as a new arbiter pass (route per 2c) for the offending slice. Only an all-green, all-seams-resolve whole feature proceeds.
 
-## Step 4 — Push (automatic, only after full green)
-The feature branch was created for exactly this, so push it without a separate prompt — **but** with guardrails:
+## Step 4 — Finalize, pin, push, advance (automatic, only after full green)
+After Step 3 is green: **finalize the completion receipt first**, then **pin the verified commit as an immutable OID** and use that *same OID* for the gate **and** every push. Pinning closes a TOCTOU — checking a symbolic ref and then pushing it lets the branch move to an unverified commit B between check and push, sending B to the epic (v0.25 P0#1) — and it keeps the remote feature from lagging the commit that enters the epic (the receipt is added *before* the feature push, v0.25). We never push broken code; the arbiter's verdict + the gated receipt are the gate.
 ```bash
 PREFIX="$(awk -F'"' '/^\[git\]/{g=1} g&&/^branch_prefix/{print $2; exit}' .parallax/codex.toml 2>/dev/null)"; PREFIX="${PREFIX:-feature/}"   # same as Step 1
-if git remote get-url origin >/dev/null 2>&1; then
-  git push -u origin "${PREFIX}$SLUG"     # NEVER --force
-else
-  echo "No 'origin' remote — branch ${PREFIX}$SLUG is ready locally; push manually."
-fi
-```
-- Push **only** after Step 3 is green (we never push broken code — the arbiter's verdict is the gate).
-- Never force-push. If the remote rejects (non-fast-forward on a re-run), report it and stop — do not overwrite remote history.
-- **Product-copy hold.** If any slice in this feature created or changed strings the spec marked as **product copy** (user-facing wording — dictionary text, labels, bot/UI messages), stop **before** advancing the epic and get an explicit human OK on the *words*. A green build proves the copy is wired correctly, not that it says the right thing; wording is a product decision, not an engineering one. (Numbers inside those strings are already constant-sourced per the money checklist — only the language needs sign-off.) Keep the feature out of the epic until approved.
-
-**Advancing the epic** (after the feature is green, pushed, and any product copy is approved) follows the **epic-integration contract** (see Standing rules: invariant / content / transport) — **but first a hard verification gate, because the epic is append-only.** The gate is a **feature-level receipt bound to the actual promoted commit**, computed by `scripts/epic-gate.py` entirely from the COMMITTED feature ref (never the working tree, never a CLI-supplied slice list, never a preset flag). It reads `run-state.json`, the frozen `slices.lock` manifest, every slice ledger **and the `[review]` policy** via `git show <feature-ref>:…`, and requires: `status = complete` and the run-state `slug` == this feature; the run-state slice set EQUALS the frozen `slices.lock` set (no silently-dropped slice); **every** slice `integrated`; each ledger's `slug` + `slice_id` **identity**, its `policy_hash` == the **committed** policy's hash (triaged under the policy that's committed, not a swapped-in permissive one), `rounds_used ≥ 1`, and a GREEN triage under that committed policy; and the run-state `verified_tree` == the **recomputed** code-tree hash of the promoted commit (a code change after review is caught). Any failure ⇒ **hold**: push the **feature** branch for human review but **do NOT advance the epic**; park an *epic-hold* escalation. Only when the gate passes does a fully **VERIFIED** feature advance the epic automatically. So first finalize the receipt, then gate, then (if verified) fetch and advance by a non-force push:
-```bash
 TIP_REF="${PREFIX}$SLUG"
 TIP=$(git -C "$ROOT" rev-parse "$TIP_REF")
-# (a) Finalize the feature-level receipt ON the feature ref. Autonomous/parallel leaves $ROOT DETACHED, so
-#     a plain `git commit` would land on detached HEAD — never on feature/<slug> — and the gate would read
-#     status!=complete and HOLD a correct run (v0.24 P1#3). Build the receipt in a TRANSIENT detached
-#     worktree on the tip and advance the branch by a CAS update-ref, exactly like parallel integration.
+# (a) Finalize the feature-level receipt ON the feature ref. Autonomous/parallel leaves $ROOT DETACHED, so a
+#     plain `git commit` would land on detached HEAD — never on feature/<slug> — and the gate would read
+#     status!=complete and HOLD a correct run (v0.24 P1#3). Build the receipt in a TRANSIENT detached worktree
+#     on the tip and advance the branch by a CAS update-ref, exactly like parallel integration.
 FWT="$(dirname "$ROOT")/.parallax-wt/$SLUG-finalize"
 git -C "$ROOT" worktree add -q --detach "$FWT" "$TIP"
 VT=$(bash "$ROOT/scripts/code-tree-hash.sh" HEAD "$FWT")
@@ -224,16 +217,31 @@ VT=$(bash "$ROOT/scripts/code-tree-hash.sh" HEAD "$FWT")
     && git commit -q -m "$SLUG: run complete (feature-level verified_tree receipt)" )
 git -C "$ROOT" update-ref "refs/heads/$TIP_REF" "$(git -C "$FWT" rev-parse HEAD)" "$TIP"   # CAS: lands the receipt on feature even when $ROOT is detached
 git -C "$ROOT" worktree remove --force "$FWT"
-# (b) HARD HOLD computed by epic-gate.py FROM THE COMMITTED feature ref (it reads run-state, slices.lock,
-#     every ledger and the policy via `git show $TIP_REF:…` — never the working tree). Bound to this commit.
-if ! python3 scripts/epic-gate.py --feature-ref "$TIP_REF" --slug "$SLUG"; then
+# (b) PIN the verified commit as an immutable OID — gate THIS and push THIS, never the moving ref.
+VERIFIED_OID=$(git -C "$ROOT" rev-parse "$TIP_REF")
+# (c) Push the FEATURE branch AT the pinned OID, so the remote feature == exactly what the gate checks and
+#     what may enter the epic (no lag, no re-resolution). NEVER --force.
+if git -C "$ROOT" remote get-url origin >/dev/null 2>&1; then
+  git -C "$ROOT" push origin "$VERIFIED_OID:refs/heads/$TIP_REF"
+else
+  echo "No 'origin' remote — $TIP_REF is ready locally at $VERIFIED_OID; push manually."
+fi
+```
+- Never force-push. If the remote rejects (non-fast-forward on a re-run), report it and stop — do not overwrite remote history.
+- **Product-copy hold.** If any slice in this feature created or changed strings the spec marked as **product copy** (user-facing wording — dictionary text, labels, bot/UI messages), stop **before** advancing the epic and get an explicit human OK on the *words*. A green build proves the copy is wired correctly, not that it says the right thing; wording is a product decision, not an engineering one. (Numbers inside those strings are already constant-sourced per the money checklist — only the language needs sign-off.) Keep the feature out of the epic until approved.
+
+**Advancing the epic** (after the feature is green, pushed, and any product copy is approved) follows the **epic-integration contract** (see Standing rules: invariant / content / transport) — **but first a hard verification gate, because the epic is append-only.** The gate is a **feature-level receipt bound to the actual promoted commit**, computed by `scripts/epic-gate.py` entirely from the COMMITTED feature commit (never the working tree, never a CLI-supplied slice list, never a preset flag). It reads `run-state.json`, the frozen `slices.lock` manifest, every slice ledger **and the `[review]` policy** via `git show <commit>:…`, and requires: `status = complete` and the run-state `slug` == this feature; the run-state slice set EQUALS the frozen `slices.lock` set (no silently-dropped slice); **every** slice `integrated`; each ledger's `slug` + `slice_id` **identity**, its `policy_hash` == the **committed** policy's hash (triaged under the policy that's committed, frozen per run, not a swapped-in permissive one), `rounds_used ≥ 1`, and a GREEN triage under that committed policy; and the run-state `verified_tree` == the **recomputed** code-tree hash of the promoted commit (a code change after review is caught). Any failure ⇒ **hold**: the feature branch is already pushed for human review but the epic is **not** advanced; park an *epic-hold* escalation. Gate the **pinned OID** and advance the epic to that **same OID**:
+```bash
+# (d) HARD HOLD: gate the PINNED commit (not the moving ref).
+if ! python3 scripts/epic-gate.py --feature-ref "$VERIFIED_OID" --slug "$SLUG"; then
   echo "HOLD: feature is UNVERIFIED per the committed feature-level receipt — feature pushed for review; epic NOT advanced (append-only). Parking an epic-hold escalation."
   exit 0
 fi
+# (e) Advance the epic to the SAME pinned OID — immutable across the gate->push window (no TOCTOU, v0.25 P0#1).
 git fetch origin "<epic>"
-git push origin "${PREFIX}$SLUG:<epic>"   # rejected if NOT a fast-forward — never --force  (PREFIX as in Step 1; epic should share the namespace)
+git push origin "$VERIFIED_OID:refs/heads/<epic>"   # rejected if NOT a fast-forward — never --force  (epic should share the PREFIX namespace)
 ```
-- If that push is **rejected** (`origin/<epic>` has advanced), do a **real merge**: in a transient checkout of `origin/<epic>`, `git merge` the feature tip, **run the full validation suite on the merged tree**, then non-force push and tear the checkout down. Never rebase/squash/rebuild to dodge the merge.
+- If that push is **rejected** (`origin/<epic>` has advanced), do a **real merge**: in a transient checkout of `origin/<epic>`, `git merge "$VERIFIED_OID"` (the pinned tip), **run the full validation suite on the merged tree**, then non-force push and tear the checkout down. Never rebase/squash/rebuild to dodge the merge.
 - **Never push `main`.** The pipeline does not write to `main` under any circumstances — epic → `main` goes only through a PR with CI and external human review, merged as a **merge commit, not a squash** (a squash voids the "epic ⊆ main" ancestor check). The pipeline's green is *necessary, not sufficient* for shipping.
 
 ## Step 5 — Clean up
