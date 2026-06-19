@@ -30,6 +30,15 @@ on_missing = "refuse"
 timeout_s  = 600
 
 
+# Git branch namespace for everything the pipeline creates/pushes — the feature branch,
+# the track branches, the lock, and the epic it integrates into. Default "feature/".
+# For Claude Code *web (cloud) routines* — which run with the laptop OFF but allow pushes
+# only to claude/* — set "claude/" so the whole run stays inside the allowed namespace
+# (no need to loosen branch protection). Secrets are NEVER here; they come from env vars.
+[git]
+branch_prefix = "feature/"
+
+
 # === Verifier provider chain ===
 # The judge always runs a model that is NOT Claude — that independence is the whole
 # point. Fallbacks are tried in order when the previous provider is rate-limited or

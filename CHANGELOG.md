@@ -2,6 +2,13 @@
 
 All notable changes to the tdd plugin. Versions are cumulative.
 
+## 0.16.0 — laptop-off (cloud) runs + secret hygiene
+- **Configurable branch namespace:** `[git] branch_prefix` (default `feature/`, set `claude/` for Claude Code **web/cloud routines**, whose push policy allows only `claude/*`). Consumed by `run.md` (Step 1 branch/worktree setup, Step 4 push, the lock ref) and `spec.md` freeze — so an autonomous run can execute in the cloud **with the laptop off** without loosening branch protection.
+- **Cloud setup:** `scripts/cloud-setup.sh` — the routine "Setup script": installs the codex/gemini CLIs + project deps, checks secret presence (never prints values), reminds the prefix.
+- **Secret hygiene:** `SECURITY.md` + `.gitignore`. The repo never carries secrets — the config holds only env-var *names*; values come from the shell env (local) or the routine Environment (cloud). README gained a **Scheduling** section (cloud vs desktop vs cron; laptop-off ⇒ cloud web routine).
+- Harness → **17 checks** (added `branch_prefix`, `security_no_secrets`, `cloud_setup`); lock test ref aligned to the namespaced form.
+- This is enablement + docs, not new pipeline behavior — the local default (`feature/`) is unchanged.
+
 ## 0.15.0 — audit remediation (round 2: correctness & honesty)
 - **P4 (resume, fixed):** the checkpoint now records per-slice code/test branch **SHAs**, the **owed arbiter verdict + verified-diff ref**, and **wave**; plus a run-level **lock lease**. Resume takes an atomic `refs/tdd/lock/<slug>` (compare-and-swap) so two overlapping hourly resumes can't double-run, and continues from the recorded SHA / re-verifies the same diff.
 - **P5 (honesty, fixed):** "blindness" wording downgraded from "provably / physically cannot" to "removed from the working tree" across `tdd-core`, the role contracts, the 6 agent files, and `spec.md`. Added an explicit anti-cheat rule: reaching the hidden side via git (history / other branch / sibling worktree / reflog) is **gaming the gate**. Blindness = enforced separation + discipline, not a hard sandbox.

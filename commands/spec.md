@@ -83,7 +83,7 @@ This is stricter than ordinary brainstorming, and the reason is structural. In `
      - *Autonomous (`--from-doc`):* there is no human OK — the machine self-review (step 8) **and** the passed Codex pre-freeze review **are** the gate. Freeze only if the self-review is clean and Codex returns `pass` (or every finding is resolved into the spec / decision-log and re-checked). Any unresolved `high`/`safety` finding blocks the freeze → escalation queue (`.tdd/<slug>/escalations.md`); autonomy never ships a spec it couldn't certify. If `codex` is unavailable, honor `on_missing` from the config (`refuse`, or `warn` + stamp `UNVERIFIED`).
 
 10. **Freeze.** On a passed gate only (interactive: explicit human OK; autonomous: clean self-review **and** Codex `pass`):
-    - Confirm/derive a feature slug and create branch `feature/<slug>` from the current HEAD.
+    - Confirm/derive a feature slug and create branch `<prefix><slug>` from the current HEAD (`<prefix>` from `.tdd/codex.toml` `[git] branch_prefix`, default `feature/`; set `claude/` for Claude Code web/cloud routines).
     - Create the directory `.tdd/<slug>/` and write `.tdd/<slug>/spec.md`, `.tdd/<slug>/slices.md`, `.tdd/<slug>/validation.md` into it (per-feature subdirectory — never the `.tdd/` root — so sibling feature branches can't collide on these paths at merge).
     - Commit them to `feature/<slug>` (these artifacts live in `.tdd/<slug>/`, which every worktree keeps; only the project's `src/`/`tests/` get sparsely hidden).
     - Tell the user: spec frozen on `feature/<slug>` — run **`/tdd:run`** to build it.

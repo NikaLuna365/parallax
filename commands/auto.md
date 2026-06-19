@@ -27,6 +27,7 @@ Run the full pipeline end-to-end from a written **brief**, with no human gates, 
 
 - `cron` / CI → `claude -p "/tdd:auto <brief-path>"` at a specific date/time or on a cadence.
 - Cowork → a scheduled task that runs the same line (a feature of the environment, not of this plugin).
+- **Laptop off?** `cron` and Cowork desktop tasks only run while the machine is **awake**. For a run that proceeds with the laptop **off**, use a **Claude Code web (cloud) scheduled task** — it runs in Anthropic's cloud from a fresh clone, so: keep the plugin in the repo, install the CLIs via `scripts/cloud-setup.sh`, supply secrets via the routine **Environment variables** (never the repo), and set `[git] branch_prefix = "claude/"` (cloud routines push only `claude/*`). See README → *Scheduling* and `SECURITY.md`.
 
 "Run it at 2am" or "every Monday" is the scheduler's job, not the command's. Every guarantee holds unattended: the base is re-fetched from `origin/<epic>`; anything genuinely ambiguous is parked, not guessed; nothing reaches `main` without a human; deps are provisioned per worktree. **Idempotency:** the same brief writes the same `.tdd/<slug>/`; on a repeat run, continue the unfinished slices or refuse on an already-open run — never duplicate or trample an in-flight cycle.
 

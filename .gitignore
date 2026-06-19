@@ -1,2 +1,13 @@
+# build artifacts
 *.zip
 *.bundle
+
+# secrets — NEVER commit (see SECURITY.md). The plugin references env-var NAMES only.
+.env
+.env.*
+.envrc
+*.token
+*_secret*
+*.secret
+*.pem
+.tdd/**/secret*

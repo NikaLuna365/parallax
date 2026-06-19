@@ -102,8 +102,8 @@ except ImportError: pass
 PY
 LT=$(mktemp -d); ( cd "$LT" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m x
   A=$(git rev-parse HEAD); Z=0000000000000000000000000000000000000000
-  git update-ref refs/tdd/lock/d "$A" "$Z" 2>/dev/null && r1=win || r1=lose      # create-if-absent
-  git update-ref refs/tdd/lock/d "$A" "$Z" 2>/dev/null && r2=win || r2=lose      # second must fail (exists)
+  git update-ref refs/heads/feature/lock/d "$A" "$Z" 2>/dev/null && r1=win || r1=lose      # create-if-absent
+  git update-ref refs/heads/feature/lock/d "$A" "$Z" 2>/dev/null && r2=win || r2=lose      # second must fail (exists)
   [ "$r1" = win ] && [ "$r2" = lose ] ) \
   && ok "atomic lock: two concurrent CAS acquires -> exactly one wins (no double-run)" || no "lock mutual exclusion"
 rm -rf "$LT"
@@ -111,6 +111,26 @@ rm -rf "$LT"
 echo "[mode_branches]  (locks P6: every config mode has a contract branch in run.md)"
 miss=""; for m in split panel sole; do grep -q "\*\*\`$m\`\*\*" commands/run.md || miss="$miss $m"; done
 [ -z "$miss" ] && ok "run.md has a branch for every verifier mode (split / panel / sole)" || no "run.md missing mode branch:$miss"
+
+echo "[branch_prefix]  (v0.16: branch namespace configurable + consumed — cloud claude/* compat)"
+python3 - <<'PY' && ok "config has [git] branch_prefix (default feature/)" || no "[git] branch_prefix missing/wrong"
+import tomllib
+d=tomllib.load(open('assets/codex/codex.toml.example','rb'))
+assert d['git']['branch_prefix']=="feature/", d.get('git')
+PY
+{ grep -q 'PREFIX=' commands/run.md && grep -q '${PREFIX}$SLUG' commands/run.md; } && ok "run.md reads PREFIX and uses it for branch create/push/lock" || no "run.md does not consume branch_prefix"
+grep -q 'branch_prefix' commands/spec.md && ok "spec.md freeze honors branch_prefix" || no "spec.md freeze hardcodes feature/"
+
+echo "[security_no_secrets]  (v0.16: repo carries env-var NAMES, never secret values)"
+if grep -qE 'sk-[A-Za-z0-9]{16,}|AIza[0-9A-Za-z_-]{20,}|[0-9]{6,}:[A-Za-z0-9_-]{20,}' assets/codex/codex.toml.example; then
+  no "config example contains a secret-shaped value"
+else ok "config example has no secret-shaped values (only *_env names)"; fi
+[ -f SECURITY.md ] && ok "SECURITY.md present" || no "SECURITY.md missing"
+grep -q '^\.env$' .gitignore && ok ".gitignore excludes .env" || no ".gitignore missing .env"
+
+echo "[cloud_setup]  (v0.16: laptop-off cloud-routine setup)"
+{ [ -f scripts/cloud-setup.sh ] && grep -q 'branch_prefix' scripts/cloud-setup.sh; } && ok "scripts/cloud-setup.sh present (installs CLIs/deps, reminds branch_prefix)" || no "cloud-setup.sh missing/incomplete"
+grep -qiE 'web \(cloud\) routine|web scheduled task|Claude Code web' README.md commands/auto.md && ok "docs cover laptop-off = cloud web routine" || no "laptop-off cloud guidance missing"
 
 echo ""
 echo "== $PASS passed, $FAIL failed =="

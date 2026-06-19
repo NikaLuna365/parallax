@@ -8,6 +8,8 @@ argument-hint: "[feature-slug]   [--autonomous]  [--parallel]   [--resume]"
 
 You are the **orchestrator** for Phase 2-5. You author **no code and no tests** — you set up git, dispatch the blind workers and the arbiter, route their results, and manage the branch. Workers and the arbiter do all authoring/judging via their own skills.
 
+> **Branch namespace.** Throughout this doc `feature/` is the **default** prefix for everything the pipeline creates/pushes (the feature branch, track branches, lock, epic). It is **configurable** via `.tdd/codex.toml` `[git] branch_prefix` and read into `PREFIX` at Step 1. For a Claude Code **web (cloud) routine** (which runs with the laptop off but permits pushes only to `claude/*`), set `branch_prefix = "claude/"`; then wherever you see `feature/<slug>` below, use `${PREFIX}<slug>`. The default keeps local behaviour identical.
+
 ## The blindness model (why the git dance exists)
 
 - The **coder** works in a worktree whose branch has **no test files** — it cannot teach-to-the-test because it cannot see the tests.
@@ -49,13 +51,16 @@ You are the **orchestrator** for Phase 2-5. You author **no code and no tests** 
 ```bash
 ROOT=$(git rev-parse --show-toplevel)
 SLUG="<slug>"
+# Branch namespace — default "feature/", configurable via .tdd/codex.toml [git] branch_prefix.
+# Set "claude/" for Claude Code WEB (cloud) routines (laptop-off), whose push policy allows only claude/*.
+PREFIX="$(awk -F'"' '/^\[git\]/{g=1} g&&/^branch_prefix/{print $2; exit}' .tdd/codex.toml 2>/dev/null)"; PREFIX="${PREFIX:-feature/}"
 WT="$(dirname "$ROOT")/.tdd-wt/$SLUG"        # worktrees live OUTSIDE the repo
-git switch "feature/$SLUG"
+git switch "${PREFIX}$SLUG"
 
-git branch "feature/$SLUG-code" "feature/$SLUG" 2>/dev/null || true
-git branch "feature/$SLUG-test" "feature/$SLUG" 2>/dev/null || true
-git worktree add "$WT/code" "feature/$SLUG-code"
-git worktree add "$WT/test" "feature/$SLUG-test"
+git branch "${PREFIX}$SLUG-code" "${PREFIX}$SLUG" 2>/dev/null || true
+git branch "${PREFIX}$SLUG-test" "${PREFIX}$SLUG" 2>/dev/null || true
+git worktree add "$WT/code" "${PREFIX}$SLUG-code"
+git worktree add "$WT/test" "${PREFIX}$SLUG-test"
 
 # Provision gitignored build deps in EACH worktree (from validation.md -> Provisioning).
 # A freshly-added worktree has no node_modules / generated clients, so done-gates would
@@ -153,10 +158,11 @@ After the last slice greens, run the contract's **full check + lint + typecheck 
 ## Step 4 — Push (automatic, only after full green)
 The feature branch was created for exactly this, so push it without a separate prompt — **but** with guardrails:
 ```bash
+PREFIX="$(awk -F'"' '/^\[git\]/{g=1} g&&/^branch_prefix/{print $2; exit}' .tdd/codex.toml 2>/dev/null)"; PREFIX="${PREFIX:-feature/}"   # same as Step 1
 if git remote get-url origin >/dev/null 2>&1; then
-  git push -u origin "feature/$SLUG"     # NEVER --force
+  git push -u origin "${PREFIX}$SLUG"     # NEVER --force
 else
-  echo "No 'origin' remote — branch feature/$SLUG is ready locally; push manually."
+  echo "No 'origin' remote — branch ${PREFIX}$SLUG is ready locally; push manually."
 fi
 ```
 - Push **only** after Step 3 is green (we never push broken code — the arbiter's verdict is the gate).
@@ -166,7 +172,7 @@ fi
 **Advancing the epic** (after the feature is green, pushed, and any product copy is approved) follows the **epic-integration contract** (see Standing rules: invariant / content / transport). Fetch first, then in the common case where the feature is linearly ahead of `origin/<epic>` the merge is degenerate and needs no checkout — advance the ref by a non-force push:
 ```bash
 git fetch origin "<epic>"
-git push origin "feature/$SLUG:<epic>"   # rejected if NOT a fast-forward — never --force
+git push origin "${PREFIX}$SLUG:<epic>"   # rejected if NOT a fast-forward — never --force  (PREFIX as in Step 1; epic should share the namespace)
 ```
 - If that push is **rejected** (`origin/<epic>` has advanced), do a **real merge**: in a transient checkout of `origin/<epic>`, `git merge` the feature tip, **run the full validation suite on the merged tree**, then non-force push and tear the checkout down. Never rebase/squash/rebuild to dodge the merge.
 - **Never push `main`.** The pipeline does not write to `main` under any circumstances — epic → `main` goes only through a PR with CI and external human review, merged as a **merge commit, not a squash** (a squash voids the "epic ⊆ main" ancestor check). The pipeline's green is *necessary, not sufficient* for shipping.
@@ -224,7 +230,7 @@ Written **eagerly** — after every state transition (a slice integrated, parked
 
 ### Resume (`--resume <slug>`, hourly)
 A resume is a normal headless invocation that happens to find a paused checkpoint:
-1. **Take the run lease (mutual exclusion).** Atomically create `refs/tdd/lock/<slug>` by compare-and-swap: `git update-ref refs/tdd/lock/<slug> <run_id> 0000000000000000000000000000000000000000` (the all-zero old-value means "create only if absent"; the command fails otherwise). If a **live** lock is held (the checkpoint's `lock.expires_at` hasn't passed) → **another resume is already running, exit now** — this is what stops two overlapping hourly fires from double-running the slug. If the lock exists but is **expired**, steal it (force-update). Renew `expires_at` as you work; **release** it (`git update-ref -d refs/tdd/lock/<slug>`) on pause or completion.
+1. **Take the run lease (mutual exclusion).** Atomically create the lock ref `refs/heads/${PREFIX}lock/<slug>` by compare-and-swap: `git update-ref refs/heads/${PREFIX}lock/<slug> <run_id> 0000000000000000000000000000000000000000` (the all-zero old-value means "create only if absent"; the command fails otherwise). It lives under the configured branch namespace, so a **cloud routine can push it to origin** for shared mutual exclusion across fresh clones, within the `claude/*` policy. If a **live** lock is held (the checkpoint's `lock.expires_at` hasn't passed) → **another resume is already running, exit now** — this is what stops two overlapping hourly fires from double-running the slug. If the lock exists but is **expired**, steal it (force-update). Renew `expires_at` as you work; **release** it (`git update-ref -d refs/heads/${PREFIX}lock/<slug>`, and delete it on origin for a cloud run) on pause or completion.
 2. Re-fetch `origin/<epic>` and re-run the **provenance** check (a resume must still start from the fresh remote tip — Step 0.6), then rebuild/verify the per-slice worktrees **at their recorded `code_tip`/`test_tip`**.
 3. **Fail fast if still limited:** try one cheap operation; if the limit is still in force, re-checkpoint `paused-on-limit`, **release the lease**, and exit — don't burn quota idling.
 4. Otherwise continue from the checkpoint: skip `integrated` slices; for a `green-unverified` slice run **only** the owed verification against its recorded `verified_diff` (don't rebuild it); resume `in_progress` slices from their `code_tip`/`test_tip`; dispatch `pending` slices as their deps integrate. Idempotent — nothing already done is redone.
