@@ -26,8 +26,8 @@ has(){ git ls-files | grep -qx "$1"; }
 
 # 1) DIFF integration (the fix) — both slices of the wave survive
 build "$T/d"
-intg(){ git diff "$WB" "${PFX}demo-S$1-code" -- "$SRC" | git apply --3way --index 2>/dev/null
-        git diff "$WB" "${PFX}demo-S$1-test" -- "$TST" | git apply --3way --index 2>/dev/null
+intg(){ git diff --binary "$WB" "${PFX}demo-S$1-code" -- "$SRC" | git apply --3way --index --binary 2>/dev/null
+        git diff --binary "$WB" "${PFX}demo-S$1-test" -- "$TST" | git apply --3way --index --binary 2>/dev/null
         git commit -q -m "intg S$1"; }
 intg 1; intg 2
 { has src/S1.txt && has src/S2.txt && has tests/S1.test.txt && has tests/S2.test.txt; } \

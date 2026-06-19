@@ -59,32 +59,42 @@ nblk=$(cat /tmp/parallax_nblk); bad=0
 for i in $(seq 0 $((nblk-1))); do bash -n "/tmp/parallax_blk$i.sh" 2>/tmp/parallax_syn || { bad=1; echo "      block $i: $(cat /tmp/parallax_syn)"; }; done
 [ "$bad" = 0 ] && ok "all $nblk run.md bash blocks pass bash -n" || no "a run.md bash block has a shell syntax error"
 
-echo "[integration]  (EXECUTES the parallel wave — locks P0 #1 data-loss + #2 branch prefix)"
+echo "[integration]  (EXECUTES the parallel wave — locks v0.19 #1 data-loss + #2 assembly worktree + #3 transactional + #4 binary)"
 bash tests/t_assembly.sh feature/ >/tmp/parallax_int1 2>&1 && ok "per-slice diff integration preserves a 2-slice wave (prefix feature/)" || { no "integration (feature/)"; sed 's/^/      /' /tmp/parallax_int1; }
 bash tests/t_assembly.sh claude/  >/tmp/parallax_int2 2>&1 && ok "same works under a non-default prefix (claude/ — cloud routine)" || { no "integration (claude/)"; sed 's/^/      /' /tmp/parallax_int2; }
-grep -q "per-slice DIFF" commands/run.md && ok "run.md documents per-slice DIFF integration (not mirror)" || no "run.md still documents mirror integration"
+bash tests/t_binary.sh   >/tmp/parallax_bin  2>&1 && ok "binary files integrate via 'git diff --binary | git apply --binary' (a plain diff fails)" || { no "binary integration (#4)"; sed 's/^/      /' /tmp/parallax_bin; }
+bash tests/t_conflict.sh >/tmp/parallax_cflt 2>&1 && ok "transactional: a wave conflict rolls back in the assembly worktree; feature/<slug> never moves" || { no "transactional integration (#2/#3)"; sed 's/^/      /' /tmp/parallax_cflt; }
+{ grep -q "Applying only the delta" commands/run.md && grep -q "Do \*\*not\*\* mirror" commands/run.md; } && ok "run.md documents delta integration AND warns against mirror" || no "run.md no longer documents delta-not-mirror integration"
+grep -q "assembly worktree" commands/run.md && ok "run.md documents the per-slice assembly worktree + transactional integrate" || no "run.md missing assembly-worktree integration"
 
-echo "[lock]  (EXECUTES the documented lock — locks P1 #3)"
-bash tests/t_lock.sh >/tmp/parallax_lock 2>&1 && ok "lock: documented command works + cross-clone push yields one winner" || { no "lock"; sed 's/^/      /' /tmp/parallax_lock; }
+echo "[lock]  (EXECUTES the documented lock — locks v0.19 #1 cloud same-HEAD race)"
+bash tests/t_lock.sh >/tmp/parallax_lock 2>&1 && ok "lock: unique commit + force-with-lease yields one winner across same-HEAD clones (old same-value let both win)" || { no "lock"; sed 's/^/      /' /tmp/parallax_lock; }
 
-echo "[runstate_schema]  (EXECUTES validation — locks P1 #4 exact-resume completeness)"
+echo "[runstate_schema]  (EXECUTES validation — locks v0.19 #5 exact-resume completeness: wave_base, running→lock, paused→paused, hex SHAs)"
 python3 - <<'PY' >/tmp/parallax_rs 2>&1
-import json
+import json, copy
 try: import jsonschema
 except ImportError: print("SKIP"); raise SystemExit
 s=json.load(open('assets/run-state.schema.json'))
-ok_full={"run_id":"r","slug":"d","epic":"e","base_tip":"b","status":"running",
-  "slices":[{"id":"S1","status":"green-unverified","arbiter_verdict":"green","verified_diff":"sha1"},
-            {"id":"S2","status":"in_progress","code_tip":"aa","test_tip":"bb"}],
+H="a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"   # valid 40-hex object id
+ok_full={"run_id":"r","slug":"d","epic":"e","base_tip":H,"status":"running",
+  "slices":[{"id":"S1","status":"green-unverified","arbiter_verdict":"green","verified_diff":H,"wave_base":H},
+            {"id":"S2","status":"in_progress","code_tip":H,"test_tip":H,"wave_base":H}],
   "lock":{"holder":"r","acquired_at":"t","expires_at":"t2"},"updated_at":"t"}
 jsonschema.validate(ok_full,s)
-bad={"run_id":"r","slug":"d","epic":"e","base_tip":"b","status":"running","slices":[{"id":"S1","status":"green-unverified"}],"updated_at":"t"}
-try: jsonschema.validate(bad,s); print("ACCEPTED_BAD")
-except Exception: print("OK")
+def rejects(doc):
+    try: jsonschema.validate(doc,s); return False
+    except Exception: return True
+a=copy.deepcopy(ok_full); a["slices"]=[{"id":"S1","status":"green-unverified"}]                 # missing verdict/diff/wave_base
+b=copy.deepcopy(ok_full); b["slices"]=[{"id":"S2","status":"in_progress","code_tip":H,"test_tip":H}]  # missing wave_base
+c=copy.deepcopy(ok_full); c.pop("lock")                                                          # running but no lock
+d=copy.deepcopy(ok_full); d["status"]="paused-on-limit"; d.pop("lock")                           # paused but no paused block
+e=copy.deepcopy(ok_full); e["base_tip"]="not-a-sha"                                              # non-hex tip
+print("OK" if all(rejects(x) for x in (a,b,c,d,e)) else "ACCEPTED_BAD")
 PY
 R=$(cat /tmp/parallax_rs)
 if [ "$R" = "SKIP" ]; then echo "  · jsonschema not installed — schema-completeness test skipped";
-elif [ "$R" = "OK" ]; then ok "schema accepts a complete checkpoint and REJECTS an incomplete green-unverified"; else no "schema accepts incomplete green-unverified ($R)"; fi
+elif [ "$R" = "OK" ]; then ok "schema accepts a complete checkpoint and REJECTS 5 incomplete/invalid ones (wave_base, running→lock, paused→paused, hex SHA)"; else no "schema accepts an incomplete/invalid checkpoint ($R)"; fi
 
 echo "[smoke_selftest]  (locks P3)"
 G='{"verdict":"pass","findings":[]}'; B='{"verdict":"maybe"}'
@@ -109,6 +119,16 @@ echo "[mode_branches]  (presence check — semantics are integration-validated, 
 miss=""; for m in split panel sole; do grep -q "\*\*\`$m\`\*\*" commands/run.md || miss="$miss $m"; done
 [ -z "$miss" ] && ok "run.md has a who-judges branch for split / panel / sole" || no "missing mode branch:$miss"
 grep -q "for GREEN _and_ RED" commands/run.md && ok "sole judges GREEN and RED (verifier is the judge, not only post-green)" || no "sole still only post-green"
+
+echo "[verifier_contracts]  (v0.19 #6/#8 — sole RED-arbitration kinds + real wall-clock timeouts)"
+python3 - <<'PY' && ok "verdict schema includes code-fault/test-fault kinds (sole RED arbitration)" || no "verdict schema missing code-fault/test-fault"
+import json
+e=json.load(open('assets/codex/verdict.schema.json'))["properties"]["findings"]["items"]["properties"]["kind"]["enum"]
+assert "code-fault" in e and "test-fault" in e, e
+PY
+{ grep -qF 'timeout "$TIMEOUT_S" codex exec' skills/role-codex-judge/SKILL.md && grep -qF 'timeout "$TIMEOUT_S" gemini' skills/role-codex-judge/SKILL.md && grep -qF 'curl --max-time "$TIMEOUT_S"' skills/role-codex-judge/SKILL.md; } \
+  && ok "role-codex-judge wraps codex/gemini/curl in a real timeout_s wall-clock guard" || no "role-codex-judge missing a real timeout wrapper"
+grep -q "Sole mode — RED arbitration" skills/role-codex-judge/SKILL.md && ok "role-codex-judge documents sole-mode RED arbitration (3rd behavior)" || no "role-codex-judge missing sole RED arbitration"
 
 echo "[security_no_secrets]  (locks repo hygiene)"
 grep -qE 'sk-[A-Za-z0-9]{16,}|AIza[0-9A-Za-z_-]{20,}|[0-9]{6,}:[A-Za-z0-9_-]{20,}' assets/codex/codex.toml.example && no "config has a secret-shaped value" || ok "config has no secret-shaped values (only *_env names)"

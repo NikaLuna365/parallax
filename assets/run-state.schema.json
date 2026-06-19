@@ -17,7 +17,7 @@
       }
     },
     "epic": { "type": "string", "description": "The integration/epic branch this feature targets (e.g. feature/flex-cis)." },
-    "base_tip": { "type": "string", "description": "origin/<epic> commit sha the run started from (provenance anchor)." },
+    "base_tip": { "type": "string", "pattern": "^[0-9a-f]{7,64}$", "description": "origin/<epic> commit sha the run started from (provenance anchor)." },
     "status": {
       "enum": ["running", "paused-on-limit", "complete", "stuck"],
       "description": "Run-level status. A resume that finds 'complete' no-ops and self-terminates the schedule."
@@ -50,19 +50,20 @@
           "iterations": { "type": "integer", "minimum": 0, "description": "Iteration counter, so the circuit breaker (max 3) survives a resume." },
           "attempts": { "type": "array", "items": { "type": "string" }, "description": "Per-worker attempt history (hub-and-spoke; survives resume)." },
           "parked_reason": { "type": ["string", "null"], "description": "Set when status is parked: spec-gap | breaker | divergence." },
-          "code_tip": { "type": ["string", "null"], "description": "SHA of the slice's code track branch tip — so a resume continues 'in_progress' from the exact committed point, not a guess." },
-          "test_tip": { "type": ["string", "null"], "description": "SHA of the slice's test track branch tip." },
+          "code_tip": { "type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$", "description": "SHA of the slice's code track branch tip — so a resume continues 'in_progress' from the exact committed point, not a guess." },
+          "test_tip": { "type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$", "description": "SHA of the slice's test track branch tip." },
+          "wave_base": { "type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$", "description": "SHA of the integration tip this slice's tracks forked from — the diff base for parallel integration (git diff wave_base..tip | git apply --3way). Required once a slice is in_progress or green-unverified." },
           "wave": { "type": ["integer", "null"], "description": "Dependency-DAG wave this slice belongs to." },
           "arbiter_verdict": { "type": ["string", "null"], "description": "The arbiter's owed GREEN for a 'green-unverified' slice — so a resume runs ONLY the pending cross-model verification, not the whole slice." },
-          "verified_diff": { "type": ["string", "null"], "description": "Hash/ref of the assembled diff the verdict was made against — a resume re-verifies the same tree it paused on, and can detect drift." }
+          "verified_diff": { "type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$", "description": "SHA/hash of the assembled diff the verdict was made against — a resume re-verifies the same tree it paused on, and can detect drift." }
         },
         "allOf": [
           { "if": { "properties": { "status": { "const": "green-unverified" } }, "required": ["status"] },
-            "then": { "required": ["arbiter_verdict", "verified_diff"],
-                      "properties": { "arbiter_verdict": { "type": "string" }, "verified_diff": { "type": "string" } } } },
+            "then": { "required": ["arbiter_verdict", "verified_diff", "wave_base"],
+                      "properties": { "arbiter_verdict": { "type": "string" }, "verified_diff": { "type": "string" }, "wave_base": { "type": "string" } } } },
           { "if": { "properties": { "status": { "const": "in_progress" } }, "required": ["status"] },
-            "then": { "required": ["code_tip", "test_tip"],
-                      "properties": { "code_tip": { "type": "string" }, "test_tip": { "type": "string" } } } }
+            "then": { "required": ["code_tip", "test_tip", "wave_base"],
+                      "properties": { "code_tip": { "type": "string" }, "test_tip": { "type": "string" }, "wave_base": { "type": "string" } } } }
         ]
       }
     },
@@ -78,7 +79,7 @@
     "updated_at": { "type": "string", "description": "ISO timestamp of this checkpoint write." },
     "lock": {
       "type": ["object", "null"],
-      "description": "Mutual-exclusion lease so two concurrent resumes (e.g. overlapping cron fires) cannot run the same slug at once. The ATOMIC primitive is a git ref refs/parallax/lock/<slug> created via compare-and-swap; this records it for visibility. A resume refuses to start while a live (unexpired) lock is held; it may steal an expired one.",
+      "description": "Mutual-exclusion lease so two concurrent resumes (e.g. overlapping hourly fires) cannot run the same slug at once. The ATOMIC primitive is a branch ref refs/heads/<branch_prefix>lock/<slug> pointing at a UNIQUE lock commit (run_id baked in via git commit-tree) — taken create-if-absent locally and by 'git push --force-with-lease=<ref>:' in the cloud (so two fresh same-HEAD clones cannot both win); this object records it for visibility. A resume refuses to start while a live (unexpired) lock is held; it may steal an expired one.",
       "additionalProperties": false,
       "required": ["holder", "acquired_at", "expires_at"],
       "properties": {
@@ -87,5 +88,11 @@
         "expires_at": { "type": "string", "description": "ISO timestamp; after this a resume may steal the lease (the holder is presumed dead)." }
       }
     }
-  }
+  },
+  "allOf": [
+    { "if": { "properties": { "status": { "const": "running" } }, "required": ["status"] },
+      "then": { "required": ["lock"], "properties": { "lock": { "type": "object" } } } },
+    { "if": { "properties": { "status": { "const": "paused-on-limit" } }, "required": ["status"] },
+      "then": { "required": ["paused"], "properties": { "paused": { "type": "object" } } } }
+  ]
 }

@@ -1,29 +1,45 @@
 #!/usr/bin/env bash
-# EXECUTES the documented lock. Locks P1 #3:
-#   - the local command works (ref -> a real object / HEAD, NOT a run_id string),
-#   - and gives real mutual exclusion across two FRESH CLONES via push (the cloud case).
+# EXECUTES the documented lock (v0.19 cloud fix). Locks P0 #1:
+#   - local create-if-absent with a real object,
+#   - cross-clone mutual exclusion over TWO FRESH, SAME-HEAD clones (the real cloud case the
+#     v0.17 lock missed): a UNIQUE lock commit (run_id baked in) + `git push --force-with-lease=<ref>:`
+#     yields exactly ONE winner,
+#   - plus a GUARD proving the test discriminates: the OLD same-value approach lets BOTH win.
 set -uo pipefail
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 Z=0000000000000000000000000000000000000000
 REF=refs/heads/feature/lock/demo
 
-# 1) local create-if-absent with a REAL object (exactly as documented)
+# echo a UNIQUE commit oid over HEAD's tree (so two same-HEAD clones produce DIFFERENT lock objects)
+mklock(){ git commit-tree "$(git rev-parse HEAD^{tree})" -m "parallax-lock run_id=$1 exp=2030"; }
+
+# 1) local create-if-absent with a real object (NOT a run_id string)
 git init -q -b main "$T/r" >/dev/null
 ( cd "$T/r" && git commit -q --allow-empty -m x
-  H=$(git rev-parse HEAD)
-  git update-ref "$REF" "$H" "$Z" 2>/dev/null || { echo "FAIL: documented local lock command errored"; exit 1; }
-  git update-ref "$REF" "$H" "$Z" 2>/dev/null && { echo "FAIL: a second create succeeded — no mutual exclusion"; exit 1; }
+  git update-ref "$REF" "$(mklock RUNL)" "$Z" 2>/dev/null || { echo "FAIL: documented local lock command errored"; exit 1; }
+  git update-ref "$REF" "$(mklock RUNL2)" "$Z" 2>/dev/null && { echo "FAIL: a second local create succeeded — no mutual exclusion"; exit 1; }
   true ) || exit 1
 
-# 2) cross-clone: two fresh clones of a bare origin race to PUSH the lock ref -> exactly one wins
-git init -q --bare -b main "$T/origin" >/dev/null   # -b main so clones get a valid HEAD
+# bare origin + two FRESH clones that SHARE THE SAME HEAD (the real cloud scenario)
+git init -q --bare -b main "$T/origin" >/dev/null
 git init -q -b main "$T/seed" >/dev/null
 ( cd "$T/seed" && git commit -q --allow-empty -m x && git remote add o "$T/origin" && git push -q o main )
 git clone -q "$T/origin" "$T/c1" >/dev/null 2>&1; git clone -q "$T/origin" "$T/c2" >/dev/null 2>&1
-# each clone points the lock at a DISTINCT commit, so the loser's create is a real conflict (not a no-op same-value push)
-( cd "$T/c1" && git commit -q --allow-empty -m c1 && git update-ref "$REF" "$(git rev-parse HEAD)" "$Z" && git push -q origin "$REF" 2>/dev/null ) && r1=win || r1=lose
-( cd "$T/c2" && git commit -q --allow-empty -m c2 && git update-ref "$REF" "$(git rev-parse HEAD)" "$Z" && git push -q origin "$REF" 2>/dev/null ) && r2=win || r2=lose
-{ [ "$r1" = win ] && [ "$r2" = lose ]; } || { echo "FAIL: cross-clone lock race did not yield exactly one winner ($r1/$r2)"; exit 1; }
+[ "$(git -C "$T/c1" rev-parse HEAD)" = "$(git -C "$T/c2" rev-parse HEAD)" ] \
+  || { echo "FAIL: clones don't share HEAD — the test would be vacuous"; exit 1; }
+
+# 2a) GUARD — OLD approach: point the ref at the SHARED HEAD, plain push -> BOTH win (the bug we fixed)
+( cd "$T/c1" && git update-ref "$REF" "$(git rev-parse HEAD)" && git push -q origin "$REF" 2>/dev/null ) && b1=win || b1=lose
+( cd "$T/c2" && git update-ref "$REF" "$(git rev-parse HEAD)" && git push -q origin "$REF" 2>/dev/null ) && b2=win || b2=lose
+{ [ "$b1" = win ] && [ "$b2" = win ]; } \
+  || { echo "FAIL: guard expected OLD same-value push to let BOTH win, got $b1/$b2"; exit 1; }
+git -C "$T/c1" push -q origin --delete "$REF" 2>/dev/null || true   # reset origin lock for 2b
+
+# 2b) THE FIX — unique lock commit + force-with-lease=<ref>: (expect absent) over the SAME HEAD -> one winner
+( cd "$T/c1" && git update-ref "$REF" "$(mklock RUNA)"; git push -q origin --force-with-lease="$REF": "$REF" 2>/dev/null ) && r1=win || r1=lose
+( cd "$T/c2" && git update-ref "$REF" "$(mklock RUNB)"; git push -q origin --force-with-lease="$REF": "$REF" 2>/dev/null ) && r2=win || r2=lose
+{ { [ "$r1" = win ] && [ "$r2" = lose ]; } || { [ "$r1" = lose ] && [ "$r2" = win ]; }; } \
+  || { echo "FAIL: unique-commit + force-with-lease did not yield exactly one winner ($r1/$r2)"; exit 1; }
 
 echo "OK"

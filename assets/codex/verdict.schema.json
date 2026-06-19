@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "tdd codex-judge post-green verdict",
-  "description": "Structured verdict from the independent cross-model verifier after a slice goes green. Passed to `codex exec --output-schema`.",
+  "title": "parallax codex-judge verdict (post-green / sole-mode RED arbitration)",
+  "description": "Structured verdict from the independent cross-model verifier. Two uses: post-green (does the green slice faithfully satisfy the spec?), and — in `mode = sole` — RED arbitration (whose fault is the failing test: code-fault / test-fault / spec-gap?). Passed to `codex exec --output-schema`.",
   "type": "object",
   "additionalProperties": false,
   "required": ["verdict", "findings"],
@@ -20,8 +20,8 @@
         "properties": {
           "severity": { "enum": ["low", "medium", "high"] },
           "kind": {
-            "enum": ["spec-gap", "anti-cheat", "safety", "missing-edge", "type-quality"],
-            "description": "spec-gap = code+tests agree but both diverge from intent; anti-cheat = gamed gate; safety = a harm path; missing-edge = real input/garbage not covered; type-quality = public type wider than spec."
+            "enum": ["spec-gap", "anti-cheat", "safety", "missing-edge", "type-quality", "code-fault", "test-fault"],
+            "description": "spec-gap = code+tests agree but both diverge from intent; anti-cheat = gamed gate; safety = a harm path; missing-edge = real input/garbage not covered; type-quality = public type wider than spec. SOLE-MODE RED ARBITRATION ONLY: code-fault = the failing test correctly encodes the spec and the code is wrong; test-fault = the code correctly implements the spec and the test misencodes it."
           },
           "where": { "type": "string", "description": "File/symbol/section the finding concerns." },
           "detail": { "type": "string", "description": "What is wrong and why it matters, concretely enough to act on." }

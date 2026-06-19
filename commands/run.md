@@ -26,7 +26,8 @@ You are the **orchestrator** for Phase 2-5. You author **no code and no tests** 
    - Pull the salient business values out of `.parallax/<slug>/spec.md` — money amounts, rates, thresholds, fixed quantities, and named sets/enums.
    - Grep each across `main` and the other live feature branches of the epic:
      ```bash
-     SIBLINGS=$(git branch --format='%(refname:short)' | grep '^feature/' | grep -v -- "$SLUG")
+     PREFIX="$(awk -F'"' '/^\[git\]/{g=1} g&&/^branch_prefix/{print $2; exit}' .parallax/codex.toml 2>/dev/null)"; PREFIX="${PREFIX:-feature/}"
+     SIBLINGS=$(git branch --format='%(refname:short)' | grep "^${PREFIX}" | grep -v -- "$SLUG")
      for B in main $SIBLINGS; do
        git grep -n -F -- "<value>" "$B" 2>/dev/null && echo "   ^ found on $B"
      done
@@ -34,7 +35,7 @@ You are the **orchestrator** for Phase 2-5. You author **no code and no tests** 
    - A hit on a sibling branch means the value already has a home. **Stop and ask the lead** how to reconcile: import the existing constant (preferred), or — if the duplication is deliberate (e.g. a display string that copies a price) — record in the spec which side is the source of truth and how the two stay in sync. Don't dispatch the slice until it's resolved; a duplicated literal is a post-merge bug no per-branch gate can catch, because both branches are green in isolation.
 6. **Base provenance check (trust the base only if it really contains what it claims).** A feature usually branches not from `main` but from an integration/epic base meant to already contain earlier features of the epic. That base can silently be missing commits two ways, and a green run reveals neither (validation only checks what's in the tree): it was assembled by **copying content** instead of merging real tips, or the **local** epic ref has **lagged origin** — when a branch is checked out in another session's worktree, git won't fast-forward it on fetch/push, so your local `<epic>` can sit behind `origin/<epic>` by whole slices. Either way a fix that lived only in a dropped or un-pulled commit is gone *with its regression test*. So pin the base to the remote and verify it, before dispatching:
    - **Take the base from origin, never the local ref.** `git fetch origin <epic>` and set the cycle base = `origin/<epic>`. The local `<epic>` ref is only a cache and may be stale (see above) — never build a cycle on it directly.
-   - With the lead, list the prior feature tips that base is supposed to incorporate (the live `feature/*` siblings from step 5 are your candidates). For each, assert it is an ancestor of the **remote** base:
+   - With the lead, list the prior feature tips that base is supposed to incorporate (the live `${PREFIX}*` siblings from step 5 are your candidates). For each, assert it is an ancestor of the **remote** base:
      ```bash
      git fetch origin "<epic>"
      BASE="origin/<epic>"
@@ -105,7 +106,7 @@ Launch both subagents in a single message (or as background tasks). Give each on
 - → `test-writer-D` (cwd `$WT/test`): *"Slice `S.id`: `S.description`. Authoritative spec, read it directly: `.parallax/<slug>/spec.md` §<this slice's sections> (this message points to the spec, it does not restate it). Validation contract: `.parallax/<slug>/validation.md` — use its REAL commands. Write the failing tests for THIS slice only, per your skills; make the suite run (throwaway stub is fine, keep it untracked) and watch each new test go RED for the spec'd reason. Report your done-gate result + any candidate spec-gaps."*
 - → `blind-coder-D` (cwd `$WT/code`): *"Slice `S.id`: `S.description`. Authoritative spec, read it directly: `.parallax/<slug>/spec.md` §<this slice's sections> (this message points to the spec, it does not restate it). Validation contract: `.parallax/<slug>/validation.md` — use its REAL lint/typecheck/build commands. Implement THIS slice only, simplest code that satisfies the spec, per your skills. Report your done-gate result + any candidate spec-gaps."*
 
-Each worker commits its own work to its own branch (`feature/$SLUG-code` / `feature/$SLUG-test`). Wait for both done-gates. If either reports a candidate spec-gap, hold and treat it at 2c.
+Each worker commits its own work to its own branch (`${PREFIX}$SLUG-code` / `${PREFIX}$SLUG-test`). Wait for both done-gates. If either reports a candidate spec-gap, hold and treat it at 2c.
 
 ### 2b. Assemble + dispatch the arbiter
 ```bash
@@ -191,7 +192,8 @@ git worktree remove "$WT/test" --force
 ```
 Report to the user: the feature branch, what was pushed (or that it's local-only), per-slice outcomes, and any escalations. Include a **full commit inventory** — *every* commit on the branch since the epic base, not just the blind-TDD ones:
 ```bash
-git log --oneline --no-merges "origin/<epic>..feature/$SLUG"
+PREFIX="$(awk -F'"' '/^\[git\]/{g=1} g&&/^branch_prefix/{print $2; exit}' .parallax/codex.toml 2>/dev/null)"; PREFIX="${PREFIX:-feature/}"
+git log --oneline --no-merges "origin/<epic>..${PREFIX}$SLUG"
 ```
 Flag each commit that originated **outside the blind cycle** (anything not authored by a track worker or the integration step): pre-freeze edits, manual fixups, dependency bumps. Call out **schema / migration changes specially** — an edit to an already-applied migration or to `schema.prisma` is a checksum/data risk that rode in *without* a TDD gate, and it must be visible at review, not buried under the green. A green run says the *tested* work is sound; it says nothing about a side-commit that never entered the cycle.
 
@@ -204,17 +206,21 @@ Two independent switches change how the loop above runs. **`--parallel`** change
 ### Parallel slices in waves (`--parallel`; default ON under `--autonomous`)
 The sequential model reuses one worktree pair and stacks slices on it. Parallel mode gives **each slice its own isolated pair**, so independent slices build at the same time (WJW measured ~4×).
 
-- **Per-slice worktrees & branches.** For slice `S<n>`, branch `feature/$SLUG-S<n>-code` and `feature/$SLUG-S<n>-test` from the **current integration tip** of `feature/$SLUG` (which already contains every dependency that has integrated), and add worktrees `$WT/S<n>/{code,test}`. Blindfold **and provision** each pair exactly per Step 1 — per worktree, every wave.
-- **Waves by the dependency DAG.** Build the DAG from `slices.md` `depends on`. A slice is *ready* when all its dependencies have integrated. Dispatch **all ready slices concurrently** — each runs its own 2a → 2c independently, **assembling and arbitrating in its own per-slice integration context** (its own code+test tips), never the shared `feature/$SLUG` tree, which would collide across concurrent slices. A slice with an unmet edge waits; that is the only ordering constraint.
-- **Integrate on green, then unblock — by per-slice DIFF, never a mirror.** When a slice clears 2c (arbiter green **and** the post-green verifier, if enabled), apply ONLY this slice's delta — its track branches against the **wave base** they forked from — onto the current integration tip:
+- **Per-slice worktrees & branches.** For slice `S<n>`, branch `${PREFIX}$SLUG-S<n>-code` and `${PREFIX}$SLUG-S<n>-test` from the **current integration tip** of `${PREFIX}$SLUG` (which already contains every dependency that has integrated) — **record that tip as the slice's `wave_base`**, since the integration diff is taken against it. Add worktrees `$WT/S<n>/{code,test,assembly}`: the **assembly** worktree is a throwaway integration context (`git worktree add --detach "$WT/S<n>/assembly" <tip>`) where this slice's diff is applied and the arbiter runs in **isolation**, so concurrent slices never collide on the shared `${PREFIX}$SLUG` tree (without it, two arbiters get either no assembled tree or a clobbered one). Blindfold the code+test pair and **provision** all three per Step 1 — every worktree, every wave.
+- **Waves by the dependency DAG.** Build the DAG from `slices.md` `depends on`. A slice is *ready* when all its dependencies have integrated. Dispatch **all ready slices concurrently** — each runs its own 2a → 2c independently, **assembling and arbitrating in its own per-slice integration context** (its own code+test tips in `$WT/S<n>/assembly`), never the shared `${PREFIX}$SLUG` tree, which would collide across concurrent slices. A slice with an unmet edge waits; that is the only ordering constraint.
+- **Integrate on green — transactionally, in the slice's assembly worktree.** When a slice clears 2c (arbiter green **and** the post-green verifier, if enabled), apply ONLY its delta (vs the recorded `wave_base` `WB`) **in its own `$WT/S<n>/assembly` worktree**, never the shared `${PREFIX}$SLUG` tree; advance `${PREFIX}$SLUG` only after BOTH patches apply cleanly:
   ```bash
-  WB="<wave base: the feature tip this slice's track branches were forked from>"
-  git switch "${PREFIX}$SLUG"
-  git diff "$WB" "${PREFIX}$SLUG-S<n>-code" -- "${SRC_PATHSPECS[@]}"  | git apply --3way --index
-  git diff "$WB" "${PREFIX}$SLUG-S<n>-test" -- "${TEST_PATHSPECS[@]}" | git apply --3way --index
-  git commit -q -m "S<n> integrated (diff onto wave)"
+  AWT="$WT/S<n>/assembly"
+  TIP=$(git -C "$ROOT" rev-parse "${PREFIX}$SLUG")            # current integration tip
+  ( cd "$AWT" && git switch -q --detach "$TIP"
+    { git diff --binary "$WB" "${PREFIX}$SLUG-S<n>-code" -- "${SRC_PATHSPECS[@]}"  | git apply --3way --index --binary && \
+      git diff --binary "$WB" "${PREFIX}$SLUG-S<n>-test" -- "${TEST_PATHSPECS[@]}" | git apply --3way --index --binary; } || {
+        git reset -q --hard; echo "CONFLICT: slice S<n> is not independent"; exit 9; }   # transactional: all-or-nothing
+    git commit -q -m "S<n> assembled" )
+  # serialize the move of the shared ref (CAS old-value $TIP); on a lost race, re-detach at the new tip and re-apply (the diff is vs WB):
+  git -C "$ROOT" update-ref "refs/heads/${PREFIX}$SLUG" "$(git -C "$AWT" rev-parse HEAD)" "$TIP"
   ```
-  Applying only the delta **preserves slices already integrated in this wave**. Do **NOT** mirror `src/**`+`tests/**` from one slice branch (`git rm` globs + `git checkout <branch> -- globs`): that wipes every *other* already-integrated slice off the tip — a clean, silent data loss (verified with two slices). And **never `git merge` the track branches** — they carry blindfold-deletion commits. A `git apply --3way` **conflict** means two slices changed the same lines → they weren't independent: give them a dependency edge (or escalate), never force. Re-run the **seam check** (and the post-green verifier, if enabled) after each integration. (Sequential mode's Step 2b mirror is correct — there a single track branch accumulates *all* slices. Merge stays reserved for **epic** integration, feature → epic, clean tree.)
+  Three guarantees: **`--binary`** so binary files apply (a plain text diff of a binary fails — `cannot apply binary patch without full index line`); the **assembly worktree** keeps a partial apply (a second-patch conflict) **off** `${PREFIX}$SLUG` — feature is touched only by the final CAS `update-ref`, never left half-patched (`A src/new` + `UU tests/a`); and the **CAS old-value `$TIP`** serializes concurrent integrations (a slice that loses the race re-detaches at the new tip and re-applies its `wave_base` diff). Applying only the delta **preserves slices already integrated this wave**; a `--3way` conflict = two slices touched the same lines → not independent (park / add a dependency edge, never force). Do **not** mirror `src/**`+`tests/**` from one branch (wipes other slices) and **never `git merge`** the blindfold branches. Re-run the seam check + post-green verifier after the ref-update. (Sequential Step 2b mirror is correct; merge stays for **epic** integration.)
 - **Isolation caveats.** Concurrent slices must not share a mutable external (one test DB, one fixture file): give each wave-member its own (per-slice DB name/schema), or give them a dependency edge in the manifest so they don't overlap. Per-slice worktrees multiply provisioning cost — **symlinking** deps rather than reinstalling matters here (Step 1 / domain skills).
 
 ### Autonomous handling of stops (`--autonomous`)
@@ -235,7 +241,7 @@ End with a machine-readable summary a human reads after an unattended or schedul
 A long run can exhaust **Claude's** limit (which kills the orchestrator itself) or **Codex's** (which fails the verifier call). Neither must lose progress, and neither is a *fault* — a quota error is transient, never a `concerns` and never an escalation. The run survives by checkpointing eagerly and resuming from the checkpoint on an hourly schedule.
 
 ### The checkpoint `.parallax/<slug>/run-state.json`
-Written **eagerly** — after every state transition (a slice integrated, parked, a verdict received, a pause) — and committed to `feature/$SLUG`. Eager because a Claude limit kills the process: you can't write at the moment of death, so the last good state must already be on disk. It records (schema: `assets/run-state.schema.json`): the resolved epic base; per-slice `status` (`pending` / `in_progress` / `green-unverified` / `integrated` / `parked`); each slice's iteration counter + attempt history (so the circuit breaker survives a resume); the integrated set; queue paths; run `status` (`running` / `paused-on-limit` / `complete` / `stuck`); and on a pause the `service`, `reason`, and any `retry_after` hint. Per slice it also records the **code/test branch tips (SHAs)**, the **owed arbiter verdict + verified-diff ref** (for a `green-unverified` slice), and its **wave**; plus a run-level **`lock` lease**. These make a resume *exact* — continue from the recorded SHA, re-verify the same diff — rather than approximate.
+Written **eagerly** — after every state transition (a slice integrated, parked, a verdict received, a pause) — and committed to `feature/$SLUG`. Eager because a Claude limit kills the process: you can't write at the moment of death, so the last good state must already be on disk. It records (schema: `assets/run-state.schema.json`): the resolved epic base; per-slice `status` (`pending` / `in_progress` / `green-unverified` / `integrated` / `parked`); each slice's iteration counter + attempt history (so the circuit breaker survives a resume); the integrated set; queue paths; run `status` (`running` / `paused-on-limit` / `complete` / `stuck`); and on a pause the `service`, `reason`, and any `retry_after` hint. Per slice it also records the **code/test branch tips (SHAs)**, the **`wave_base`** (the integration tip the slice's tracks forked from — the diff base for parallel integration; required once a slice is `in_progress` or `green-unverified`), the **owed arbiter verdict + verified-diff ref** (for a `green-unverified` slice), and its **wave**; plus a run-level **`lock` lease** (whose object is the unique lock commit, required while `status` is `running`). These make a resume *exact* — continue from the recorded SHA, re-apply the same `wave_base` diff, re-verify the same diff — rather than approximate.
 
 ### On a limit → pause the whole run
 - **Verifier limit** (the `codex-judge` returns `limit` — but **only after exhausting its whole provider chain**: a primary limit first falls back to the next provider, e.g. Codex → Gemini, with no pause): when even the fallback is limited, mark the current slice `green-unverified` (arbiter passed, verification still owed — it is **not** integrated, since integration still requires the verifier), set run `status = paused-on-limit`, checkpoint, and **stop**.
@@ -244,10 +250,14 @@ Written **eagerly** — after every state transition (a slice integrated, parked
 
 ### Resume (`--resume <slug>`, hourly)
 A resume is a normal headless invocation that happens to find a paused checkpoint:
-1. **Take the run lease (mutual exclusion).** The lock is a ref under the branch namespace; the **run_id and `expires_at` live in `run-state.lock`** (a git ref can only point at an *object*, not a string like a run-id).
-   - **Local (one machine):** create it pointing at the current commit, only-if-absent — `git update-ref refs/heads/${PREFIX}lock/<slug> $(git rev-parse HEAD) 0000000000000000000000000000000000000000` (the all-zero old-value means "create only if absent"; the command fails if it already exists).
-   - **Cloud (fresh clones racing):** the atomic gate is the **push** of a newly-created ref — `git push origin refs/heads/${PREFIX}lock/<slug>`; the server accepts the first and **rejects** every later create, so exactly one clone wins (both within the `claude/*` policy).
-   If a **live** lock is held (the checkpoint's `lock.expires_at` hasn't passed) → **another resume is already running, exit now** — this stops two overlapping hourly fires from double-running the slug. If the lock is **expired**, steal it (force-update / `--force` push) and overwrite `lock.holder`. Renew `expires_at` as you work; **release** it (`git update-ref -d refs/heads/${PREFIX}lock/<slug>`, and delete it on origin for a cloud run) on pause or completion.
+1. **Take the run lease (mutual exclusion).** The lock is a branch ref pointing at a **unique lock commit** that carries this run's `run_id` — crucial, because two fresh cloud clones share the same `HEAD`, so a lock pointing at `HEAD` is identical in both and *both* "creates" succeed as no-op same-value pushes (the v0.17 bug). A per-run-unique object makes the loser's create a real conflict.
+   ```bash
+   LOCKREF="refs/heads/${PREFIX}lock/$SLUG"
+   LOCKOID=$(git commit-tree "$(git rev-parse HEAD^{tree})" -m "parallax-lock run_id=$RUN_ID expires=$EXPIRES")  # unique per run_id+time
+   git update-ref "$LOCKREF" "$LOCKOID" 0000000000000000000000000000000000000000 || exit 0   # LOCAL: create only if absent
+   git push origin --force-with-lease="$LOCKREF": "$LOCKREF"                                  # CLOUD: atomic create — pushes only if origin LACKS the ref
+   ```
+   `--force-with-lease="$LOCKREF":` (empty expected value) means "push only if `origin` does **not** have `$LOCKREF`": the first clone creates it; every later clone's create is **rejected** (verified with two same-`HEAD` clones → exactly one winner). `run_id`/`expires_at` also live in `run-state.lock`. If a **live** lock is held (its `expires_at` hasn't passed) → **another run is active, exit now**. If **expired**, steal it (re-create + `--force` push, overwrite `lock.holder`). Renew `expires_at` as you work; **release** on pause/completion (`git update-ref -d "$LOCKREF"`; for cloud `git push origin --delete "$LOCKREF"`).
 2. Re-fetch `origin/<epic>` and re-run the **provenance** check (a resume must still start from the fresh remote tip — Step 0.6), then rebuild/verify the per-slice worktrees **at their recorded `code_tip`/`test_tip`**.
 3. **Fail fast if still limited:** try one cheap operation; if the limit is still in force, re-checkpoint `paused-on-limit`, **release the lease**, and exit — don't burn quota idling.
 4. Otherwise continue from the checkpoint: skip `integrated` slices; for a `green-unverified` slice run **only** the owed verification against its recorded `verified_diff` (don't rebuild it); resume `in_progress` slices from their `code_tip`/`test_tip`; dispatch `pending` slices as their deps integrate. Idempotent — nothing already done is redone.
