@@ -6,24 +6,147 @@ A spec-driven, blind-coder TDD pipeline (Claude Code plugin). *Code and tests lo
 
 A maximally-concrete, **read-only spec** drives two **independent** tracks — a test-writer and a blind coder that never sees the tests — and a single whole-seeing **arbiter** loops with failure analysis until green, then integrates and pushes. An optional, structurally-independent **cross-model verifier** (Codex, with a Gemini fallback) reviews the spec before the blind tracks and each green slice after.
 
-> **What this plugin *is*, honestly.** It is a set of **prompt contracts** — `commands/`, `agents/`, `skills/` — executed by Claude, plus `assets/` (JSON schemas, a config template) and a `tests/` self-test harness. It is **not** a standalone binary. A config option is "implemented" only insofar as a contract branch actually consumes it; see `CHANGELOG.md` for what is wired vs. in progress. The `tests/` harness exists precisely so these contracts don't silently drift.
+---
 
-## Commands
-- **`/parallax:spec`** — turn an idea (or a `--from-doc` brief) into a frozen, build-ready spec + slice manifest + validation contract. Stops at a human OK gate (or, autonomously, a machine self-review + cross-model pre-freeze review).
-- **`/parallax:run`** — build each slice with a blind test-writer + blind coder, arbitrate to green, integrate, push. Supports `--autonomous`, `--parallel`, `--resume`.
-- **`/parallax:auto <brief>`** — the autonomous end-to-end driver: spec → build, no human gates, headless and schedulable.
+## Quick Start (5 minutes)
+
+### 0. Requirements
+| Need | Why |
+|--|--|
+| **Claude Code** (with plugins) | runs the command/agent/skill contracts |
+| **Git** + a real repo with a clean tree | the whole pipeline lives on branches |
+| **Python 3.11+** and `pip install jsonschema` | the deterministic `scripts/` + the disposition gate (fails closed without `jsonschema`) |
+| *optional* **Codex** and/or **Gemini** CLI | the cross-model verifier (opt-in; without it you get Claude-only gates) |
+| *optional* Telegram bot | progress notifications for autonomous runs |
+
+### 1. Install
+```text
+/plugin marketplace add NikaLuna365/parallax
+/plugin install parallax@parallax
+```
+Then `/help` should list `/parallax:spec`, `/parallax:run`, `/parallax:auto`. (Reopen Claude Code if they don't appear.)
+
+### 2. Create a specification
+Run this **inside the git repo you want to build in**:
+```text
+/parallax:spec Add token-bucket rate limiting to the REST API
+```
+Parallax brainstorms with you **read-only** (asks one question at a time), then freezes three artifacts at a human-OK gate. **You'll see** a short Q&A, then: *"spec frozen on `feature/<slug>` — run `/parallax:run` to build it."*
+
+### 3. Run the build
+```text
+/parallax:run rate-limiting           # the <feature-slug> from step 2
+```
+**You'll see** per-slice progress: the blind test-writer and blind coder are dispatched, the arbiter runs your real test/lint/build commands and loops on red with failure analysis, each slice goes green, the feature branch is pushed, and a final report lists every commit since the epic base.
+
+### 4. Inspect the result
+```bash
+git branch --list 'feature/*'                 # feature/<slug> (+ track branches)
+git log --oneline feature/rate-limiting       # what was built
+ls .parallax/rate-limiting/                    # spec.md slices.md validation.md slices.lock run-state.json ...
+cat .parallax/rate-limiting/run-state.json     # status: complete / paused-on-limit / stuck
+```
+**Success looks like:** `feature/<slug>` exists with green slices, `run-state.json` `status` is `complete`, and (if the verifier is on) every slice has a committed `reviews/<slice>.json`.
+
+### 5. Reset / delete a failed run
+Nothing here touches `main`. To wipe a run and start over (replace `SLUG`):
+```bash
+SLUG=rate-limiting
+git switch main                                       # get off the feature branch first
+rm -rf "../.parallax-wt/$SLUG" && git worktree prune  # blind-track worktrees live OUTSIDE the repo
+git branch -D $(git branch --list "feature/$SLUG*")   # feature + track + per-slice branches
+git update-ref -d "refs/heads/feature/lock/$SLUG" 2>/dev/null  # cloud lock ref, if any
+rm -rf ".parallax/$SLUG"                               # spec, ledgers, checkpoint, queues
+```
+
+---
+
+## What gets created
+
+```
+your-repo/
+├─ src/ … tests/ …                      # the code+tests the blind tracks produced
+└─ .parallax/
+   ├─ codex.toml                        # (optional) cross-model verifier config — you create this
+   └─ <feature-slug>/
+      ├─ spec.md                        # the frozen, read-only source of truth (WHAT, not HOW)
+      ├─ slices.md                      # how the work splits + each slice's domain & dependencies
+      ├─ validation.md                  # the REAL commands: full/fast test, lint, typecheck, build
+      ├─ slices.lock                    # machine-readable frozen slice set (gate checks against it)
+      ├─ run-state.json                 # checkpoint: per-slice status, integrated set, resume info
+      ├─ reviews/<slice>.json           # per-slice cross-model review ledgers (if the verifier is on)
+      ├─ escalations.md                 # autonomous: genuine ambiguities parked for a human
+      └─ product-copy.md                # autonomous: user-facing wording awaiting sign-off
+```
+Branches: `feature/<slug>` (the result) plus disposable track branches (`feature/<slug>-code` / `-test`, or per-slice `…-S<n>-code/-test` under `--parallel`). Worktrees are created **outside** the repo under `../.parallax-wt/<slug>/`.
+
+## Two ways to run it
+
+**Interactive (default)** — you stay in the loop:
+```text
+/parallax:spec Add a CSV export endpoint     # brainstorm → freeze (you approve the gate)
+/parallax:run csv-export                      # build, arbitrate to green, push
+/parallax:run csv-export --parallel           # independent slices build concurrently in DAG waves
+```
+
+**Autonomous (headless)** — no human at the console; requires the cross-model verifier configured:
+```text
+/parallax:auto ./briefs/csv-export.md         # spec → build end-to-end, parked items go to a queue
+/parallax:run --resume csv-export             # hourly resume after a usage-limit pause
+```
+In autonomous mode the human gates are replaced by the independent verifier; anything genuinely ambiguous is **parked** to `.parallax/<slug>/escalations.md` instead of guessed. Nothing reaches `main` without a human (epic → `main` is always a PR + CI + review).
+
+## When *not* to use Parallax
+- **Trivial / throwaway changes** where writing a concrete spec costs more than the change.
+- **Exploratory / research code** where the spec is the thing you're still discovering — there's no stable source of truth to converge on yet.
+- **No executable validation** — if you can't give real test/lint/build commands, blind TDD has no gate to converge against.
+- **You can't separate WHAT from HOW** — Parallax's leverage is two independent reads of one *behavioral* spec; if the spec can only be expressed as an implementation, the wall of blindness buys nothing.
+
+## Common setup errors
+- **`jsonschema not importable` / the gate escalates everything** → `pip install jsonschema` (on PEP-668 systems: `pip install jsonschema --break-system-packages`). The disposition gate **fails closed** without it.
+- **`codex` / `gemini` not found** → the verifier is opt-in. Either install the CLIs (names vary by version) or leave `enabled = false` in `.parallax/codex.toml` for Claude-only gates.
+- **"working tree not clean" / "not a git repo"** → `/parallax:run` needs a clean tree in a real git repo.
+- **Commands don't appear** → confirm the marketplace was added and the plugin installed/enabled, then reopen Claude Code.
+- **Cloud routine push rejected** → cloud runs push only to `claude/*`; set `[git] branch_prefix = "claude/"` in `.parallax/codex.toml`.
+
+---
 
 ## The cross-model verifier (opt-in)
-Copy `assets/codex/codex.toml.example` to your repo as `.parallax/codex.toml` and set `enabled = true`. The verifier runs a **provider chain** of non-Claude models — a `[primary]` (Codex via the `codex` CLI) and an optional `[fallback]` (e.g. Gemini via the `gemini` CLI). On a primary rate-limit it falls back to the next provider; only if all are exhausted does the run pause. Without this config the pipeline runs exactly as before (Claude-only gates).
+Copy `assets/codex/codex.toml.example` to `.parallax/codex.toml` and set `enabled = true`. A minimal config:
+```toml
+enabled    = true
+points     = ["pre_freeze", "post_green"]   # review the spec before, and each green slice after
+mode       = "split"                         # split | panel | sole — who holds the verdict
+on_missing = "refuse"                        # autonomous: refuse to run with no working verifier (or "warn")
+timeout_s  = 600
 
-Key behaviours, documented in the contracts:
-- **Autonomous & parallel** — independent slices build in dependency-DAG waves (`commands/run.md` → *Autonomous & parallel execution*).
-- **Limits & resume** — on a usage limit (Claude or Codex) the run checkpoints `.parallax/<slug>/run-state.json` and pauses; an hourly `--resume` continues from the checkpoint (`run.md` → *Limits, checkpointing & resume*).
-- **Notifications** — optional Telegram push for the autonomous flow, secrets via env vars (`run.md` → *Notifications*).
-- **Review memory & disposition (producer-proof)** — each review is a *fresh* verifier (no anchoring session); findings carry across rounds in **per-slice** committed ledgers (`.parallax/<slug>/reviews/<id>.json`) so fixes are re-checked for regression instead of re-discovered. The verifier emits a review-round (`assets/codex/review-round.schema.json`); `scripts/merge-ledger.py` is the **only** writer of findings (Claude authors none), and `scripts/triage.py` disposes **mechanically**: policy is read **only** from the trusted `.parallax/codex.toml` (never the ledger), and a `fixed` finding counts **only** if the verifier verified it (`verified_by=codex`) against the current diff — so the producer can't certify itself. `low` = advisory; `medium`/`high` block; `safety`/`anti-cheat`/`spec-gap` always block; Claude can only *contest* a blocker (→ escalates), never quietly overrule it. `[review].max_rounds` bounds the loop (`run.md` → *Review memory, rounds & disposition*).
+[git]
+branch_prefix = "feature/"                    # set "claude/" for cloud (laptop-off) routines
 
-## Configuration
-- `.parallax/codex.toml` — the verifier config (provider chain, points, `mode`, retry, notify). Template: `assets/codex/codex.toml.example`. **Secrets (tokens, API keys) live in env vars named by the config — never in the file.**
+[primary]
+provider = "codex"
+form     = "cli"
+model    = "gpt-5.5"                           # confirm against your installed `codex`
+
+[fallback]
+provider = "gemini"
+form     = "cli"
+model    = "gemini-3-pro"                      # confirm the id your `gemini` exposes
+
+[review]
+max_rounds         = 2                         # review rounds per slice, then PARK (no endless loops)
+block_severities   = ["medium", "high"]       # low = advisory; medium/high block
+always_block_kinds = ["safety", "anti-cheat", "spec-gap"]
+```
+The verifier runs a **provider chain** of non-Claude models; on a primary rate-limit it falls back to the next, and only if all are exhausted does the run pause and resume later. **Secrets (tokens, API keys) live in env vars named by the config — never in the file** (`SECURITY.md`). Without this file the pipeline runs exactly as before (Claude-only gates).
+
+Why it's trustworthy (producer-proof, all documented in the contracts):
+- Each review is a **fresh** verifier (no anchoring session); findings persist across rounds in **per-slice committed ledgers** (`.parallax/<slug>/reviews/<id>.json`) so fixes are re-checked for regression, not re-discovered.
+- `scripts/merge-ledger.py` is the **only** writer of findings — Claude authors none; `scripts/triage.py` disposes **mechanically**, reading policy **only** from the trusted `.parallax/codex.toml`.
+- A `fixed` finding counts **only** if the verifier verified it (`verified_by=codex`) against the current tree, and the `[review]` policy + the frozen spec are **hashed into each receipt**; `scripts/epic-gate.py` re-checks them against the actual promoted commit before a feature may advance the append-only epic — so the producer can't certify itself, and the spec/policy can't be swapped after review.
+
+## Honesty note
+This plugin **is** a set of **prompt contracts** — `commands/`, `agents/`, `skills/` — executed by Claude, plus `assets/` (JSON schemas, a config template), deterministic `scripts/`, and a `tests/` self-test harness. It is **not** a standalone binary. A config option is "implemented" only insofar as a contract branch or a script actually consumes it; see `CHANGELOG.md` for what is mechanically enforced vs. a model-executed directive. The `tests/` harness exists precisely so these contracts don't silently drift.
 
 ## Scheduling & running with the laptop off
 Three ways to run on a cadence (per Claude Code docs):
@@ -34,22 +157,24 @@ Three ways to run on a cadence (per Claude Code docs):
 | Local files | No — **fresh clone** | Yes | Yes |
 | Min interval | 1 hour | 1 min | 1 min |
 
-For an **overnight / laptop-off** autonomous run, use a **Claude Code web scheduled task**. Because it's a fresh cloud clone, set it up so the plugin can actually run:
-
+For an **overnight / laptop-off** autonomous run, use a **Claude Code web scheduled task**. Because it's a fresh cloud clone:
 1. **Plugin in the repo** (or installed via the routine setup) so `commands/`/`agents/`/`skills/` are present.
-2. **Setup script** = `scripts/cloud-setup.sh` — **best-effort** installs the `codex`/`gemini` CLIs (adjust the package names for your versions if they differ) + project deps, and checks the required secrets are present.
+2. **Setup script** = `scripts/cloud-setup.sh` — a **best-effort** install of the `codex`/`gemini` CLIs (adjust the package names for your versions if they differ) + project deps + `jsonschema`, and a secret-presence check.
 3. **Secrets** in the routine **Environment variables** (codex/gemini keys, `PARALLAX_TG_*`, git push creds) — never in the repo (`SECURITY.md`).
-4. **Branch policy:** cloud routines push only to `claude/*` by default. Set `[git] branch_prefix = "claude/"` in `.parallax/codex.toml` (and use a `claude/`-prefixed epic) so the whole run stays in-policy — no need to enable "Allow unrestricted branch pushes".
+4. **Branch policy:** set `[git] branch_prefix = "claude/"` so the whole run stays in the allowed `claude/*` namespace.
 5. Prompt the routine with `/parallax:auto <brief>` (or `/parallax:run --resume <slug>` for the hourly resume).
 
-Local scheduling (Cowork desktop / cron) works too, but only while the machine is awake.
-
-## Testing
+## Testing the plugin itself
 ```bash
-pip install jsonschema      # optional, for full schema validation
-bash tests/run.sh           # the plugin's own regression harness
+pip install jsonschema      # required for full schema + gate validation
+bash tests/run.sh           # the plugin's own regression harness (executes the real mechanics)
 ```
-The harness locks the invariants (TOML semantics, schema validity, reference integrity, the git **assembly-not-merge** rule, and the smoke-validation logic). The helpers `tests/verify-codex.sh` and `tests/verify-gemini.sh` confirm the real `codex` / `gemini` CLIs on **your** machine (the one thing the harness can't do remotely).
+The harness **executes** the invariants (git assembly/integration, the lock, the disposition gate, schema validation, `bash -n` on every fenced block) rather than grepping for strings. `tests/verify-codex.sh` / `tests/verify-gemini.sh` confirm the real `codex` / `gemini` CLIs on **your** machine.
+
+## Command reference
+- **`/parallax:spec <idea>`** *(or `--autonomous --from-doc <brief>`)* — idea → frozen spec + slice manifest + validation contract, stopped at a gate.
+- **`/parallax:run [slug]`** *(`--autonomous` · `--parallel` · `--resume`)* — build each slice blind, arbitrate to green, integrate, push.
+- **`/parallax:auto <brief>`** *(`--resume <slug>`)* — autonomous end-to-end driver, headless and schedulable.
 
 ## Layout
 ```
@@ -57,7 +182,8 @@ The harness locks the invariants (TOML semantics, schema validity, reference int
 commands/         /parallax:spec, /parallax:run, /parallax:auto
 agents/           arbiter, test-writer-*, blind-coder-*, codex-judge (dispatched by name)
 skills/           parallax-core, role-*, domain-*  (the operating contracts)
-assets/           codex/ (verdict + spec-adversary schemas, codex.toml.example), run-state.schema.json
+assets/           codex/ schemas + codex.toml.example, run-state.schema.json, slices-lock.schema.json
+scripts/          triage.py, merge-ledger.py, epic-gate.py, code-tree-hash.sh, contract-hash.sh, cloud-setup.sh
 references/        bundled testing-anti-patterns reference
-tests/            run.sh + checks + the smoke helpers
+tests/            run.sh + t_*.sh git scenarios + smoke helpers
 ```
