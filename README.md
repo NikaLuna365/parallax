@@ -134,13 +134,15 @@ form     = "cli"
 model    = "gemini-3-pro"                      # confirm the id your `gemini` exposes
 
 [review]
-max_rounds         = 2                         # review rounds per slice, then PARK (no endless loops)
-block_severities   = ["medium", "high"]       # low = advisory; medium/high block
-always_block_kinds = ["safety", "anti-cheat", "spec-gap"]
+pre_freeze_max_rounds = 2                     # spec-adversary rounds, then a human checkpoint
+max_rounds            = 2                     # review rounds per slice, then PARK (no endless loops)
+block_severities      = ["medium", "high"]  # low = advisory; medium/high block
+always_block_kinds    = ["safety", "anti-cheat", "spec-gap"]
 ```
 The verifier runs a **provider chain** of non-Claude models; on a primary rate-limit it falls back to the next, and only if all are exhausted does the run pause and resume later. **Secrets (tokens, API keys) live in env vars named by the config — never in the file** (`SECURITY.md`). Without this file the pipeline runs exactly as before (Claude-only gates).
 
 Why it's trustworthy (producer-proof, all documented in the contracts):
+- Pre-freeze rounds pass through `scripts/pre-freeze-budget.py`: raw schema-valid verdicts, per-round contract snapshots/hashes, counts, and the policy hash live under `.parallax/<slug>/reviews/`. At the cap, autonomy parks; an interactive extension requires an exact human token and grants one round only.
 - Each review is a **fresh** verifier (no anchoring session); findings persist across rounds in **per-slice committed ledgers** (`.parallax/<slug>/reviews/<id>.json`) so fixes are re-checked for regression, not re-discovered.
 - `scripts/merge-ledger.py` is the **only** writer of findings — Claude authors none; `scripts/triage.py` disposes **mechanically**, reading policy **only** from the trusted `.parallax/codex.toml`.
 - A `fixed` finding counts **only** if the verifier verified it (`verified_by=codex`) against the current tree, and the `[review]` policy + the frozen spec are **hashed into each receipt**; `scripts/epic-gate.py` re-checks them against the actual promoted commit before a feature may advance the append-only epic — so the producer can't certify itself, and the spec/policy can't be swapped after review.
@@ -183,7 +185,7 @@ commands/         /parallax:spec, /parallax:run, /parallax:auto
 agents/           arbiter, test-writer-*, blind-coder-*, codex-judge (dispatched by name)
 skills/           parallax-core, role-*, domain-*  (the operating contracts)
 assets/           codex/ schemas + codex.toml.example, run-state.schema.json, slices-lock.schema.json
-scripts/          triage.py, merge-ledger.py, epic-gate.py, code-tree-hash.sh, contract-hash.sh, cloud-setup.sh
+scripts/          pre-freeze-budget.py, triage.py, merge-ledger.py, epic-gate.py, hashes, cloud-setup.sh
 references/        bundled testing-anti-patterns reference
 tests/            run.sh + t_*.sh git scenarios + smoke helpers
 ```

@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Parallax pre-freeze review budget state",
+  "description": "Machine-written audit state for bounded pre-freeze verifier rounds. Lives at .parallax/<slug>/reviews/pre-freeze-state.json and is written only by scripts/pre-freeze-budget.py.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["slug", "policy_hash", "base_limit", "rounds_used", "grants", "rounds", "updated_at"],
+  "properties": {
+    "slug": { "type": "string", "minLength": 1 },
+    "policy_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "base_limit": { "type": "integer", "minimum": 1 },
+    "rounds_used": { "type": "integer", "minimum": 0 },
+    "updated_at": { "type": "string", "minLength": 1 },
+    "grants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["round", "token", "approved_by", "approved_at"],
+        "properties": {
+          "round": { "type": "integer", "minimum": 1 },
+          "token": { "type": "string", "pattern": "^PARALLAX-GRANT:.+:pre-freeze-round-[1-9][0-9]*$" },
+          "approved_by": { "const": "human" },
+          "approved_at": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "rounds": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["round", "provider", "verdict", "findings_total", "severity_counts", "artifact", "contract_dir", "contract_hash", "recorded_at"],
+        "properties": {
+          "round": { "type": "integer", "minimum": 1 },
+          "provider": { "type": "string", "minLength": 1 },
+          "verdict": { "enum": ["pass", "concerns"] },
+          "findings_total": { "type": "integer", "minimum": 0 },
+          "severity_counts": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["low", "medium", "high"],
+            "properties": {
+              "low": { "type": "integer", "minimum": 0 },
+              "medium": { "type": "integer", "minimum": 0 },
+              "high": { "type": "integer", "minimum": 0 }
+            }
+          },
+          "artifact": { "type": "string", "pattern": "^pre_freeze\\.round[1-9][0-9]*\\.json$" },
+          "contract_dir": { "type": "string", "pattern": "^pre_freeze\\.round[1-9][0-9]*\\.contract$" },
+          "contract_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "recorded_at": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

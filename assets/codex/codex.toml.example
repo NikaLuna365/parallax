@@ -89,6 +89,7 @@ chat_id_env = "PARALLAX_TG_CHAT_ID"     # name of the env var holding the chat i
 # (assets/codex/review-round.schema.json); scripts/merge-ledger.py merges it mechanically and
 # scripts/triage.py disposes — reading THIS policy from this trusted file, never from the ledger.
 [review]
+pre_freeze_max_rounds = 2     # max spec-adversary rounds before a mandatory human checkpoint; each explicit grant adds ONE round only
 max_rounds           = 2     # max Codex review ROUNDS per slice (separate from the 3-iteration worker breaker); then PARK, don't loop
 resume_codex_session = false # false = fresh verifier each round + external ledger (recommended). true would anchor; unsupported on cloud clones
 recheck_fixed        = true  # a fresh review first re-checks prior open+fixed findings for regression before scanning for new ones

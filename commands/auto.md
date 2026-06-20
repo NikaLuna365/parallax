@@ -19,6 +19,7 @@ Run the full pipeline end-to-end from a written **brief**, with no human gates, 
 ## Preconditions (refuse rather than run unsafe)
 
 - **The cross-model verifier must be available.** In autonomous mode the verifier *is* the gate that replaces the human, so it is not optional here. If `.parallax/codex.toml` is missing/`enabled=false` or the `codex` CLI is unavailable, honor `on_missing` — default **`refuse`** (do not run autonomously without an independent verifier). `--allow-unverified` overrides but stamps every artifact `UNVERIFIED — human review required` and still refuses to touch `main`.
+- **Pre-freeze review is bounded.** Run every spec-adversary call through `/parallax:spec`'s `scripts/pre-freeze-budget.py` gate. When `[review].pre_freeze_max_rounds` is exhausted with `concerns`, append the machine state + raw verdict paths to `escalations.md` and stop the spec phase. Autonomous mode never fabricates a human grant token and never keeps polishing past the cap.
 - **Clean local repo; epic base from `origin/<epic>`.** The preflight provenance check still runs first (fresh `git fetch`, ancestor scan against the **remote** tip, known-deviations registry) — a scheduled run always starts from the current remote tip, never a stale local ref.
 
 ## Deferred / routine runs (scheduling)

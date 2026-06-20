@@ -78,6 +78,25 @@ This is stricter than ordinary brainstorming, and the reason is structural. In `
 
 9. **Pre-freeze gate.** Two parts — an independent cross-model review, then the gate itself.
    - **Cross-model spec review (if enabled).** If `.parallax/codex.toml` enables `pre_freeze`, dispatch `codex-judge` on the candidate spec + slice manifest + validation contract (autonomous: also the brief and decision-log) for an adversarial pass — under-specification, spec-gaps, **safety holes**, unconstrained formats, validation-realism failures. This is the cheapest place to kill a spec-gap: it dies *before* two blind tracks faithfully inherit it (the pass that would have caught "allergen keys compared raw" and "time format unconstrained but string-sorted"). Resolve every `high`/`safety` finding before freezing — never wave one through. (A `limit` here is transient: the verifier first falls back to the next provider in its chain; only if the whole chain is limited does it pause and resume later on the hourly schedule — never freeze unreviewed, never treat a limit as a `pass`.)
+   - **Bounded pre-freeze loop — executable, not interpretive.** Pre-freeze has its own fail-closed budget, `[review].pre_freeze_max_rounds` (default 2; falls back to `max_rounds` for an older config). Its single source of truth is `.parallax/<slug>/reviews/pre-freeze-state.json`, written **only** by `scripts/pre-freeze-budget.py`. Before **every** verifier dispatch, run `check`; if it returns `checkpoint`/exit 2, do not dispatch another reviewer. After a provider returns, pass its **verbatim schema-valid JSON** to `record`; the script writes the canonical `pre_freeze.round<N>.json`, counts severities, pins the review-policy hash, and refuses an unvalidated or unauthorized round. Claude-authored summaries are not review receipts.
+     ```bash
+     STATE=".parallax/$SLUG/reviews/pre-freeze-state.json"
+     POLICY=".parallax/codex.toml"
+     python3 scripts/pre-freeze-budget.py check "$STATE" --policy "$POLICY" --slug "$SLUG"
+     # Dispatch only on decision=run. Save the provider's raw JSON to $RAW_VERDICT.
+     python3 scripts/pre-freeze-budget.py record "$STATE" "$RAW_VERDICT" \
+       --policy "$POLICY" --slug "$SLUG" --provider "$PROVIDER" \
+       --contract-file ".parallax/$SLUG/spec.md" \
+       --contract-file ".parallax/$SLUG/slices.md" \
+       --contract-file ".parallax/$SLUG/validation.md" \
+       --contract-file ".parallax/$SLUG/slices.lock"
+     ```
+     A `concerns` result may be revised only while the gate still reports `run`. At the cap, show the human the round trend + unresolved findings and stop. A product answer, approval of a spec choice, "looks good", or silence is **not** a review-budget extension. Interactive mode may add exactly one round only after the human explicitly selects/repeats the exact `grant_token` emitted by `check`/`record`; then call `grant-one`. The token authorizes that next round only — after it returns `concerns`, checkpoint again. Autonomous mode can never self-grant: append the checkpoint to `escalations.md` and park the spec. Never increase the TOML limit mid-run (the pinned policy hash makes that an escalation).
+     ```bash
+     python3 scripts/pre-freeze-budget.py grant-one "$STATE" --policy "$POLICY" \
+       --slug "$SLUG" --token "$HUMAN_REPEATED_GRANT_TOKEN"
+     ```
+   - **Diminishing returns are a checkpoint, not a false green.** Report the trend (`findings_total` and severity counts from state). If a fresh round confirms the prior set closed but replaces it with a disjoint set of same-size or larger blockers, call it reviewer churn and recommend re-scope/stop rather than reflexively rewriting again. Do **not** silently skip current `high`/`safety` findings: a concrete null path, negative money input, or fallback bypass remains real even when discovered late. The reviewer must likewise avoid manufacturing blockers from preferred helper names, exact code lines, or implementation techniques when the observable contract is already pinned.
    - **The gate:**
      - *Interactive (default):* present the full set — spec + slice manifest + validation contract, plus any Codex findings and how you resolved them — and get an explicit human OK. Do not proceed on silence or a vague "looks fine". If the user requests changes, revise and re-run the self-review.
      - *Autonomous (`--from-doc`):* there is no human OK — the machine self-review (step 8) **and** the passed Codex pre-freeze review **are** the gate. Freeze only if the self-review is clean and Codex returns `pass` (or every finding is resolved into the spec / decision-log and re-checked). Any unresolved `high`/`safety` finding blocks the freeze → escalation queue (`.parallax/<slug>/escalations.md`); autonomy never ships a spec it couldn't certify. If `codex` is unavailable, honor `on_missing` from the config (`refuse`, or `warn` + stamp `UNVERIFIED`).

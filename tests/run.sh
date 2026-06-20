@@ -21,10 +21,60 @@ d=tomllib.load(open('assets/codex/codex.toml.example','rb'))
 for k in ('enabled','points','mode','on_missing','timeout_s'): assert k in d, f"root key '{k}' swallowed by a [table]"
 assert set(d['primary'])<= {'provider','form','model'} and set(d['fallback'])<= {'provider','form','model'}
 assert d['git']['branch_prefix']=="feature/" and d['notify']['enabled'] is False
-r=d['review']; assert r['max_rounds']==2 and r['resume_codex_session'] is False and r['recheck_fixed'] is True
+r=d['review']; assert r['pre_freeze_max_rounds']==2 and r['max_rounds']==2 and r['resume_codex_session'] is False and r['recheck_fixed'] is True
 assert r['block_severities']==["medium","high"] and r['advisory_severities']==["low"]
 assert set(r['always_block_kinds'])=={"safety","anti-cheat","spec-gap"}, r['always_block_kinds']
 PY
+
+echo "[pre_freeze_budget]  (EXECUTES: base cap, exact one-round human grant, raw receipts, frozen policy)"
+if ! python3 -c 'import jsonschema' >/dev/null 2>&1; then
+  echo "  · jsonschema not installed — pre-freeze budget happy-path test skipped (the gate itself fails closed)"
+else
+  PFT=$(mktemp -d); PFS="$PFT/pre-freeze-state.json"; PFP="$PFT/codex.toml"
+  cp assets/codex/codex.toml.example "$PFP"
+  printf 'candidate spec\n' > "$PFT/spec.md"
+  printf 'candidate slices\n' > "$PFT/slices.md"
+  printf 'candidate validation\n' > "$PFT/validation.md"
+  printf '{"slug":"demo","slices":["S1"]}\n' > "$PFT/slices.lock"
+  PF_CONTRACT=(--contract-file "$PFT/spec.md" --contract-file "$PFT/slices.md" \
+               --contract-file "$PFT/validation.md" --contract-file "$PFT/slices.lock")
+  for n in 1 2 3; do
+    printf '%s\n' '{"verdict":"concerns","findings":[{"severity":"high","kind":"spec-gap","where":"B1","detail":"observable divergence"}]}' > "$PFT/r$n.json"
+  done
+  pf(){ python3 scripts/pre-freeze-budget.py "$@"; }
+  PF_BAD=0
+  pf check "$PFS" --policy "$PFP" --slug demo >/tmp/parallax_pf1 || PF_BAD=1
+  pf record "$PFS" "$PFT/r1.json" --policy "$PFP" --slug demo --provider codex "${PF_CONTRACT[@]}" >/tmp/parallax_pf2 || PF_BAD=1
+  pf record "$PFS" "$PFT/r2.json" --policy "$PFP" --slug demo --provider codex "${PF_CONTRACT[@]}" >/tmp/parallax_pf3; PF_R2=$?
+  pf check "$PFS" --policy "$PFP" --slug demo >/tmp/parallax_pf4; PF_CAP=$?
+  pf grant-one "$PFS" --policy "$PFP" --slug demo --token 'owner-chose-product-option-A' >/tmp/parallax_pf5; PF_FAKE=$?
+  TOKEN=$(python3 -c 'import json; print(json.load(open("/tmp/parallax_pf4"))["grant_token"])')
+  pf grant-one "$PFS" --policy "$PFP" --slug demo --token "$TOKEN" >/tmp/parallax_pf6 || PF_BAD=1
+  pf check "$PFS" --policy "$PFP" --slug demo >/tmp/parallax_pf7 || PF_BAD=1
+  pf record "$PFS" "$PFT/r3.json" --policy "$PFP" --slug demo --provider codex "${PF_CONTRACT[@]}" >/tmp/parallax_pf8; PF_R3=$?
+  pf check "$PFS" --policy "$PFP" --slug demo >/tmp/parallax_pf9; PF_RECAP=$?
+  printf 'tampered spec\n' > "$PFT/pre_freeze.round1.contract/spec.md"
+  pf check "$PFS" --policy "$PFP" --slug demo >/tmp/parallax_pf_tamper; PF_TAMPER=$?
+  printf 'candidate spec\n' > "$PFT/pre_freeze.round1.contract/spec.md"
+  printf '\n# policy drift\n' >> "$PFP"
+  pf check "$PFS" --policy "$PFP" --slug demo >/tmp/parallax_pf10; PF_DRIFT=$?
+  python3 - "$PFS" <<'PY' >/tmp/parallax_pf_state || PF_BAD=1
+import json, os, sys
+s=json.load(open(sys.argv[1]))
+assert s["rounds_used"] == 3 and len(s["grants"]) == 1 and s["grants"][0]["round"] == 3
+assert [r["round"] for r in s["rounds"]] == [1,2,3]
+assert all(os.path.exists(os.path.join(os.path.dirname(sys.argv[1]),r["artifact"])) for r in s["rounds"])
+assert all(os.path.isdir(os.path.join(os.path.dirname(sys.argv[1]),r["contract_dir"])) for r in s["rounds"])
+assert all(len(r["contract_hash"]) == 64 for r in s["rounds"])
+PY
+  if [ "$PF_BAD" = 0 ] && [ "$PF_R2" = 2 ] && [ "$PF_CAP" = 2 ] && [ "$PF_FAKE" = 2 ] \
+     && [ "$PF_R3" = 2 ] && [ "$PF_RECAP" = 2 ] && [ "$PF_TAMPER" = 2 ] && [ "$PF_DRIFT" = 2 ]; then
+    ok "pre-freeze: 2-round cap; unrelated answer cannot grant; token grants one round; round 4, receipt tamper, policy drift block"
+  else
+    no "pre-freeze budget gate failed (bad=$PF_BAD r2=$PF_R2 cap=$PF_CAP fake=$PF_FAKE r3=$PF_R3 recap=$PF_RECAP tamper=$PF_TAMPER drift=$PF_DRIFT)"
+  fi
+  rm -rf "$PFT"
+fi
 
 echo "[schemas_valid]"
 python3 - <<'PY' && ok "all JSON schemas + manifests valid" || no "invalid JSON"
@@ -47,7 +97,7 @@ for p in glob.glob('agents/*.md'):
         for s in re.findall(r'-[ \t]*(\S+)',m.group(1)): assert s in sk,f"{p}: bad skills ref {s}"
 run=open('commands/run.md').read()
 for s in ['## Autonomous & parallel execution','## Limits, checkpointing & resume','## Notifications']: assert s in run,s
-for a in ['assets/codex/verdict.schema.json','assets/codex/spec-adversary.schema.json','assets/run-state.schema.json']: assert os.path.exists(a),a
+for a in ['assets/codex/verdict.schema.json','assets/codex/spec-adversary.schema.json','assets/codex/pre-freeze-state.schema.json','assets/run-state.schema.json','scripts/pre-freeze-budget.py']: assert os.path.exists(a),a
 PY
 
 echo "[shell_syntax]  (EXECUTES bash -n on every fenced bash block in run.md — locks P5)"
