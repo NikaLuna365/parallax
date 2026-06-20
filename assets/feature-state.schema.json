@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Parallax feature-state (contract-generation ledger)",
+  "description": "Per-feature, generation-spanning state at .parallax/<slug>/feature-state.json. Identifies the feature across contract generations (a /parallax:resolve cycle bumps the generation and mints a new run_id while keeping feature_id + slug). Written ONLY by scripts/resolution.py. See DESIGN_v0.31_safe_completion.md §7.2.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "feature_id", "slug", "generation", "active_run_id", "parent_run_id", "generation_base_oid", "feature_tip_before_generation", "contract_hash", "status", "resolution_chain"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "feature_id": { "type": "string", "minLength": 1, "description": "Stable UUID across all generations of this feature." },
+    "slug": { "type": "string", "minLength": 1 },
+    "generation": { "type": "integer", "minimum": 1, "description": "Current contract generation; a resolution increments it by exactly 1." },
+    "active_run_id": { "type": "string", "minLength": 1, "description": "run_id of the active generation's run-state." },
+    "parent_run_id": { "type": ["string", "null"], "description": "run_id of the previous generation, or null for generation 1." },
+    "generation_base_oid": { "type": "string", "pattern": "^[0-9a-f]{7,64}$", "description": "git oid the active generation's blind run started from (fresh origin/<epic> tip at restart)." },
+    "feature_tip_before_generation": { "type": "string", "pattern": "^[0-9a-f]{7,64}$", "description": "feature ref oid just before this generation's append-only restart commit (preserved in ancestry)." },
+    "contract_hash": { "type": "string", "pattern": "^[0-9a-f]{7,64}$", "description": "Hash of the active normative contract (spec/slices/validation/slices.lock), as produced by scripts/contract-hash.sh (a git hash-object id)." },
+    "status": {
+      "enum": ["draft", "running", "needs-resolution", "resolving", "complete", "abandoned"]
+    },
+    "resolution_chain": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^RB-[0-9]+$" },
+      "description": "Ordered applied resolution batch ids (RB-0001, RB-0002, ...). Length == generation - 1."
+    }
+  }
+}

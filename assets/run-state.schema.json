@@ -18,10 +18,15 @@
     },
     "epic": { "type": "string", "description": "The integration/epic branch this feature targets (e.g. feature/flex-cis)." },
     "base_tip": { "type": "string", "pattern": "^[0-9a-f]{7,64}$", "description": "origin/<epic> commit sha the run started from (provenance anchor)." },
+    "feature_id": { "type": "string", "minLength": 1, "description": "v0.31: stable feature UUID (matches feature-state.json). Absent in v0.30 artifacts (migration assigns one)." },
+    "contract_generation": { "type": "integer", "minimum": 1, "description": "v0.31: contract generation this run belongs to. Absent => generation 1 (v0.30 backward-compat)." },
+    "parent_run_id": { "type": ["string", "null"], "description": "v0.31: run_id of the previous generation, or null for generation 1." },
+    "resolution_queue": { "type": ["string", "null"], "description": "v0.31: path to .parallax/<slug>/resolution-queue.json (the structured spec-gap source of truth)." },
+    "resolution_chain": { "type": "array", "items": { "type": "string", "pattern": "^RB-[0-9]+$" }, "description": "v0.31: applied resolution batch ids leading to this generation." },
     "verified_tree": { "type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$", "description": "Feature-level receipt bound to the committed feature tip: the content hash of ALL tracked non-.parallax/ files (code+tests+config) at the tip when the run COMPLETED and every slice was verified (canonical form: `git ls-tree -r <tip> | grep -v <TAB>.parallax/ | git hash-object --stdin`). scripts/epic-gate.py recomputes this from the promoted feature commit and requires equality, so a code change after review (which leaves the per-slice ledgers untouched) is mechanically caught. REQUIRED once status=complete." },
     "status": {
-      "enum": ["running", "paused-on-limit", "complete", "stuck"],
-      "description": "Run-level status. A resume that finds 'complete' no-ops and self-terminates the schedule."
+      "enum": ["running", "paused-on-limit", "complete", "stuck", "needs-resolution", "resolving", "abandoned"],
+      "description": "Run-level status. A resume that finds 'complete' no-ops and self-terminates the schedule. v0.31 adds needs-resolution (parked on a confirmed spec-gap), resolving (a /parallax:resolve transaction is in flight), and abandoned."
     },
     "paused": {
       "type": ["object", "null"],
@@ -98,6 +103,10 @@
     { "if": { "properties": { "status": { "const": "paused-on-limit" } }, "required": ["status"] },
       "then": { "required": ["paused"], "properties": { "paused": { "type": "object" } } } },
     { "if": { "properties": { "status": { "const": "complete" } }, "required": ["status"] },
-      "then": { "required": ["verified_tree"], "properties": { "verified_tree": { "type": "string", "pattern": "^[0-9a-f]{7,64}$" } } } }
+      "then": { "required": ["verified_tree"], "properties": { "verified_tree": { "type": "string", "pattern": "^[0-9a-f]{7,64}$" } } } },
+    { "if": { "properties": { "status": { "const": "needs-resolution" } }, "required": ["status"] },
+      "then": { "required": ["resolution_queue"], "properties": { "resolution_queue": { "type": "string", "minLength": 1 } } } },
+    { "if": { "properties": { "status": { "const": "resolving" } }, "required": ["status"] },
+      "then": { "required": ["resolution_queue"], "properties": { "resolution_queue": { "type": "string", "minLength": 1 } } } }
   ]
 }

@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Parallax resolution queue (structured spec-gap items)",
+  "description": "The authoritative, machine-readable queue of confirmed spec-gap resolution items at .parallax/<slug>/resolution-queue.json. Append-only by identity (an item is never deleted or its meaning rewritten); only its lifecycle moves open -> resolved|superseded, and only via scripts/resolution.py. escalations.md is a human-readable projection, NOT the source of truth. See DESIGN_v0.31_safe_completion.md §7.3 / §9.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "slug", "items"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "slug": { "type": "string", "minLength": 1 },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status", "stage", "kind", "source_contract_hash", "source_run_id", "spec_refs", "question", "options", "blocked_slices", "source_receipts"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^R-[A-Za-z0-9]+-[0-9]+$", "description": "Stable id, e.g. R-S2-0001." },
+          "status": { "enum": ["open", "resolved", "superseded"] },
+          "stage": { "enum": ["pre-freeze", "build", "post-green"] },
+          "kind": { "enum": ["spec-gap", "under-specified"], "description": "Only genuine contract ambiguities are resolvable; breaker/anti-cheat/safety-without-choice/code-fault/test-fault/limit are NOT items." },
+          "slice_id": { "type": ["string", "null"] },
+          "source_contract_hash": { "type": "string", "pattern": "^[0-9a-f]{7,64}$", "description": "contract_hash of the generation that produced this item (binds it to a contract; a git hash-object id)." },
+          "source_run_id": { "type": "string", "minLength": 1 },
+          "spec_refs": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1, "description": "Spec section(s)/behavior the gap concerns — REQUIRED; an item with no spec reference is inadmissible." },
+          "question": { "type": "string", "minLength": 1, "description": "What is undefined, as a behavioral question (never an implementation question)." },
+          "options": {
+            "type": "array",
+            "minItems": 2,
+            "description": "Two or more admissible behavioral readings; each with its observable consequence. The human picks one, supplies their own concrete rule, rescopes, or abandons.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "rule", "consequence"],
+              "properties": {
+                "id": { "type": "string", "minLength": 1 },
+                "rule": { "type": "string", "minLength": 1 },
+                "consequence": { "type": "string", "minLength": 1 }
+              }
+            }
+          },
+          "blocked_slices": { "type": "array", "items": { "type": "string" } },
+          "source_receipts": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1, "description": "Stable references/hashes of the raw verdict receipts this item came from." }
+        }
+      }
+    }
+  }
+}

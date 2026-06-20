@@ -435,6 +435,12 @@ else
   { [ -z "$(find . -name '*.py[co]' 2>/dev/null)" ] && grep -qE '\*\.pyc' .gitignore; } && ok "no *.pyc in the shipped tree; .gitignore excludes them" || no "shipped tree contains *.pyc"
 fi
 
+echo "[resolution_gate]  (v0.31 P1 — EXECUTES resolution.py + epic-gate feature-state: one-time token, +1 generation, fail-closed set, stale-generation hold)"
+bash tests/t_resolution_gate.sh >/tmp/parallax_rg 2>&1; rgrc=$?
+if [ "$rgrc" = 2 ]; then echo "  · jsonschema not installed — resolution gate test skipped (the writer itself fails closed)";
+elif [ "$rgrc" = 0 ]; then ok "resolution.py: schema-valid items only, single-use token, generation strictly +1, fail-closed (stale hash / reused token / empty diff / unclosed item / unsupported kind); epic-gate holds a non-complete or stale-generation feature"; else no "resolution gate (v0.31 P1) wrong"; sed 's/^/      /' /tmp/parallax_rg; fi
+{ [ -f scripts/resolution.py ] && [ -f assets/feature-state.schema.json ] && [ -f assets/resolution-queue.schema.json ] && [ -f assets/resolution-receipt.schema.json ]; } && ok "v0.31 components present: resolution.py + feature-state/resolution-queue/resolution-receipt schemas" || no "v0.31 resolution components missing"
+
 echo "[security_no_secrets]  (locks repo hygiene)"
 grep -qE 'sk-[A-Za-z0-9]{16,}|AIza[0-9A-Za-z_-]{20,}|[0-9]{6,}:[A-Za-z0-9_-]{20,}' assets/codex/codex.toml.example && no "config has a secret-shaped value" || ok "config has no secret-shaped values (only *_env names)"
 { [ -f SECURITY.md ] && grep -q '^\.env$' .gitignore; } && ok "SECURITY.md + .gitignore (.env) present" || no "SECURITY.md/.gitignore missing"

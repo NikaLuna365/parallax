@@ -37,6 +37,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _SCHEMA_LEDGER     = os.path.join(_HERE, "..", "assets", "codex", "review-ledger.schema.json")
 _SCHEMA_RUNSTATE   = os.path.join(_HERE, "..", "assets", "run-state.schema.json")
 _SCHEMA_SLICESLOCK = os.path.join(_HERE, "..", "assets", "slices-lock.schema.json")
+_SCHEMA_FEATURE    = os.path.join(_HERE, "..", "assets", "feature-state.schema.json")
 _TREE_HASH_SH      = os.path.join(_HERE, "code-tree-hash.sh")
 _CONTRACT_HASH_SH  = os.path.join(_HERE, "contract-hash.sh")
 
@@ -114,6 +115,31 @@ def gate(repo, ref, slug):
         return False, {"run_state": f"status={rs.get('status')!r} (require 'complete')"}
     if rs.get("slug") != slug:                                       # P1#4 — receipts must be THIS feature's
         return False, {"run_state": f"slug={rs.get('slug')!r} != {slug!r}"}
+
+    # v0.31 safe-completion: if a feature-state ledger exists, the promoted run must be the ACTIVE generation
+    # of a COMPLETE feature. A run-state with no contract_generation is treated as generation 1 (v0.30 compat).
+    fs_raw = _git_show(repo, ref, f".parallax/{slug}/feature-state.json")
+    if fs_raw is not None:
+        try:
+            fs = json.loads(fs_raw)
+        except Exception as e:
+            return False, {"feature_state": f"bad json: {e}"}
+        ferr = _validate(fs, _SCHEMA_FEATURE)
+        if ferr:
+            return False, {"feature_state": ferr}
+        if fs.get("slug") != slug:
+            return False, {"feature_state": f"slug={fs.get('slug')!r} != {slug!r}"}
+        if fs.get("status") != "complete":
+            return False, {"feature_state": f"status={fs.get('status')!r} (require 'complete')"}
+        if len(fs.get("resolution_chain", [])) != fs.get("generation", 1) - 1:
+            return False, {"feature_state": "resolution_chain length != generation-1 (discontinuous)"}
+        rs_gen = rs.get("contract_generation", 1)
+        if rs_gen != fs.get("generation"):
+            return False, {"feature_state": f"run-state generation {rs_gen} != active feature generation {fs.get('generation')} (stale-generation run)"}
+        if rs.get("run_id") != fs.get("active_run_id"):
+            return False, {"feature_state": f"run-state run_id {rs.get('run_id')!r} != active_run_id {fs.get('active_run_id')!r}"}
+        if rs.get("feature_id") is not None and rs.get("feature_id") != fs.get("feature_id"):
+            return False, {"feature_state": "run-state feature_id != feature-state feature_id"}
 
     # policy from the COMMITTED config, never the working tree (P0#1)
     policy, phash = _committed_policy(repo, ref)
