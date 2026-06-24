@@ -441,6 +441,15 @@ if [ "$rgrc" = 2 ]; then echo "  · jsonschema not installed — resolution gate
 elif [ "$rgrc" = 0 ]; then ok "resolution.py: schema-valid items only, single-use token, generation strictly +1, fail-closed (stale hash / reused token / empty diff / unclosed item / unsupported kind); epic-gate holds a non-complete or stale-generation feature"; else no "resolution gate (v0.31 P1) wrong"; sed 's/^/      /' /tmp/parallax_rg; fi
 { [ -f scripts/resolution.py ] && [ -f assets/feature-state.schema.json ] && [ -f assets/resolution-queue.schema.json ] && [ -f assets/resolution-receipt.schema.json ]; } && ok "v0.31 components present: resolution.py + feature-state/resolution-queue/resolution-receipt schemas" || no "v0.31 resolution components missing"
 
+echo "[resolution_restart]  (v0.31 P2 — EXECUTES generation-restart.sh against REAL git repos: append-only restart, no old code on active paths, history archive, fast-forward publish, idempotency, atomic CAS race)"
+bash tests/t_resolution_generation.sh >/tmp/parallax_rgen 2>&1; rgenrc=$?
+if [ "$rgenrc" = 2 ]; then echo "  · jsonschema not installed — generation-restart test skipped (resolution.py is the real writer)";
+elif [ "$rgenrc" = 0 ]; then ok "generation restart: fresh epic base + NO old impl on the active tree; old contract/run-state/reviews archived to history/generation-N/; gen-N+1 contract+feature-state+receipt installed; append-only fast-forward publish; idempotent re-run no-ops; stale expect-tip refuses (feature ref untouched)"; else no "generation-restart (v0.31 P2) wrong"; sed 's/^/      /' /tmp/parallax_rgen; fi
+bash tests/t_resolution_race.sh >/tmp/parallax_rrace 2>&1; rracrc=$?
+if [ "$rracrc" = 2 ]; then echo "  · jsonschema not installed — resolution race test skipped";
+elif [ "$rracrc" = 0 ]; then ok "concurrent resolvers: the atomic feature-ref CAS lands EXACTLY ONE generation-2 restart; the loser refuses to clobber; the survivor is append-only (no force-push)"; else no "resolution race (v0.31 P2) wrong"; sed 's/^/      /' /tmp/parallax_rrace; fi
+{ [ -f scripts/generation-restart.sh ] && ! grep -qE 'push[^|&]*(--force|-f )' scripts/generation-restart.sh; } && ok "scripts/generation-restart.sh present and never force-pushes (append-only by construction)" || no "generation-restart.sh missing or force-pushes"
+
 echo "[security_no_secrets]  (locks repo hygiene)"
 grep -qE 'sk-[A-Za-z0-9]{16,}|AIza[0-9A-Za-z_-]{20,}|[0-9]{6,}:[A-Za-z0-9_-]{20,}' assets/codex/codex.toml.example && no "config has a secret-shaped value" || ok "config has no secret-shaped values (only *_env names)"
 { [ -f SECURITY.md ] && grep -q '^\.env$' .gitignore; } && ok "SECURITY.md + .gitignore (.env) present" || no "SECURITY.md/.gitignore missing"
