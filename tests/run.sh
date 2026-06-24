@@ -450,6 +450,32 @@ if [ "$rracrc" = 2 ]; then echo "  · jsonschema not installed — resolution ra
 elif [ "$rracrc" = 0 ]; then ok "concurrent resolvers: the atomic feature-ref CAS lands EXACTLY ONE generation-2 restart; the loser refuses to clobber; the survivor is append-only (no force-push)"; else no "resolution race (v0.31 P2) wrong"; sed 's/^/      /' /tmp/parallax_rrace; fi
 { [ -f scripts/generation-restart.sh ] && ! grep -qE 'push[^|&]*(--force|-f )' scripts/generation-restart.sh; } && ok "scripts/generation-restart.sh present and never force-pushes (append-only by construction)" || no "generation-restart.sh missing or force-pushes"
 
+echo "[affordance_review]  (v0.31 patch — /parallax:spec forces an Existing Affordance Review before approach choice; prompt-contract only: no new command/script/schema/state)"
+{ grep -q "Existing Affordance Review" commands/spec.md \
+  && grep -q "^## Existing affordance review" commands/spec.md \
+  && grep -q "Thin overlay via an existing affordance" commands/spec.md \
+  && grep -qF '`rejected`' commands/spec.md; } \
+  && ok "spec.md: Step 3.5 review + frozen-spec 'Existing affordance review' section + thin-overlay-first approaches (a non-viable overlay is still shown as rejected)" \
+  || no "spec.md affordance review / spec-format section / approach ordering not wired"
+{ grep -q "always applies" commands/spec.md \
+  && grep -q "without a recorded rejection of the plausible existing affordances" commands/spec.md; } \
+  && ok "spec.md Step 8: always-applies affordance pass; a new subsystem with no recorded rejection is a spec blocker" \
+  || no "spec.md missing the always-applies affordance self-review pass"
+{ grep -qi "unjustified overbuild" commands/spec.md \
+  && grep -qi "unjustified overbuild" skills/role-codex-judge/SKILL.md; } \
+  && ok "pre-freeze reviewer scope (spec.md Step 9 + role-codex-judge) includes unjustified overbuild, classified high/medium/low by repo evidence" \
+  || no "pre-freeze overbuild scope not wired into spec.md + role-codex-judge"
+{ grep -q "never reshape the product" commands/spec.md \
+  && grep -qi "not a line-count rule" commands/spec.md; } \
+  && ok "spec.md: autonomous affordance choice is mechanical-only (a product-behaviour change parks/escalates); the thin-overlay heuristic is explicitly NOT a LOC gate" \
+  || no "spec.md missing the autonomous boundary or the no-LOC-gate clause"
+{ [ -f tests/affordance-eval-cases.md ] && [ "$(grep -cE '^### E[0-9]' tests/affordance-eval-cases.md)" -ge 5 ]; } \
+  && ok "tests/affordance-eval-cases.md documents >= 5 prompt-level regression cases (E1..E6)" \
+  || no "affordance eval cases missing or fewer than 5"
+{ [ ! -e commands/affordance.md ] && ! ls scripts/ 2>/dev/null | grep -qi affordance && ! ls assets/ 2>/dev/null | grep -qi affordance; } \
+  && ok "no new command/script/schema for affordance review — prompt-contract patch only (DESIGN §11)" \
+  || no "affordance patch added a new command/script/schema (forbidden by §11)"
+
 echo "[security_no_secrets]  (locks repo hygiene)"
 grep -qE 'sk-[A-Za-z0-9]{16,}|AIza[0-9A-Za-z_-]{20,}|[0-9]{6,}:[A-Za-z0-9_-]{20,}' assets/codex/codex.toml.example && no "config has a secret-shaped value" || ok "config has no secret-shaped values (only *_env names)"
 { [ -f SECURITY.md ] && grep -q '^\.env$' .gitignore; } && ok "SECURITY.md + .gitignore (.env) present" || no "SECURITY.md/.gitignore missing"
