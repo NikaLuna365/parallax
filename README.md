@@ -122,6 +122,16 @@ Right after the affordance review, `/parallax:spec` runs a narrow **Architecture
 ## Project scouts on large repos (inside `/parallax:spec`)
 On a **large or unfamiliar** repo, `/parallax:spec` can optionally fan out a few **bounded, read-only internal scouts** to gather evidence before it decides — one scout per lens (existing seams, local architecture contracts, testing/validation seams, source-of-truth/domain logic, risky integrations). This is **not** a new command and **not** a repo-wide audit: scouts only *collect cited evidence* (`file:line`, confidence, uncertainty) and **decide nothing** — they can't edit files, ask you, freeze, or run anything. The main `/parallax:spec` agent **verifies the key evidence itself** (opens the cited lines, confirms a seam is really public, re-confirms a command is real) before using it in the Existing Affordance Review, Architecture Fitness, or `validation.md`. On a small repo, or when the runtime has no sub-agents, fanout simply isn't used — the **linear flow stays the default**, and the frozen spec records whether scouts ran under `## Project scout evidence`. (Whether fanout actually improves large-repo specs is a hypothesis for targeted evals, not a guarantee.)
 
+## Brief packet & AI-architect handoff (no new command)
+Parallax also works as a **strict worker** inside a larger flow, where a user and an AI-architect have already brainstormed and hand Parallax a brief. `/parallax:spec --from-doc <brief>` and `/parallax:auto <brief>` accept a structured **Parallax Brief Packet** (`references/parallax-brief-packet.md`) — Problem, Desired behavior, Constraints, Proposed shape, Existing evidence, Open decisions, Non-goals, Validation hints, Risk notes — or plain markdown, which Parallax normalizes into the same shape. There is **no new command**.
+
+The brief is **input, not authority.** Any *Proposed shape* is a **hypothesis**, not an instruction: Parallax still runs the Existing Affordance Review, Architecture Fitness, validation-realism, and the pre-freeze gate, and can **reject** the proposed shape on the evidence. Two honest outcomes:
+
+- **build-ready** → the brief checks out and Parallax freezes the normal artifacts (the spec's `Intake source` section records how the brief was interpreted); or
+- **not build-ready** → Parallax returns a bounded **Intake Response** — a `Status`, a one-paragraph summary, **≤5 concrete blocking questions** (each with why it blocks, options, and a safe `recommended default` or `none`), the repo evidence it checked, the assumptions it can safely make, and the next action — and **does not start the build**. The upstream AI/user answers by updating the brief packet and rerunning.
+
+Intake never offers an `ignore` / `ship anyway` path, never asks for a fact the repo can answer, and doesn't change the direct `/parallax:spec <idea>` flow. (Whether the handoff layer measurably improves outcomes is a hypothesis for a targeted eval, not a claim.)
+
 ## When *not* to use Parallax
 - **Trivial / throwaway changes** where writing a concrete spec costs more than the change.
 - **Exploratory / research code** where the spec is the thing you're still discovering — there's no stable source of truth to converge on yet.
@@ -202,7 +212,7 @@ The harness **executes** the invariants (git assembly/integration, the lock, the
 ## Command reference
 - **`/parallax:spec <idea>`** *(or `--autonomous --from-doc <brief>`)* — idea → frozen spec + slice manifest + validation contract, stopped at a gate. Includes an **Existing Affordance Review** so it reuses an existing seam instead of freezing a needless new subsystem, and a lightweight **Architecture Fitness** check that catches obvious maintainability failures (wrong seam, shallow wrapper, duplicated logic, speculative adapter, no regression seam, ignored local ADR) before freeze — blocking only on a concrete consequence, never on style. On a large or unfamiliar repo it can optionally fan out bounded read-only **project scouts** to gather evidence it then verifies itself (no new command; linear flow stays the default).
 - **`/parallax:run [slug]`** *(`--autonomous` · `--parallel` · `--resume`)* — build each slice blind, arbitrate to green, integrate, push.
-- **`/parallax:auto <brief>`** *(`--resume <slug>`)* — autonomous end-to-end driver, headless and schedulable.
+- **`/parallax:auto <brief>`** *(`--resume <slug>`)* — autonomous end-to-end driver, headless and schedulable. Accepts a Parallax Brief Packet; if the brief isn't build-ready it stops with an **Intake Response** (bounded blocking questions) instead of building.
 - **`/parallax:resolve <slug>`** *(`--status` · `--item <R-id>` · `--from-file <decision.json>`)* — turn a parked spec-gap into a verified **safe completion**: decide the contract ambiguity, mint a new generation, fully invalidate, and rebuild. Not `--resume` (that only continues a limit-pause).
 
 ## Layout

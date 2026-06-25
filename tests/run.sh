@@ -550,6 +550,34 @@ echo "[project_scout]  (v0.33 — optional bounded Project Scout fanout inside /
   && ok "tests/project-scout-eval-cases.md documents >= 8 scout cases (incl. small-repo + runtime-unavailable fallbacks, hallucination, overreach, resolve freshness)" \
   || no "project-scout eval cases missing or < 8"
 
+echo "[intake_handoff]  (v0.34 — /parallax:spec --from-doc + /parallax:auto understand a Parallax Brief Packet; not-build-ready -> bounded Intake Response, never a guess; no new command)"
+{ grep -qF 'Parallax Brief Packet' commands/spec.md \
+  && grep -qF 'Intake Response' commands/spec.md \
+  && grep -qiE 'input, not authority|is a \*\*hypothesis|hypothesis, not' commands/spec.md; } \
+  && ok "spec.md: --from-doc accepts a Brief Packet; returns an Intake Response when not build-ready; proposed shape is a hypothesis, not authority" \
+  || no "spec.md intake (brief packet / Intake Response / hypothesis) not wired"
+{ grep -qF 'Existing Affordance Review' commands/spec.md && grep -qF 'Architecture Fitness' commands/spec.md; } \
+  && ok "spec.md: intake still runs the Existing Affordance Review + Architecture Fitness (the brief never bypasses gates)" \
+  || no "spec.md intake does not reaffirm the affordance/architecture gates"
+{ grep -qF 'Intake Response' commands/auto.md && grep -qiE 'does NOT proceed|never starts .*parallax:run|stops and reports' commands/auto.md; } \
+  && ok "auto.md stops on an Intake Response and does not start the build (no /parallax:run)" \
+  || no "auto.md does not stop the build on an Intake Response"
+{ [ -f references/parallax-brief-packet.md ] && grep -qF 'Intake Response' references/parallax-brief-packet.md; } \
+  && ok "references/parallax-brief-packet.md present (Brief Packet template + Intake Response format + handoff etiquette)" \
+  || no "references/parallax-brief-packet.md missing or incomplete"
+{ grep -qiF 'ship anyway' commands/spec.md && grep -qiF 'no bypass' commands/spec.md; } \
+  && ok "intake never offers ignore/ship-anyway — no gate bypass" \
+  || no "spec.md intake bypass guard missing"
+{ [ ! -e commands/intake.md ]; } \
+  && ok "no public /parallax:intake command — intake reuses --from-doc / /parallax:auto (TZ §5)" \
+  || no "a public intake command was added (forbidden)"
+{ [ -f tests/t_resolution_gate.sh ] && [ -f tests/architecture-fitness-eval-cases.md ] && [ -f tests/project-scout-eval-cases.md ]; } \
+  && ok "v0.31 resolution + v0.32 architecture + v0.33 project-scout test material preserved" \
+  || no "prior-version test material missing after the v0.34 patch"
+{ [ -f tests/intake-handoff-eval-cases.md ] && [ "$(grep -cE '^### Case [0-9]' tests/intake-handoff-eval-cases.md)" -ge 9 ]; } \
+  && ok "tests/intake-handoff-eval-cases.md documents >= 9 cases (incl. bypass rejection, direct-prompt regression, loop bound)" \
+  || no "intake eval cases missing or < 9"
+
 echo "[security_no_secrets]  (locks repo hygiene)"
 grep -qE 'sk-[A-Za-z0-9]{16,}|AIza[0-9A-Za-z_-]{20,}|[0-9]{6,}:[A-Za-z0-9_-]{20,}' assets/codex/codex.toml.example && no "config has a secret-shaped value" || ok "config has no secret-shaped values (only *_env names)"
 { [ -f SECURITY.md ] && grep -q '^\.env$' .gitignore; } && ok "SECURITY.md + .gitignore (.env) present" || no "SECURITY.md/.gitignore missing"
@@ -558,17 +586,18 @@ echo "[cloud_setup]  (real install attempts, not commented-out — locks #6)"
 grep -qE '^\s*command -v codex .*\|\| npm i -g' scripts/cloud-setup.sh && ok "cloud-setup.sh actually ATTEMPTS the CLI installs (uncommented)" || no "cloud-setup.sh installs are still commented out"
 grep -qiE 'best-effort|adjust the package names' README.md && ok "README is honest about best-effort installs" || no "README overclaims that setup installs"
 
-echo "[release_coherence]  (v0.33 — manifest/changelog/docs agree on the release; v0.31/v0.32 kept)"
-{ grep -q '"version": "0.33.0"' .claude-plugin/plugin.json \
+echo "[release_coherence]  (v0.34 — manifest/changelog/docs agree on the release; v0.31-v0.33 kept)"
+{ grep -q '"version": "0.34.0"' .claude-plugin/plugin.json \
+  && grep -q '^## 0.34.0' CHANGELOG.md \
   && grep -q '^## 0.33.0' CHANGELOG.md \
-  && grep -q '^## 0.32.0' CHANGELOG.md \
   && grep -q '^## 0.31.0' CHANGELOG.md \
+  && grep -qiF 'brief packet' README.md \
   && grep -qiF 'Project Scout' README.md \
-  && grep -qiF 'Architecture Fitness' README.md \
   && grep -qF '/parallax:resolve' README.md \
-  && [ -f tests/project-scout-eval-cases.md ]; } \
-  && ok "version 0.33.0 in plugin.json; CHANGELOG has 0.33.0 (0.32.0/0.31.0 kept); README documents Project Scout + Architecture Fitness + /parallax:resolve; v0.33 eval plan present" \
-  || no "release coherence: version/changelog/docs not aligned for 0.33.0"
+  && [ -f references/parallax-brief-packet.md ] \
+  && [ -f tests/intake-handoff-eval-cases.md ]; } \
+  && ok "version 0.34.0 in plugin.json; CHANGELOG has 0.34.0 (0.33.0/0.31.0 kept); README documents the brief packet + Project Scout + /parallax:resolve; v0.34 reference + eval present" \
+  || no "release coherence: version/changelog/docs not aligned for 0.34.0"
 
 echo ""
 echo "== $PASS passed, $FAIL failed =="

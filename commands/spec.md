@@ -1,6 +1,6 @@
 ---
 name: spec
-description: "Phase 1 of the Parallax pipeline. Drive a READ-ONLY interactive brainstorm into ONE maximally-concrete spec with zero open questions, plus a slice manifest and a real validation contract, then freeze them at a gate — a human OK, or in autonomous mode (--from-doc) a machine self-review plus an independent Codex pre-freeze review. Run this before /parallax:run."
+description: "Phase 1 of the Parallax pipeline. Drive a READ-ONLY interactive brainstorm into ONE maximally-concrete spec with zero open questions, plus a slice manifest and a real validation contract, then freeze them at a gate — a human OK, or in autonomous mode (--from-doc) a machine self-review plus an independent Codex pre-freeze review. Run this before /parallax:run. With --from-doc it accepts a structured Parallax Brief Packet (or unstructured markdown) and, if the brief is not build-ready, returns a bounded Intake Response with blocking questions instead of freezing or building."
 argument-hint: "<what you want to build>   |   --autonomous --from-doc <brief-path>"
 ---
 
@@ -158,6 +158,18 @@ This is stricter than ordinary brainstorming, and the reason is structural. In `
 
 Run the whole spec phase unattended, from a written brief, when no principled fork remains to decide. The mechanism is unchanged; only the *human touchpoints* are replaced. Overrides, step by step:
 
+### Intake from a brief packet (`--from-doc`)
+`--from-doc` accepts a structured **Parallax Brief Packet** (`references/parallax-brief-packet.md`) **or** plain unstructured markdown — normalize either into the same internal shape. The brief is **input, not authority**: even when it carries a *Proposed shape*, you still run the Existing Affordance Review (Step 3.5), Architecture Fitness (Step 4.5), validation-realism, and the pre-freeze gate. You may use v0.33 Project Scouts to gather repo **evidence**, but verify it yourself (Step 1.6); neither the scouts nor the brief decide a fork.
+
+- **A — Parse.** Extract the packet sections (or normalize unstructured markdown into them) and separate **observable behaviour / constraints / non-goals** (high weight — these are requirements) from the **proposed shape / evidence hints / open decisions** (lower weight — candidates to test). A *Proposed shape* is a **hypothesis**: test it against repo evidence, affordances, architecture contracts, and validation seams, and **reject** it if the evidence says so (record the rejection).
+- **B — Build-readiness triage.** Before drafting, classify each gap and act: *missing repo evidence* → read or scout; *missing validation command* → discover/confirm, ask only if undiscoverable; *product behaviour fork* → Intake Response (don't guess); *safety/auth/data fork* → Intake Response or park (no default unless explicit); *proposed overbuild* → Existing Affordance Review (reject if an existing seam covers it); *architecture risk* → Architecture Fitness (rescope/ask if it's a blocker); *mechanical implementation detail* → decide conservatively and record in **Resolved assumptions**.
+- **C — Decide the outcome.** If **no blocking product/behaviour/safety fork remains**, continue the normal `/parallax:spec` flow and freeze only after the usual gates pass. If a blocker remains, **emit an Intake Response and stop** — do **not** start `/parallax:run`.
+- **D — Bound the handoff loop.** One intake pass returns **at most 5** blocking questions; upstream answers by **updating the brief packet** and rerunning `--from-doc`. If two consecutive passes return mostly *new* blockers of the same size, recommend **rescope / decompose** rather than continuing a broad agent↔agent brainstorm. Autonomous mode must **not** invent a product decision to break the loop.
+
+**Intake Response (returned when the brief is not build-ready).** Instead of freezing or building, output the compact upstream-facing response from `references/parallax-brief-packet.md`: a `Status` (`build-ready` / `needs-clarification` / `needs-rescope` / `blocked`), a one-paragraph `Summary`, **≤5 concrete `Blocking questions`** (each with *why it blocks*, *options*, and a `recommended default` only when safe — otherwise `none`), the `Repo evidence checked`, the `Assumptions Parallax can safely make`, any `Rejected proposed shape`, and a `Next action`. Never ask what the repo can answer, never return style/preference as a blocker, and **never offer `ignore` / `ship anyway`** — intake has no bypass (a post-build parked spec-gap is the separate `/parallax:resolve` path, which also never ships-anyway).
+
+### Human-touchpoint overrides
+
 - **Source of truth = the brief.** Steps 3–4 (interactive clarify, propose approaches) don't ask the human. Read the brief (`--from-doc <path>`) as authoritative; where it is silent or readable two ways, choose the **most reasonable** reading and **record it** (decision-log). Do **not** invent a *principled* product decision — if the brief leaves a genuine fork (a real safety / UX / business choice, not a mechanical detail), the task was **not** autonomous-ready: stop and surface it to the escalation queue (`.parallax/<slug>/escalations.md`), don't guess.
 - **Decision-log.** Every ambiguity you resolve becomes a row in **Resolved assumptions**: `ambiguity | options considered | chosen reading | rationale | confidence`. This is the audit trail that makes an unattended freeze reviewable after the fact.
 - **All machine self-review still runs.** Step 8 and its targeted passes are machine checks — run them exactly as in interactive mode. They are your first line of defense, not a formality.
@@ -176,6 +188,14 @@ Run the whole spec phase unattended, from a written brief, when no principled fo
 
 ## Goal & context
 <what this is for, and the relevant existing-system context a builder needs>
+
+## Intake source
+<how an external brief was interpreted. Omit for a direct interactive prompt unless useful; include for `--from-doc` so the frozen spec records the handoff.>
+Source type: <direct prompt | brief packet | unstructured brief>
+Upstream role: <user | AI-architect | unknown>
+Brief packet completeness: <complete, or which sections were missing and how each was resolved>
+Proposed shape status: <accepted as the smallest sufficient shape / rejected (concrete reason) / modified / none>
+Intake blockers resolved: <the Q-ids answered before freeze, or "none">
 
 ## Project scout evidence
 <"Not used: <repo small / runtime unavailable / relevant evidence found linearly>", or a compact summary of the scout lenses used. Short is fine — this exists so a future reader can tell whether fanout ran and which scout evidence the main agent actually verified.>
