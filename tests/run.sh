@@ -578,6 +578,17 @@ echo "[intake_handoff]  (v0.34 — /parallax:spec --from-doc + /parallax:auto un
   && ok "tests/intake-handoff-eval-cases.md documents >= 9 cases (incl. bypass rejection, direct-prompt regression, loop bound)" \
   || no "intake eval cases missing or < 9"
 
+echo "[eval_harness_v2]  (v0.35 — measurement release: the evaluation harness lives under bench/, NOT in the plugin; no new command, no runtime change)"
+{ [ ! -e commands/eval.md ] && [ ! -e commands/benchmark.md ] && [ ! -e commands/measure.md ]; } \
+  && ok "no public /parallax:eval | :benchmark | :measure command — measurement is out-of-runtime under bench/ (TZ §4/§5)" \
+  || no "a public eval/benchmark/measure command was added (forbidden)"
+{ [ -f references/evaluation-harness-v2.md ] && grep -qi 'measurement' references/evaluation-harness-v2.md; } \
+  && ok "references/evaluation-harness-v2.md present and honest (measurement only, points to bench/)" \
+  || no "references/evaluation-harness-v2.md missing or not honest"
+{ grep -qiF 'evaluation harness v2' README.md && grep -qiF 'no command' README.md; } \
+  && ok "README documents harness v2 as measurement-only (no new command, no benchmark claim)" \
+  || no "README missing the honest harness-v2 note"
+
 echo "[security_no_secrets]  (locks repo hygiene)"
 grep -qE 'sk-[A-Za-z0-9]{16,}|AIza[0-9A-Za-z_-]{20,}|[0-9]{6,}:[A-Za-z0-9_-]{20,}' assets/codex/codex.toml.example && no "config has a secret-shaped value" || ok "config has no secret-shaped values (only *_env names)"
 { [ -f SECURITY.md ] && grep -q '^\.env$' .gitignore; } && ok "SECURITY.md + .gitignore (.env) present" || no "SECURITY.md/.gitignore missing"
@@ -586,18 +597,18 @@ echo "[cloud_setup]  (real install attempts, not commented-out — locks #6)"
 grep -qE '^\s*command -v codex .*\|\| npm i -g' scripts/cloud-setup.sh && ok "cloud-setup.sh actually ATTEMPTS the CLI installs (uncommented)" || no "cloud-setup.sh installs are still commented out"
 grep -qiE 'best-effort|adjust the package names' README.md && ok "README is honest about best-effort installs" || no "README overclaims that setup installs"
 
-echo "[release_coherence]  (v0.34 — manifest/changelog/docs agree on the release; v0.31-v0.33 kept)"
-{ grep -q '"version": "0.34.0"' .claude-plugin/plugin.json \
+echo "[release_coherence]  (v0.35 — manifest/changelog/docs agree on the release; v0.31-v0.34 kept)"
+{ grep -q '"version": "0.35.0"' .claude-plugin/plugin.json \
+  && grep -q '^## 0.35.0' CHANGELOG.md \
   && grep -q '^## 0.34.0' CHANGELOG.md \
-  && grep -q '^## 0.33.0' CHANGELOG.md \
   && grep -q '^## 0.31.0' CHANGELOG.md \
+  && grep -qiF 'evaluation harness v2' README.md \
   && grep -qiF 'brief packet' README.md \
-  && grep -qiF 'Project Scout' README.md \
   && grep -qF '/parallax:resolve' README.md \
-  && [ -f references/parallax-brief-packet.md ] \
-  && [ -f tests/intake-handoff-eval-cases.md ]; } \
-  && ok "version 0.34.0 in plugin.json; CHANGELOG has 0.34.0 (0.33.0/0.31.0 kept); README documents the brief packet + Project Scout + /parallax:resolve; v0.34 reference + eval present" \
-  || no "release coherence: version/changelog/docs not aligned for 0.34.0"
+  && [ -f references/evaluation-harness-v2.md ] \
+  && [ -f references/parallax-brief-packet.md ]; } \
+  && ok "version 0.35.0 in plugin.json; CHANGELOG has 0.35.0 (0.34.0/0.31.0 kept); README documents harness v2 + brief packet + /parallax:resolve; v0.34/v0.35 references present" \
+  || no "release coherence: version/changelog/docs not aligned for 0.35.0"
 
 echo ""
 echo "== $PASS passed, $FAIL failed =="
