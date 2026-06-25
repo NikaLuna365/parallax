@@ -60,7 +60,7 @@ The card describes **behaviour, not implementation** — it carries no test bodi
 In a **transient worktree** (so nothing touches the live feature until confirmed), encode the decisions by editing **only** `.parallax/<slug>/{spec.md, slices.md, validation.md, slices.lock}`. Any change to `src/`, `tests/`, or config outside the normative contract **rejects the batch**. The candidate must:
 
 - state the exact chosen behaviour and **remove the ambiguity itself** (rewrite the spec, not a comment beside it); update examples/edge cases, and the slice manifest + validation if the decision changes them;
-- **re-run the full spec self-review on the candidate**, including the **Existing Affordance Review** (`/parallax:spec` Step 3.5 / Step 8) — the new generation gets a *fresh* affordance section derived from the current code, never the old generation's (that one stays only under `history/generation-N`);
+- **re-run the full spec self-review on the candidate**, including the **Existing Affordance Review** and the **Architecture Fitness** check (`/parallax:spec` Steps 3.5 / 4.5 / 8) — the new generation gets a *fresh* affordance review **and a fresh Architecture fitness section** derived from the current code, never the old generation's (those stay only under `history/generation-N`). A stale generation can never reuse an old generation's architecture/affordance notes to certify new code or tests;
 - produce a **new `contract_hash`** and close every open blocking item in this batch. An **empty contract diff** can neither reset a review budget nor mint a generation (the writer rejects it).
 
 ## Step 4 — Confirm with an exact, one-time token, then apply atomically

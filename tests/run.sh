@@ -503,6 +503,27 @@ echo "[affordance_review]  (v0.31 patch — /parallax:spec forces an Existing Af
   && ok "no new command/script/schema for affordance review — prompt-contract patch only (DESIGN §11)" \
   || no "affordance patch added a new command/script/schema (forbidden by §11)"
 
+echo "[architecture_fitness]  (v0.32 — /parallax:spec adds an Architecture Fitness check before freeze; prompt-contract only, A1-A6 mapped to existing kinds, no new command/fanout)"
+{ grep -q "Architecture Fitness (read-only" commands/spec.md \
+  && grep -q "^## Architecture fitness" commands/spec.md \
+  && grep -q "Architecture fitness pass (always applies)" commands/spec.md; } \
+  && ok "spec.md: Step 4.5 Architecture Fitness + frozen-spec '## Architecture fitness' section + always-applies self-review pass" \
+  || no "spec.md Architecture Fitness step/format/self-review not wired"
+{ grep -qi 'architecture fitness' skills/role-codex-judge/SKILL.md && grep -qi 'never a defect' skills/role-codex-judge/SKILL.md; } \
+  && ok "role-codex-judge: A1-A6 calibration with concrete consequence; style/preference never a defect (low non-blocking)" \
+  || no "role-codex-judge Architecture Fitness calibration missing"
+{ grep -qi 'public seam' skills/role-blind-coder/SKILL.md \
+  && grep -qi 'regression seam' skills/role-test-writer/SKILL.md \
+  && grep -qi 'regression seam' skills/role-arbiter/SKILL.md; } \
+  && ok "role skills know the declared seam: blind-coder builds through the public seam, test-writer crosses the regression seam, arbiter confirms it post-green" \
+  || no "role skills missing public/regression seam instructions"
+{ [ -f tests/architecture-fitness-eval-cases.md ] && [ "$(grep -cE '^### F[0-9]' tests/architecture-fitness-eval-cases.md)" -ge 8 ]; } \
+  && ok "tests/architecture-fitness-eval-cases.md documents >= 8 cases (F1..F9, incl. a style-only non-blocker + an allowed adapter)" \
+  || no "architecture-fitness eval cases missing or < 8"
+{ [ ! -e commands/architecture.md ] && ! grep -rqiE 'scout|fanout' commands/ skills/; } \
+  && ok "no new /parallax:architecture command and no scout/sub-agent fanout (that is v0.33)" \
+  || no "v0.32 introduced a new command or scout/fanout behaviour (forbidden by TZ §3/§7)"
+
 echo "[security_no_secrets]  (locks repo hygiene)"
 grep -qE 'sk-[A-Za-z0-9]{16,}|AIza[0-9A-Za-z_-]{20,}|[0-9]{6,}:[A-Za-z0-9_-]{20,}' assets/codex/codex.toml.example && no "config has a secret-shaped value" || ok "config has no secret-shaped values (only *_env names)"
 { [ -f SECURITY.md ] && grep -q '^\.env$' .gitignore; } && ok "SECURITY.md + .gitignore (.env) present" || no "SECURITY.md/.gitignore missing"
@@ -511,14 +532,16 @@ echo "[cloud_setup]  (real install attempts, not commented-out — locks #6)"
 grep -qE '^\s*command -v codex .*\|\| npm i -g' scripts/cloud-setup.sh && ok "cloud-setup.sh actually ATTEMPTS the CLI installs (uncommented)" || no "cloud-setup.sh installs are still commented out"
 grep -qiE 'best-effort|adjust the package names' README.md && ok "README is honest about best-effort installs" || no "README overclaims that setup installs"
 
-echo "[release_coherence]  (v0.31 — manifest/changelog/docs/benchmark agree on the release)"
-{ grep -q '"version": "0.31.0"' .claude-plugin/plugin.json \
+echo "[release_coherence]  (v0.32 — manifest/changelog/docs agree on the release; v0.31 kept)"
+{ grep -q '"version": "0.32.0"' .claude-plugin/plugin.json \
+  && grep -q '^## 0.32.0' CHANGELOG.md \
   && grep -q '^## 0.31.0' CHANGELOG.md \
+  && grep -qiF 'Architecture Fitness' README.md \
   && grep -qF '/parallax:resolve' README.md \
-  && grep -qF '/parallax:resolve' .claude-plugin/marketplace.json \
+  && [ -f tests/architecture-fitness-eval-cases.md ] \
   && [ -f tests/safe-completion-benchmark.md ]; } \
-  && ok "version 0.31.0 in plugin.json; CHANGELOG 0.31.0 entry; README + marketplace document /parallax:resolve; AC9 benchmark plan present" \
-  || no "release coherence: version/changelog/docs/benchmark not aligned for 0.31.0"
+  && ok "version 0.32.0 in plugin.json; CHANGELOG has 0.32.0 (0.31.0 kept); README documents Architecture Fitness + /parallax:resolve; v0.31 + v0.32 eval plans present" \
+  || no "release coherence: version/changelog/docs not aligned for 0.32.0"
 
 echo ""
 echo "== $PASS passed, $FAIL failed =="

@@ -13,6 +13,12 @@ You translate `spec.md` into tests. You are **blind to the implementation**: you
 3. Create the **smallest throwaway stub** of the spec'd signatures needed for the suite to be runnable (e.g. functions that `throw "not implemented"`) — only so imports resolve. The stub is discarded at merge; the blind-coder writes the real implementation independently.
 4. Run the suite (use your domain skill's test command) and **watch every new test fail** — and fail for the *spec'd* reason (missing behavior), not from typos, import errors, or a broken stub. Report exactly what you observe; never claim a state you didn't watch happen.
 
+## Test through the regression seam (architecture fitness)
+The spec's **Architecture fitness → Regression seam** names where to assert behaviour so the tests survive an internal refactor. Honor it:
+- **Cross the declared public/regression seam.** Write tests against the public boundary the spec names — the same interface real callers use — so a green suite actually means the user-visible behaviour holds.
+- **Don't pin private helpers when the public seam can reproduce the behaviour.** A test bound to an internal helper can stay green while the real behaviour regresses (no correct regression seam) — assert through the public seam instead.
+- **No correct seam? Report it, don't fake it.** If the spec's shape gives you no seam that can actually catch a regression in the user-visible behaviour, report a **candidate architecture blocker** in your done-gate report rather than inventing a brittle internal-only test. A test that can't fail when the behaviour breaks is worse than no test.
+
 ## Your done-gate (deterministic — all must hold)
 - The suite **executes** (no collection/import/syntax errors).
 - Every new test is **RED for the right reason** (an assertion about missing behavior, not an environment error).

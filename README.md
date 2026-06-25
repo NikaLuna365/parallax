@@ -116,6 +116,9 @@ A parked run is a **safe stop, not a failure**: when a blind test and a blind im
 - **Continuing a cloud run.** A laptop-off run that parks can be continued without a live session: prepare the decision out-of-band and pass it with `/parallax:resolve <slug> --from-file <decision.json>` (it must carry the exact token + a valid decision — this is not autonomy deciding for you).
 - **Older runs.** A v0.30 feature is migrated on first resolve (idempotently); if only a free-text `escalations.md` survives with no structured source, the resolver fails closed and asks you to start a fresh `/parallax:spec` rather than guess.
 
+## Architecture fitness (part of `/parallax:spec`)
+Right after the affordance review, `/parallax:spec` runs a narrow **Architecture Fitness** check on the *chosen* shape and records it in the frozen spec. It targets the maintainability failures a behavioural gate can't see — a **wrong seam** (tests/code through internals instead of the public boundary), a **shallow pass-through wrapper**, **duplicated business logic**, a **speculative adapter/port** with no current variation, a **missing regression seam** (tests that stay green while the behaviour breaks), or a silently-violated local **`AGENTS`/`CONTEXT`/ADR**. It is **not** an architecture review and makes no claim to "good architecture": it blocks **only** on a concrete maintainability consequence — never on taste, naming, folder layout, or speculative future flexibility — and it never forces a deep module onto a small feature. A `/parallax:resolve` new generation gets a fresh fitness check automatically (the old one stays in `history/`).
+
 ## When *not* to use Parallax
 - **Trivial / throwaway changes** where writing a concrete spec costs more than the change.
 - **Exploratory / research code** where the spec is the thing you're still discovering — there's no stable source of truth to converge on yet.
@@ -194,7 +197,7 @@ bash tests/run.sh           # the plugin's own regression harness (executes the 
 The harness **executes** the invariants (git assembly/integration, the lock, the disposition gate, schema validation, `bash -n` on every fenced block) rather than grepping for strings. `tests/verify-codex.sh` / `tests/verify-gemini.sh` confirm the real `codex` / `gemini` CLIs on **your** machine.
 
 ## Command reference
-- **`/parallax:spec <idea>`** *(or `--autonomous --from-doc <brief>`)* — idea → frozen spec + slice manifest + validation contract, stopped at a gate. Includes an **Existing Affordance Review** so it reuses an existing seam instead of freezing a needless new subsystem.
+- **`/parallax:spec <idea>`** *(or `--autonomous --from-doc <brief>`)* — idea → frozen spec + slice manifest + validation contract, stopped at a gate. Includes an **Existing Affordance Review** so it reuses an existing seam instead of freezing a needless new subsystem, and a lightweight **Architecture Fitness** check that catches obvious maintainability failures (wrong seam, shallow wrapper, duplicated logic, speculative adapter, no regression seam, ignored local ADR) before freeze — blocking only on a concrete consequence, never on style.
 - **`/parallax:run [slug]`** *(`--autonomous` · `--parallel` · `--resume`)* — build each slice blind, arbitrate to green, integrate, push.
 - **`/parallax:auto <brief>`** *(`--resume <slug>`)* — autonomous end-to-end driver, headless and schedulable.
 - **`/parallax:resolve <slug>`** *(`--status` · `--item <R-id>` · `--from-file <decision.json>`)* — turn a parked spec-gap into a verified **safe completion**: decide the contract ambiguity, mint a new generation, fully invalidate, and rebuild. Not `--resume` (that only continues a limit-pause).
