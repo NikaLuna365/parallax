@@ -605,21 +605,28 @@ def good(doc, n):
 def rej(doc, n):
     try: jsonschema.validate(doc, load(n)); return False
     except jsonschema.ValidationError: return True
-rev={"schema_version":"parallax-run-evidence-v1","plugin":{"name":"parallax","version":"0.36.0"},"run":{"run_id":"r","slug":"s","command_entry":"spec","started_at":"t","status":"frozen-spec"},"repo":{},"artifacts":{}}
-ev={"schema_version":"parallax-run-evidence-event-v1","run_id":"r","slug":"s","at":"t","event_type":"spec_frozen","actor":"main","summary":"x"}
+rev={"schema_version":"parallax-run-evidence-v1","plugin":{"name":"parallax","version":"0.36.1"},"run":{"run_id":"r","slug":"s","command_entry":"spec","started_at":"t","updated_at":"t","status":"frozen-spec"},"repo":{"root":"/x","branch":None,"base_tip":None,"feature_tip":None,"dirty_at_start":False,"dirty_at_end":False},"artifacts":{"spec":".parallax/s/spec.md","slices":None,"validation":None,"slices_lock":None,"run_state":None},"capabilities_exercised":{"existing_affordance_review":True,"architecture_fitness":True,"project_scout":False,"intake_handoff":True,"safe_resolution":False},"evidence_limits":["not a benchmark result"]}
+ev={"schema_version":"parallax-run-evidence-event-v1","run_id":"r","slug":"s","at":"t","event_type":"spec_frozen","actor":"main","summary":"x","artifact_paths":{}}
 e2e={"schema_version":"parallax-e2e-check-v1","run_id":"r","slug":"s","at":"t","check_id":"c","result":"pass","command":"npm run e2e"}
-dl={"schema_version":"parallax-defect-loop-v1","run_id":"r","slug":"s","defect_id":"DL-1","found_at":"t","defect_kind":"trust","summary":"x","source_evidence":["log:1"]}
+dl={"schema_version":"parallax-defect-loop-v1","run_id":"r","slug":"s","defect_id":"DL-1","found_at":"t","defect_kind":"trust","summary":"x","source_evidence":["log:1"],"spec_update":{"artifact":".parallax/s/spec.md","section":"A12","commit":None},"test_evidence":{"agent_type":None,"branch":None,"commit":None,"red_observed":True,"summary":"red"},"fix_evidence":{"agent_type":None,"branch":None,"commit":None,"summary":"fix"},"reverification":{"result":"not-run","artifact_paths":[]}}
 checks=[
  good(rev,"run-evidence"), rej({**rev,"plugin":{"name":"parallax"}},"run-evidence"),
+ rej({**rev,"repo":{}},"run-evidence"), rej({**rev,"artifacts":{}},"run-evidence"),
+ rej({k:v for k,v in rev.items() if k!="capabilities_exercised"},"run-evidence"),
+ rej({k:v for k,v in rev.items() if k!="evidence_limits"},"run-evidence"),
+ rej({**rev,"run":{k:v for k,v in rev["run"].items() if k!="updated_at"}},"run-evidence"),
  good(ev,"run-evidence-event"), rej({**ev,"event_type":"made_up"},"run-evidence-event"),
+ rej({k:v for k,v in ev.items() if k!="artifact_paths"},"run-evidence-event"),
  good(e2e,"e2e-check"), rej({"schema_version":"parallax-e2e-check-v1","run_id":"r","slug":"s","at":"t","check_id":"c","result":"pass"},"e2e-check"),
  good(dl,"defect-loop"), rej({k:v for k,v in dl.items() if k!="source_evidence"},"defect-loop"),
+ rej({k:v for k,v in dl.items() if k!="fix_evidence"},"defect-loop"),
+ rej({k:v for k,v in dl.items() if k!="reverification"},"defect-loop"),
 ]
 print("OK" if all(checks) else "BAD "+str(checks))
 PY
 R=$(cat /tmp/parallax_lre)
 if [ "$R" = SKIP ]; then echo "  · jsonschema not installed — evidence schema tests skipped";
-elif [ "$R" = OK ]; then ok "run-evidence/event/e2e-check/defect-loop schemas valid; samples pass; missing plugin.version, unknown event_type, pass-without-command, and no-source_evidence all rejected"; else no "evidence schema accept/reject wrong: $R"; fi
+elif [ "$R" = OK ]; then ok "run-evidence/event/e2e-check/defect-loop schemas valid; full minimum-shape samples pass; rejected: missing plugin.version, sparse repo:{} / artifacts:{}, missing capabilities_exercised / evidence_limits / run.updated_at, event without artifact_paths, unknown event_type, e2e pass-without-command, defect-loop without source_evidence / fix_evidence / reverification"; else no "evidence schema accept/reject wrong: $R"; fi
 
 echo "[live_run_evidence_contract]"
 { for f in spec run auto resolve; do grep -q 'evidence/run-evidence.json' commands/$f.md || exit 1; done; grep -q 'plugin.version' commands/spec.md && grep -q 'plugin.version' commands/run.md; } \
@@ -662,8 +669,9 @@ echo "[cloud_setup]  (real install attempts, not commented-out — locks #6)"
 grep -qE '^\s*command -v codex .*\|\| npm i -g' scripts/cloud-setup.sh && ok "cloud-setup.sh actually ATTEMPTS the CLI installs (uncommented)" || no "cloud-setup.sh installs are still commented out"
 grep -qiE 'best-effort|adjust the package names' README.md && ok "README is honest about best-effort installs" || no "README overclaims that setup installs"
 
-echo "[release_coherence]  (v0.36 — manifest/changelog/docs agree on the release; v0.31-v0.35 kept)"
-{ grep -q '"version": "0.36.0"' .claude-plugin/plugin.json \
+echo "[release_coherence]  (v0.36.1 — manifest/changelog/docs agree on the release; v0.31-v0.36 kept)"
+{ grep -q '"version": "0.36.1"' .claude-plugin/plugin.json \
+  && grep -q '^## 0.36.1' CHANGELOG.md \
   && grep -q '^## 0.36.0' CHANGELOG.md \
   && grep -q '^## 0.35.0' CHANGELOG.md \
   && grep -q '^## 0.31.0' CHANGELOG.md \
@@ -672,8 +680,8 @@ echo "[release_coherence]  (v0.36 — manifest/changelog/docs agree on the relea
   && grep -qF '/parallax:resolve' README.md \
   && [ -f references/live-run-evidence.md ] \
   && [ -f references/evaluation-harness-v2.md ]; } \
-  && ok "version 0.36.0 in plugin.json; CHANGELOG has 0.36.0 (0.35.0/0.31.0 kept); README documents live-run evidence + harness v2 + /parallax:resolve; v0.35/v0.36 references present" \
-  || no "release coherence: version/changelog/docs not aligned for 0.36.0"
+  && ok "version 0.36.1 in plugin.json; CHANGELOG has 0.36.1 (0.36.0/0.35.0/0.31.0 kept); README documents live-run evidence + harness v2 + /parallax:resolve; v0.35/v0.36 references present" \
+  || no "release coherence: version/changelog/docs not aligned for 0.36.1"
 
 echo ""
 echo "== $PASS passed, $FAIL failed =="

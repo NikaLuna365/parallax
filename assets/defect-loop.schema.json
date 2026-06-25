@@ -4,7 +4,7 @@
   "description": "Connects an observed live defect -> source evidence -> spec/assumption change -> test-writer RED -> blind-coder fix -> arbiter/test result -> live re-verification (the GPI A12 pattern as a first-class artifact). source_evidence is mandatory: a defect with no proof is not a defect-loop entry.",
   "type": "object",
   "additionalProperties": true,
-  "required": ["schema_version", "run_id", "slug", "defect_id", "found_at", "defect_kind", "summary", "source_evidence"],
+  "required": ["schema_version", "run_id", "slug", "defect_id", "found_at", "defect_kind", "summary", "source_evidence", "spec_update", "test_evidence", "fix_evidence", "reverification"],
   "properties": {
     "schema_version": { "const": "parallax-defect-loop-v1" },
     "run_id": { "type": "string", "minLength": 1 },

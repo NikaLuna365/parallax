@@ -4,7 +4,7 @@
   "description": "Append-only product/evidence timeline at .parallax/<slug>/evidence/events.jsonl. Not a substitute for the review ledgers. A summary is not proof without artifact_paths when a file/log exists.",
   "type": "object",
   "additionalProperties": true,
-  "required": ["schema_version", "run_id", "slug", "at", "event_type", "actor", "summary"],
+  "required": ["schema_version", "run_id", "slug", "at", "event_type", "actor", "summary", "artifact_paths"],
   "properties": {
     "schema_version": { "const": "parallax-run-evidence-event-v1" },
     "run_id": { "type": "string", "minLength": 1 },
@@ -22,7 +22,7 @@
     },
     "actor": { "enum": ["main", "scout", "test-writer", "blind-coder", "arbiter", "verifier", "user", "external"] },
     "summary": { "type": "string", "minLength": 1 },
-    "artifact_paths": { "type": "object", "additionalProperties": true },
+    "artifact_paths": { "type": "object", "additionalProperties": true, "description": "Required even if empty {} — a summary is not proof without artifact_paths when a file/log exists (TZ §4.4)." },
     "agent_type": { "type": ["string", "null"] },
     "agent_id": { "type": ["string", "null"] },
     "worktree": { "type": ["string", "null"] },

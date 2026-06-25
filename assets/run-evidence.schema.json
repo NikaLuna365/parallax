@@ -4,7 +4,7 @@
   "description": "First-class evidence a real Parallax run leaves at .parallax/<slug>/evidence/run-evidence.json. A plugin-run artifact for auditability — NOT a benchmark result and NOT an external calibration result.",
   "type": "object",
   "additionalProperties": true,
-  "required": ["schema_version", "plugin", "run", "repo", "artifacts"],
+  "required": ["schema_version", "plugin", "run", "repo", "artifacts", "capabilities_exercised", "evidence_limits"],
   "properties": {
     "schema_version": { "const": "parallax-run-evidence-v1" },
     "plugin": {
@@ -20,7 +20,7 @@
     "run": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["run_id", "slug", "command_entry", "started_at", "status"],
+      "required": ["run_id", "slug", "command_entry", "started_at", "updated_at", "status"],
       "properties": {
         "run_id": { "type": "string", "minLength": 1 },
         "slug": { "type": "string", "minLength": 1 },
@@ -33,6 +33,7 @@
     "repo": {
       "type": "object",
       "additionalProperties": true,
+      "required": ["root", "branch", "base_tip", "feature_tip", "dirty_at_start", "dirty_at_end"],
       "properties": {
         "root": { "type": ["string", "null"] },
         "branch": { "type": ["string", "null"] },
@@ -42,10 +43,22 @@
         "dirty_at_end": { "type": ["boolean", "null"] }
       }
     },
-    "artifacts": { "type": "object", "additionalProperties": true },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["spec", "slices", "validation", "slices_lock", "run_state"],
+      "properties": {
+        "spec": { "type": ["string", "null"] },
+        "slices": { "type": ["string", "null"] },
+        "validation": { "type": ["string", "null"] },
+        "slices_lock": { "type": ["string", "null"] },
+        "run_state": { "type": ["string", "null"] }
+      }
+    },
     "capabilities_exercised": {
       "type": "object",
       "additionalProperties": true,
+      "required": ["existing_affordance_review", "architecture_fitness", "project_scout", "intake_handoff", "safe_resolution"],
       "properties": {
         "existing_affordance_review": { "type": ["boolean", "null"] },
         "architecture_fitness": { "type": ["boolean", "null"] },

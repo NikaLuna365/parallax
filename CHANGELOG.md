@@ -2,6 +2,14 @@
 
 All notable changes to the Parallax plugin. Versions are cumulative.
 
+## 0.36.1 — Evidence schema strictness (mechanical hardening)
+A schema-strictness patch: it makes the four v0.36 evidence JSON Schemas **mechanically require** the minimum fields the TZ already specified but the schemas previously only described — closing the three gaps an independent re-run of the v0.36 verifier flagged (PASS_WITH_GAPS). **Mechanical only — no behaviour, UX, command, or prompt-contract change**, and every v0.31–v0.36 boundary preserved.
+
+- **`run-evidence-event` now requires `artifact_paths`** (TZ §4.4) — present even if `{}`. A summary-only event no longer validates, mechanically locking "a summary is not proof without artifact_paths when a file/log exists".
+- **`run-evidence` now requires its full minimum shape** (TZ §4.3): `run.updated_at`, the six `repo` fields, the five `artifacts` paths, `capabilities_exercised` (all five flags), and `evidence_limits`. Unavailable data must be an explicit `null`, never silently dropped — a sparse `repo:{}` / `artifacts:{}` object is now rejected.
+- **`defect-loop` now requires the full chain** (TZ §4.6): `spec_update`, `test_evidence`, `fix_evidence`, and `reverification` alongside the existing mandatory `source_evidence`; inner subfields stay nullable for in-progress loops. A source-only entry no longer passes as a complete loop.
+- **Harness stays 103 passed, 0 failed; `claude plugin validate` passes.** The `[live_run_evidence_schema]` check now carries full minimum-shape happy samples plus reject-cases for every newly-locked field (sparse repo/artifacts, missing capabilities_exercised / evidence_limits / run.updated_at, event without artifact_paths, defect-loop without fix_evidence / reverification); `[release_coherence]` asserts 0.36.1. Built on `parallax_v036_work` (v0.36.0); `bench/` and `parallax_push` untouched. Reviewed by an independent verifier sub-agent per `IMPLEMENTATION_VERIFICATION_PROTOCOL.md`.
+
 ## 0.36.0 — Live-run Evidence Hardening
 Makes real Parallax runs leave **first-class structured evidence** so behaviour doesn't have to be reconstructed from a Claude transcript afterwards. Driven by a real live run (used as **design input only**, never shipped as a benchmark). **No new command, no runtime/UX change the user must learn, and no benchmark / quality / external-calibration claim**; every v0.31–v0.35 boundary preserved.
 
