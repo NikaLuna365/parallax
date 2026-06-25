@@ -589,6 +589,71 @@ echo "[eval_harness_v2]  (v0.35 — measurement release: the evaluation harness 
   && ok "README documents harness v2 as measurement-only (no new command, no benchmark claim)" \
   || no "README missing the honest harness-v2 note"
 
+echo "[live_run_evidence_schema]  (v0.36 — the 4 evidence schemas validate + accept/reject samples)"
+python3 - <<'PY' >/tmp/parallax_lre 2>&1
+import json
+try:
+    import jsonschema
+    from jsonschema import Draft202012Validator
+except ImportError:
+    print("SKIP"); raise SystemExit
+def load(n): return json.load(open(f"assets/{n}.schema.json"))
+for n in ["run-evidence", "run-evidence-event", "e2e-check", "defect-loop"]:
+    Draft202012Validator.check_schema(load(n))
+def good(doc, n):
+    jsonschema.validate(doc, load(n)); return True
+def rej(doc, n):
+    try: jsonschema.validate(doc, load(n)); return False
+    except jsonschema.ValidationError: return True
+rev={"schema_version":"parallax-run-evidence-v1","plugin":{"name":"parallax","version":"0.36.0"},"run":{"run_id":"r","slug":"s","command_entry":"spec","started_at":"t","status":"frozen-spec"},"repo":{},"artifacts":{}}
+ev={"schema_version":"parallax-run-evidence-event-v1","run_id":"r","slug":"s","at":"t","event_type":"spec_frozen","actor":"main","summary":"x"}
+e2e={"schema_version":"parallax-e2e-check-v1","run_id":"r","slug":"s","at":"t","check_id":"c","result":"pass","command":"npm run e2e"}
+dl={"schema_version":"parallax-defect-loop-v1","run_id":"r","slug":"s","defect_id":"DL-1","found_at":"t","defect_kind":"trust","summary":"x","source_evidence":["log:1"]}
+checks=[
+ good(rev,"run-evidence"), rej({**rev,"plugin":{"name":"parallax"}},"run-evidence"),
+ good(ev,"run-evidence-event"), rej({**ev,"event_type":"made_up"},"run-evidence-event"),
+ good(e2e,"e2e-check"), rej({"schema_version":"parallax-e2e-check-v1","run_id":"r","slug":"s","at":"t","check_id":"c","result":"pass"},"e2e-check"),
+ good(dl,"defect-loop"), rej({k:v for k,v in dl.items() if k!="source_evidence"},"defect-loop"),
+]
+print("OK" if all(checks) else "BAD "+str(checks))
+PY
+R=$(cat /tmp/parallax_lre)
+if [ "$R" = SKIP ]; then echo "  · jsonschema not installed — evidence schema tests skipped";
+elif [ "$R" = OK ]; then ok "run-evidence/event/e2e-check/defect-loop schemas valid; samples pass; missing plugin.version, unknown event_type, pass-without-command, and no-source_evidence all rejected"; else no "evidence schema accept/reject wrong: $R"; fi
+
+echo "[live_run_evidence_contract]"
+{ for f in spec run auto resolve; do grep -q 'evidence/run-evidence.json' commands/$f.md || exit 1; done; grep -q 'plugin.version' commands/spec.md && grep -q 'plugin.version' commands/run.md; } \
+  && ok "commands spec/run/auto/resolve all maintain .parallax/<slug>/evidence/run-evidence.json with plugin.version stamped" \
+  || no "a command does not maintain run-evidence.json / plugin.version"
+
+echo "[live_run_evidence_events]"
+{ for f in spec run auto resolve; do grep -q 'events.jsonl' commands/$f.md || exit 1; done; grep -qi 'append-only' commands/run.md \
+  && grep -q 'slice_dispatched' commands/run.md && grep -q 'arbiter_green' commands/run.md && grep -q 'verifier_pass' commands/run.md \
+  && grep -q 'defect_found' commands/resolve.md && grep -q 'assumption_recorded' commands/resolve.md; } \
+  && ok "append-only events.jsonl across commands; run.md emits slice/arbiter/verifier events; resolve.md emits defect_found + assumption_recorded" \
+  || no "events.jsonl wiring incomplete"
+
+echo "[live_run_evidence_no_public_command]"
+{ [ ! -e commands/eval.md ] && [ ! -e commands/benchmark.md ] && [ ! -e commands/measure.md ] && [ ! -e commands/evidence.md ]; } \
+  && ok "no public /parallax:eval|:benchmark|:measure|:evidence command (evidence is written by the existing commands)" \
+  || no "a public evidence/eval command was added (forbidden by TZ §2)"
+
+echo "[live_run_evidence_harness_candidate]"
+{ [ -f references/live-run-evidence.md ] && grep -qi 'harness-record.candidate' references/live-run-evidence.md && grep -qi 'hidden.oracle' references/live-run-evidence.md && grep -qi 'transcript-derived' references/live-run-evidence.md; } \
+  && ok "references/live-run-evidence.md: harness-record.candidate is a candidate (not a result); hidden_oracle null rule; transcript-derived labelled" \
+  || no "live-run-evidence reference missing or incomplete"
+
+echo "[live_run_evidence_defect_loop]"
+{ [ -f assets/defect-loop.schema.json ] && grep -q 'defect-loop.jsonl' commands/resolve.md && grep -qi 'source_evidence' references/live-run-evidence.md; } \
+  && ok "defect-loop schema present; resolve.md records the GPI A12 defect loop; reference documents mandatory source_evidence" \
+  || no "defect-loop wiring incomplete"
+
+echo "[live_run_evidence_claim_honesty]"
+{ grep -qi 'auxiliary' skills/parallax-core/SKILL.md && grep -qi 'transcript' skills/parallax-core/SKILL.md \
+  && grep -qiF 'auditability' README.md && grep -qiF 'not a benchmark' README.md; } \
+  && ok "transcript is auxiliary provenance only (parallax-core); README frames v0.36 as auditability evidence, explicitly NOT a benchmark/quality claim" \
+  || no "claim-honesty wiring missing (transcript-primary or no auditability/not-a-benchmark note)"
+
 echo "[security_no_secrets]  (locks repo hygiene)"
 grep -qE 'sk-[A-Za-z0-9]{16,}|AIza[0-9A-Za-z_-]{20,}|[0-9]{6,}:[A-Za-z0-9_-]{20,}' assets/codex/codex.toml.example && no "config has a secret-shaped value" || ok "config has no secret-shaped values (only *_env names)"
 { [ -f SECURITY.md ] && grep -q '^\.env$' .gitignore; } && ok "SECURITY.md + .gitignore (.env) present" || no "SECURITY.md/.gitignore missing"
@@ -597,18 +662,18 @@ echo "[cloud_setup]  (real install attempts, not commented-out — locks #6)"
 grep -qE '^\s*command -v codex .*\|\| npm i -g' scripts/cloud-setup.sh && ok "cloud-setup.sh actually ATTEMPTS the CLI installs (uncommented)" || no "cloud-setup.sh installs are still commented out"
 grep -qiE 'best-effort|adjust the package names' README.md && ok "README is honest about best-effort installs" || no "README overclaims that setup installs"
 
-echo "[release_coherence]  (v0.35 — manifest/changelog/docs agree on the release; v0.31-v0.34 kept)"
-{ grep -q '"version": "0.35.0"' .claude-plugin/plugin.json \
+echo "[release_coherence]  (v0.36 — manifest/changelog/docs agree on the release; v0.31-v0.35 kept)"
+{ grep -q '"version": "0.36.0"' .claude-plugin/plugin.json \
+  && grep -q '^## 0.36.0' CHANGELOG.md \
   && grep -q '^## 0.35.0' CHANGELOG.md \
-  && grep -q '^## 0.34.0' CHANGELOG.md \
   && grep -q '^## 0.31.0' CHANGELOG.md \
+  && grep -qiF 'live-run evidence' README.md \
   && grep -qiF 'evaluation harness v2' README.md \
-  && grep -qiF 'brief packet' README.md \
   && grep -qF '/parallax:resolve' README.md \
-  && [ -f references/evaluation-harness-v2.md ] \
-  && [ -f references/parallax-brief-packet.md ]; } \
-  && ok "version 0.35.0 in plugin.json; CHANGELOG has 0.35.0 (0.34.0/0.31.0 kept); README documents harness v2 + brief packet + /parallax:resolve; v0.34/v0.35 references present" \
-  || no "release coherence: version/changelog/docs not aligned for 0.35.0"
+  && [ -f references/live-run-evidence.md ] \
+  && [ -f references/evaluation-harness-v2.md ]; } \
+  && ok "version 0.36.0 in plugin.json; CHANGELOG has 0.36.0 (0.35.0/0.31.0 kept); README documents live-run evidence + harness v2 + /parallax:resolve; v0.35/v0.36 references present" \
+  || no "release coherence: version/changelog/docs not aligned for 0.36.0"
 
 echo ""
 echo "== $PASS passed, $FAIL failed =="

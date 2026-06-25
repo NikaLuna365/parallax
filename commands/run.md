@@ -387,3 +387,16 @@ When `[notify]` in `.parallax/codex.toml` is enabled, the orchestrator pushes **
 - **Dispatch by exact name** from the manifest's domain (`test-writer-<domain>` / `blind-coder-<domain>` / `arbiter`) — never rely on model auto-selection.
 - **Escalate, don't guess:** spec-gaps and breaker trips go to the human (now mode). Burying them in code or tests just hides the problem.
 - **Improve the plugin, not just your memory.** When a cycle surfaces a rule at the level of *how the pipeline itself works* (e.g. "take the base from origin, not the local ref"; "never strand the epic ref") — as opposed to a fact about *this* repo or feature — saving it only to session memory isn't enough: memory is per-session and won't survive a new session or a different project. Surface it as proposed feedback to these plugin contracts (the role/command files) so the lesson becomes durable for every future run; keep it in project memory too, but don't let that be its only home.
+
+---
+
+## Live-run evidence (v0.36 — auditability, not a benchmark)
+Maintain `.parallax/<slug>/evidence/run-evidence.json` (`assets/run-evidence.schema.json`) and the **append-only** `.parallax/<slug>/evidence/events.jsonl` (`assets/run-evidence-event.schema.json`) across the build, stamping `plugin.version` from `.claude-plugin/plugin.json`. These are plugin-run artifacts, not a benchmark result.
+
+For `/parallax:run` (`command_entry: "run"`):
+- at **preflight**: initialize or load `run-evidence.json`, set `run.status = running`, record `repo` (root / branch / base_tip / dirty_at_start).
+- per **slice dispatch**: append `slice_dispatched`.
+- on the **test-writer** RED done-gate: append `test_writer_red`; on the **blind-coder** done-gate: append `blind_coder_done` (include `agent_type` / `branch` / `commit` / `worktree` when known).
+- on **arbiter** verdicts: append `arbiter_green` / `arbiter_red` (with the exact commands + artifact paths the arbiter ran); on **verifier** verdicts: append `verifier_pass` / `verifier_concerns`.
+- on **complete / parked / failed-infra**: set `run.status` accordingly and append the terminal event (`run_completed` / `run_parked` / `failed_infra`), with `feature_tip` + `dirty_at_end`.
+- a summary is not proof: when a file/log exists, put its path in the event's `artifact_paths`.

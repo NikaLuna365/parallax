@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Parallax defect loop (one defect-loop.jsonl line)",
+  "description": "Connects an observed live defect -> source evidence -> spec/assumption change -> test-writer RED -> blind-coder fix -> arbiter/test result -> live re-verification (the GPI A12 pattern as a first-class artifact). source_evidence is mandatory: a defect with no proof is not a defect-loop entry.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "run_id", "slug", "defect_id", "found_at", "defect_kind", "summary", "source_evidence"],
+  "properties": {
+    "schema_version": { "const": "parallax-defect-loop-v1" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "slug": { "type": "string", "minLength": 1 },
+    "defect_id": { "type": "string", "minLength": 1 },
+    "found_at": { "type": "string", "minLength": 1 },
+    "defect_kind": { "enum": ["trust", "functional", "maintainability", "intake", "scout", "infra", "other"] },
+    "summary": { "type": "string", "minLength": 1 },
+    "source_evidence": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "spec_update": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "artifact": { "type": ["string", "null"] },
+        "section": { "type": ["string", "null"] },
+        "commit": { "type": ["string", "null"] }
+      }
+    },
+    "test_evidence": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "agent_type": { "type": ["string", "null"] },
+        "branch": { "type": ["string", "null"] },
+        "commit": { "type": ["string", "null"] },
+        "red_observed": { "type": ["boolean", "null"] },
+        "summary": { "type": ["string", "null"] }
+      }
+    },
+    "fix_evidence": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "agent_type": { "type": ["string", "null"] },
+        "branch": { "type": ["string", "null"] },
+        "commit": { "type": ["string", "null"] },
+        "summary": { "type": ["string", "null"] }
+      }
+    },
+    "reverification": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "result": { "enum": ["pass", "fail", "not-run"] },
+        "artifact_paths": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Parallax run-evidence (per-run plugin runtime artifact)",
+  "description": "First-class evidence a real Parallax run leaves at .parallax/<slug>/evidence/run-evidence.json. A plugin-run artifact for auditability — NOT a benchmark result and NOT an external calibration result.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "plugin", "run", "repo", "artifacts"],
+  "properties": {
+    "schema_version": { "const": "parallax-run-evidence-v1" },
+    "plugin": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1, "description": "read from the plugin manifest / explicitly stamped by the contract — must never be left implicit" },
+        "install_path": { "type": ["string", "null"] }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["run_id", "slug", "command_entry", "started_at", "status"],
+      "properties": {
+        "run_id": { "type": "string", "minLength": 1 },
+        "slug": { "type": "string", "minLength": 1 },
+        "command_entry": { "enum": ["spec", "run", "auto", "resolve"] },
+        "started_at": { "type": "string", "minLength": 1 },
+        "updated_at": { "type": ["string", "null"] },
+        "status": { "enum": ["intake-response", "frozen-spec", "running", "complete", "needs-resolution", "resolving", "abandoned", "failed-infra"] }
+      }
+    },
+    "repo": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "root": { "type": ["string", "null"] },
+        "branch": { "type": ["string", "null"] },
+        "base_tip": { "type": ["string", "null"] },
+        "feature_tip": { "type": ["string", "null"] },
+        "dirty_at_start": { "type": ["boolean", "null"] },
+        "dirty_at_end": { "type": ["boolean", "null"] }
+      }
+    },
+    "artifacts": { "type": "object", "additionalProperties": true },
+    "capabilities_exercised": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "existing_affordance_review": { "type": ["boolean", "null"] },
+        "architecture_fitness": { "type": ["boolean", "null"] },
+        "project_scout": { "type": ["boolean", "null"] },
+        "intake_handoff": { "type": ["boolean", "null"] },
+        "safe_resolution": { "type": ["boolean", "null"] }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Auxiliary provenance only. A transcript path is NOT primary evidence.",
+      "properties": { "transcript_path": { "type": ["string", "null"] }, "session_id": { "type": ["string", "null"] } }
+    },
+    "evidence_limits": { "type": "array", "items": { "type": "string" } }
+  }
+}

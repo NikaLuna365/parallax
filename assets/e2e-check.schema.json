@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Parallax e2e check (one e2e-checks.jsonl line)",
+  "description": "Structured live-run e2e evidence at .parallax/<slug>/evidence/e2e-checks.jsonl. This is NOT a hidden oracle. A result=pass must carry a real command OR be explicitly manual with a note; if no e2e check ran, do not create pass entries.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "run_id", "slug", "at", "check_id", "result"],
+  "properties": {
+    "schema_version": { "const": "parallax-e2e-check-v1" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "slug": { "type": "string", "minLength": 1 },
+    "at": { "type": "string", "minLength": 1 },
+    "check_id": { "type": "string", "minLength": 1 },
+    "command": { "type": ["string", "null"] },
+    "result": { "enum": ["pass", "fail", "failed-infra", "not-run"] },
+    "exit_code": { "type": ["integer", "null"] },
+    "artifact_paths": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "stdout": { "type": ["string", "null"] },
+        "stderr": { "type": ["string", "null"] },
+        "output": { "type": ["string", "null"] },
+        "domain_artifact": { "type": ["string", "null"] }
+      }
+    },
+    "observed_claims": { "type": "array", "items": { "type": "string" } },
+    "manual": { "type": "boolean" },
+    "note": { "type": ["string", "null"] },
+    "limits": { "type": "array", "items": { "type": "string" } }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "result": { "const": "pass" } }, "required": ["result"] },
+      "then": {
+        "anyOf": [
+          { "required": ["command"], "properties": { "command": { "type": "string", "minLength": 1 } } },
+          { "required": ["manual", "note"], "properties": { "manual": { "const": true }, "note": { "type": "string", "minLength": 1 } } }
+        ]
+      }
+    }
+  ]
+}

@@ -71,3 +71,6 @@ The only cures for red are: make the spec's behavior real (coder), or make the t
 - Code written before its test exists → delete it; start from the test.
 - Tests added afterward "to verify" → not TDD; passing-immediately proves nothing.
 - "I manually tested it" → not a substitute for a test that failed first.
+
+## Live-run evidence (v0.36 — auditability, not proof-of-quality)
+Every command path (`spec` / `run` / `auto` / `resolve`) maintains structured run evidence under `.parallax/<slug>/evidence/` — `run-evidence.json` (with `plugin.version` stamped from the manifest), an **append-only** `events.jsonl` timeline, and optional `e2e-checks.jsonl` / `defect-loop.jsonl`. This exists so a real run is auditable from first-class artifacts instead of being reconstructed from a Claude transcript. It is **not** a benchmark result, **not** an external calibration, and **not** a hidden oracle: public tests / live e2e are structured evidence, never proof that hidden acceptance held. A transcript/session path is recorded only as **auxiliary `provenance`**, never as primary evidence.

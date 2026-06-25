@@ -43,3 +43,8 @@ A long autonomous run can hit either service's limit — Claude's (which kills t
 ## What it is NOT for
 
 Anything with an open **principled** decision — a real safety, UX, or business fork. If you would need to *ask* a human during the spec, this is the wrong command: use interactive `/parallax:spec`. Autonomy decides the *mechanical* questions for you; it must never decide the hard ones, and it is built to stop and ask (via the queue) rather than pretend it can.
+
+---
+
+## Live-run evidence (v0.36 — auditability, not a benchmark)
+Autonomous runs maintain the same evidence artifacts as interactive ones — `.parallax/<slug>/evidence/run-evidence.json` + the **append-only** `events.jsonl`, with `plugin.version` stamped — and these updates are **mandatory** in the autonomous flow. The no-build-after-Intake-Response rule is unchanged: if the spec phase returns an Intake Response, append `intake_response`, set status `intake-response`, and stop (never `run_completed`). A spec-gap park appends `run_parked` and surfaces `/parallax:resolve`. Transcript/session paths are recorded as auxiliary `provenance` only, never primary proof; these artifacts are auditability evidence, not a benchmark result.

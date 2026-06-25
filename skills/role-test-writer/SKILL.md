@@ -53,3 +53,6 @@ You receive the arbiter's **natural-language analysis** — never the implementa
 
 ## Spec-gap
 If the spec genuinely doesn't say what a behavior should be, do not guess — note it in your report as a candidate spec-gap. The arbiter decides whether to escalate.
+
+## Live-run evidence (v0.36)
+Your done-gate report should be usable by the orchestrator to append a `test_writer_red` evidence event — state that each new test was watched **RED for the spec'd reason**, and include your `branch` / `commit` / worktree when available so the event carries real artifact provenance, not just a summary.

@@ -301,3 +301,14 @@ For each behavior:
 ---
 
 Remember: your deliverable is **clarity**. A spec a blind coder and a blind test-writer can each read and independently build the *same* thing from. When in doubt, make it more concrete, not more flexible.
+
+---
+
+## Live-run evidence (v0.36 — auditability, not a benchmark)
+Maintain structured evidence under `.parallax/<slug>/evidence/` so a real run is auditable from first-class artifacts, not reconstructed from a transcript. Write/update `.parallax/<slug>/evidence/run-evidence.json` (schema `assets/run-evidence.schema.json`) and append to `.parallax/<slug>/evidence/events.jsonl` (schema `assets/run-evidence-event.schema.json`, **append-only**). Always **stamp `plugin.version`** read from the plugin manifest (`.claude-plugin/plugin.json`) — never leave it implicit. These are plugin-run artifacts, **not** a benchmark result and **not** a hidden oracle.
+
+For `/parallax:spec` (`command_entry: "spec"`):
+- on **intake received** (a `--from-doc` brief): create/update `run-evidence.json` and append `intake_received`.
+- on an **Intake Response** (brief not build-ready): append `intake_response`, set `run.status = intake-response`, and stop — do not freeze.
+- on **freeze**: append `spec_frozen` and `architecture_fitness_recorded`; if a Project Scout fanout ran, append `scout_dispatched` / `scout_reported` / `scout_verified_by_main`. Record `capabilities_exercised`.
+- record any session/transcript path **only** under `provenance.transcript_path` as **auxiliary provenance** — never as primary proof; if unavailable, set it `null` and add an `evidence_limits` note.

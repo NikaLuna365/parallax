@@ -58,3 +58,6 @@ If `.parallax/codex.toml` enables the post-green verifier, your GREEN is **neces
 - `verdict: green | red`
 - if red, per failing behavior: `{ fault: code|test|spec-gap, slice, anti_cheat: true|false, analysis: <NL, artifact-free>, route: blind-coder|test-writer|escalate }`
 - a one-line note if you suspect **oscillation** (the same fault bouncing back unchanged across iterations) — the orchestrator uses it for the circuit breaker.
+
+## Live-run evidence (v0.36)
+Your verdict report should include the **exact validation commands you ran and the artifact paths** (output / logs) behind the result, so the orchestrator can append a truthful `arbiter_green` / `arbiter_red` evidence event — a summary is not proof when a log exists. For a live e2e check, the command + result + output path are recorded as structured `e2e-checks.jsonl` evidence (not a hidden oracle).

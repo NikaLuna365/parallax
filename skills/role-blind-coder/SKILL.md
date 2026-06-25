@@ -38,3 +38,6 @@ You receive the arbiter's **natural-language analysis** of how your code diverge
 
 ## Spec-gap
 If the spec genuinely doesn't say how something should behave, do not invent it — note it in your report as a candidate spec-gap. The arbiter decides whether to escalate. (Inventing behavior is how blind coders drift from intent.)
+
+## Live-run evidence (v0.36)
+Your done-gate report should include the `branch` / `commit` / worktree of your implementation when available, so the orchestrator can append a `blind_coder_done` evidence event with real provenance rather than a bare summary.

@@ -107,3 +107,8 @@ Under `/parallax:auto`, a `needs-resolution` is **never** self-resolved. The dri
 
 ## Honest scope
 Mechanical and harness-locked: the queue/receipt/feature-state writes and their fail-closed checks (`resolution.py`), the append-only restart + CAS (`generation-restart.sh`), and the generation-aware epic gate (`epic-gate.py`). Directives you execute: presenting the token to the human and reading their reply, building the candidate contract, and running the fresh self-review + pre-freeze. The token proves *explicit consent was recorded*, not *who typed it*; `epic → main` remains a human PR + CI, as everywhere else in Parallax.
+
+---
+
+## Live-run evidence (v0.36 — auditability, not a benchmark)
+`/parallax:resolve` (`command_entry: "resolve"`) maintains `.parallax/<slug>/evidence/run-evidence.json` + the **append-only** `events.jsonl` (`plugin.version` stamped). When a **live defect** becomes a new assumption/resolution item — the GPI A12 pattern — append `defect_found` and `assumption_recorded`, and record a first-class `.parallax/<slug>/evidence/defect-loop.jsonl` entry (schema `assets/defect-loop.schema.json`) connecting: the observed defect → its `source_evidence` (path:line or log ref) → the spec/assumption change → the test-writer RED → the blind-coder fix → the arbiter/test result → any live re-verification. When the resolved generation runs, **connect the old and new run ids** in `run-evidence.json` so the resolution chain is auditable. Live e2e results belong in `.parallax/<slug>/evidence/e2e-checks.jsonl` (`assets/e2e-check.schema.json`) and are structured evidence, **not** a hidden oracle.

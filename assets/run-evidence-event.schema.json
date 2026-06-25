@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Parallax run-evidence event (one events.jsonl line)",
+  "description": "Append-only product/evidence timeline at .parallax/<slug>/evidence/events.jsonl. Not a substitute for the review ledgers. A summary is not proof without artifact_paths when a file/log exists.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "run_id", "slug", "at", "event_type", "actor", "summary"],
+  "properties": {
+    "schema_version": { "const": "parallax-run-evidence-event-v1" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "slug": { "type": "string", "minLength": 1 },
+    "at": { "type": "string", "minLength": 1 },
+    "event_type": {
+      "enum": [
+        "intake_received", "intake_response", "spec_frozen", "scout_dispatched", "scout_reported",
+        "scout_verified_by_main", "architecture_fitness_recorded", "slice_dispatched", "test_writer_red",
+        "blind_coder_done", "arbiter_green", "arbiter_red", "verifier_pass", "verifier_concerns",
+        "e2e_started", "e2e_passed", "e2e_failed", "defect_found", "assumption_recorded",
+        "defect_test_added", "defect_fix_implemented", "defect_reverified", "run_completed",
+        "run_parked", "failed_infra"
+      ]
+    },
+    "actor": { "enum": ["main", "scout", "test-writer", "blind-coder", "arbiter", "verifier", "user", "external"] },
+    "summary": { "type": "string", "minLength": 1 },
+    "artifact_paths": { "type": "object", "additionalProperties": true },
+    "agent_type": { "type": ["string", "null"] },
+    "agent_id": { "type": ["string", "null"] },
+    "worktree": { "type": ["string", "null"] },
+    "branch": { "type": ["string", "null"] },
+    "commit": { "type": ["string", "null"] }
+  }
+}
