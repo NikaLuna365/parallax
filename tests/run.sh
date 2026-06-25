@@ -520,9 +520,35 @@ echo "[architecture_fitness]  (v0.32 — /parallax:spec adds an Architecture Fit
 { [ -f tests/architecture-fitness-eval-cases.md ] && [ "$(grep -cE '^### F[0-9]' tests/architecture-fitness-eval-cases.md)" -ge 8 ]; } \
   && ok "tests/architecture-fitness-eval-cases.md documents >= 8 cases (F1..F9, incl. a style-only non-blocker + an allowed adapter)" \
   || no "architecture-fitness eval cases missing or < 8"
-{ [ ! -e commands/architecture.md ] && ! grep -rqiE 'scout|fanout' commands/ skills/; } \
-  && ok "no new /parallax:architecture command and no scout/sub-agent fanout (that is v0.33)" \
-  || no "v0.32 introduced a new command or scout/fanout behaviour (forbidden by TZ §3/§7)"
+{ [ ! -e commands/architecture.md ]; } \
+  && ok "no new /parallax:architecture command (Architecture Fitness is part of /parallax:spec)" \
+  || no "a new architecture command was added (forbidden)"
+
+echo "[project_scout]  (v0.33 — optional bounded Project Scout fanout inside /parallax:spec; internal read-only scouts, main verifies, linear default; no new command)"
+{ grep -q "Project Scout Fanout (optional" commands/spec.md \
+  && grep -q "Verify scout evidence before you rely on it" commands/spec.md \
+  && grep -q "^## Project scout evidence" commands/spec.md; } \
+  && ok "spec.md: optional Step 1.5 Project Scout Fanout + Step 1.6 main-agent verification rule + frozen-spec '## Project scout evidence' section" \
+  || no "spec.md scout fanout step / verification rule / evidence section not wired"
+{ [ -f skills/role-project-scout/SKILL.md ] \
+  && grep -qi 'read-only' skills/role-project-scout/SKILL.md \
+  && grep -qiE 'you decide nothing|decides nothing' skills/role-project-scout/SKILL.md \
+  && grep -qiE 'never talk to the user|no questions' skills/role-project-scout/SKILL.md \
+  && grep -qi 'confidence' skills/role-project-scout/SKILL.md && grep -qi 'uncertainty' skills/role-project-scout/SKILL.md; } \
+  && ok "role-project-scout: read-only, decides nothing, never asks the user; report carries confidence + uncertainty + recommended verification" \
+  || no "role-project-scout missing read-only/no-decision/report constraints"
+{ [ -f agents/project-scout.md ] && grep -q 'role-project-scout' agents/project-scout.md && ! grep -qiE '^tools:.*(write|edit)' agents/project-scout.md; } \
+  && ok "agents/project-scout.md loads role-project-scout and grants no Write/Edit tools (read-only by construction)" \
+  || no "agents/project-scout.md missing, not loading the role, or granted write tools"
+{ [ ! -e commands/scout.md ] && [ ! -e commands/project-scout.md ]; } \
+  && ok "no public /parallax:scout command — fanout is pipeline-internal to /parallax:spec (TZ §4)" \
+  || no "a public scout command was added (forbidden)"
+{ [ -f tests/t_resolution_gate.sh ] && [ -f tests/t_resolution_generation.sh ] && [ -f tests/t_resolution_migration.sh ] && [ -f tests/architecture-fitness-eval-cases.md ]; } \
+  && ok "v0.31 resolution tests + v0.32 architecture-fitness material preserved" \
+  || no "v0.31/v0.32 test material missing after the v0.33 patch"
+{ [ -f tests/project-scout-eval-cases.md ] && [ "$(grep -cE '^### Case [0-9]' tests/project-scout-eval-cases.md)" -ge 8 ]; } \
+  && ok "tests/project-scout-eval-cases.md documents >= 8 scout cases (incl. small-repo + runtime-unavailable fallbacks, hallucination, overreach, resolve freshness)" \
+  || no "project-scout eval cases missing or < 8"
 
 echo "[security_no_secrets]  (locks repo hygiene)"
 grep -qE 'sk-[A-Za-z0-9]{16,}|AIza[0-9A-Za-z_-]{20,}|[0-9]{6,}:[A-Za-z0-9_-]{20,}' assets/codex/codex.toml.example && no "config has a secret-shaped value" || ok "config has no secret-shaped values (only *_env names)"
@@ -532,16 +558,17 @@ echo "[cloud_setup]  (real install attempts, not commented-out — locks #6)"
 grep -qE '^\s*command -v codex .*\|\| npm i -g' scripts/cloud-setup.sh && ok "cloud-setup.sh actually ATTEMPTS the CLI installs (uncommented)" || no "cloud-setup.sh installs are still commented out"
 grep -qiE 'best-effort|adjust the package names' README.md && ok "README is honest about best-effort installs" || no "README overclaims that setup installs"
 
-echo "[release_coherence]  (v0.32 — manifest/changelog/docs agree on the release; v0.31 kept)"
-{ grep -q '"version": "0.32.0"' .claude-plugin/plugin.json \
+echo "[release_coherence]  (v0.33 — manifest/changelog/docs agree on the release; v0.31/v0.32 kept)"
+{ grep -q '"version": "0.33.0"' .claude-plugin/plugin.json \
+  && grep -q '^## 0.33.0' CHANGELOG.md \
   && grep -q '^## 0.32.0' CHANGELOG.md \
   && grep -q '^## 0.31.0' CHANGELOG.md \
+  && grep -qiF 'Project Scout' README.md \
   && grep -qiF 'Architecture Fitness' README.md \
   && grep -qF '/parallax:resolve' README.md \
-  && [ -f tests/architecture-fitness-eval-cases.md ] \
-  && [ -f tests/safe-completion-benchmark.md ]; } \
-  && ok "version 0.32.0 in plugin.json; CHANGELOG has 0.32.0 (0.31.0 kept); README documents Architecture Fitness + /parallax:resolve; v0.31 + v0.32 eval plans present" \
-  || no "release coherence: version/changelog/docs not aligned for 0.32.0"
+  && [ -f tests/project-scout-eval-cases.md ]; } \
+  && ok "version 0.33.0 in plugin.json; CHANGELOG has 0.33.0 (0.32.0/0.31.0 kept); README documents Project Scout + Architecture Fitness + /parallax:resolve; v0.33 eval plan present" \
+  || no "release coherence: version/changelog/docs not aligned for 0.33.0"
 
 echo ""
 echo "== $PASS passed, $FAIL failed =="
