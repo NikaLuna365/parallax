@@ -11,6 +11,7 @@ reason, or a non-+1 generation each => exit 2 (escalate), never a silent success
 
 Subcommands:
   init-feature  STATE  --slug --feature-id --run-id --base-oid --tip-oid --contract-hash
+  migrate       STATE  --slug --run-state RS [--feature-id UUID] --base-oid --tip-oid --contract-hash  # v0.30 -> v0.31, idempotent
   add-item      QUEUE  --slug --item-file ITEM.json            # append a structured resolution item (identity-immutable)
   set-item      QUEUE  --id R-... --to resolved|superseded
   mint-token           --slug --from-gen N --batch-id RB-... --old-hash H --new-hash H
@@ -20,7 +21,7 @@ Subcommands:
   status        STATE  --queue Q
 Exit: 0 ok, 2 escalate/fail-closed, 3 bad input. Prints a JSON result to stdout.
 """
-import argparse, hashlib, json, os, sys, tempfile
+import argparse, hashlib, json, os, sys, tempfile, uuid
 from datetime import datetime, timezone
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -232,6 +233,44 @@ def status(a):
                   "status": st["status"] if st else None, "open_items": openi})
 
 
+def migrate(a):
+    """v0.30 -> v0.31: synthesize a generation-1 feature-state from an existing run-state, assign a feature_id,
+    and stamp the run-state's feature_id/contract_generation. Idempotent — if a feature-state already exists for
+    this slug it is a validated no-op. Fail-closed — a missing or structurally-insufficient run-state escalates
+    (a free-text escalations.md is NOT an authoritative source; start a fresh /parallax:spec instead of guessing)."""
+    if os.path.exists(a.state):
+        st = _load_state(a.state, a.slug)                       # validates schema + slug + chain==gen-1
+        return _emit({"decision": "already-migrated", "generation": st["generation"],
+                      "feature_id": st["feature_id"], "status": st["status"]})
+    if not os.path.exists(a.run_state):
+        raise Escalate(f"no run-state at {a.run_state}: nothing structured to migrate; start a fresh /parallax:spec "
+                       f"(a free-text escalations.md is not an authoritative source)")
+    rs = _read_json(a.run_state)
+    for k in ("slug", "run_id", "status"):
+        if not rs.get(k):
+            raise Escalate(f"run-state missing {k!r}: insufficient structured source to migrate; start a fresh /parallax:spec")
+    if rs["slug"] != a.slug:
+        raise Escalate(f"run-state slug {rs['slug']!r} != {a.slug!r}")
+    feature_id = a.feature_id or str(uuid.uuid4())
+    status_v = "complete" if rs["status"] == "complete" else "running"   # v0.30 statuses map onto the feature lifecycle
+    st = {
+        "schema_version": 1, "feature_id": feature_id, "slug": a.slug, "generation": 1,
+        "active_run_id": rs["run_id"], "parent_run_id": None, "generation_base_oid": a.base_oid,
+        "feature_tip_before_generation": a.tip_oid, "contract_hash": a.contract_hash,
+        "status": status_v, "resolution_chain": [],
+    }
+    _validate(st, _S_FEATURE); _write_atomic(a.state, st)
+    # Stamp the run-state so the gate sees a consistent identity (both fields are optional in v0.30 -> gen 1).
+    changed = False
+    if not rs.get("feature_id"):
+        rs["feature_id"] = feature_id; changed = True
+    if rs.get("contract_generation") is None:
+        rs["contract_generation"] = 1; changed = True
+    if changed:
+        _write_atomic(a.run_state, rs)
+    return _emit({"decision": "migrated", "generation": 1, "feature_id": feature_id, "status": status_v})
+
+
 def build_parser():
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -254,6 +293,10 @@ def build_parser():
     tr = sub.add_parser("transition"); tr.add_argument("state"); tr.add_argument("--slug", required=True); tr.add_argument("--to", required=True); tr.set_defaults(func=transition)
     ab = sub.add_parser("abandon"); ab.add_argument("state"); ab.add_argument("--slug", required=True); ab.add_argument("--human-text", required=True); ab.set_defaults(func=abandon)
     stt = sub.add_parser("status"); stt.add_argument("state"); stt.add_argument("--slug", required=True); stt.add_argument("--queue"); stt.set_defaults(func=status)
+    mg = sub.add_parser("migrate"); mg.add_argument("state"); mg.add_argument("--slug", required=True)
+    mg.add_argument("--run-state", required=True); mg.add_argument("--feature-id")
+    mg.add_argument("--base-oid", required=True); mg.add_argument("--tip-oid", required=True)
+    mg.add_argument("--contract-hash", required=True); mg.set_defaults(func=migrate)
     return p
 
 

@@ -74,7 +74,11 @@ your-repo/
       ├─ validation.md                  # the REAL commands: full/fast test, lint, typecheck, build
       ├─ slices.lock                    # machine-readable frozen slice set (gate checks against it)
       ├─ run-state.json                 # checkpoint: per-slice status, integrated set, resume info
+      ├─ feature-state.json             # per-feature ledger across contract generations (safe completion)
+      ├─ resolution-queue.json          # structured parked spec-gaps awaiting /parallax:resolve
+      ├─ resolutions/<batch>.json       # applied human-decision receipts (one-time token, old→new contract)
       ├─ reviews/<slice>.json           # per-slice cross-model review ledgers (if the verifier is on)
+      ├─ history/generation-<N>/        # the previous generation's contract/run-state/reviews (after a resolve)
       ├─ escalations.md                 # autonomous: genuine ambiguities parked for a human
       └─ product-copy.md                # autonomous: user-facing wording awaiting sign-off
 ```
@@ -95,6 +99,22 @@ Branches: `feature/<slug>` (the result) plus disposable track branches (`feature
 /parallax:run --resume csv-export             # hourly resume after a usage-limit pause
 ```
 In autonomous mode the human gates are replaced by the independent verifier; anything genuinely ambiguous is **parked** to `.parallax/<slug>/escalations.md` instead of guessed. Nothing reaches `main` without a human (epic → `main` is always a PR + CI + review).
+
+## Safe completion — resolving a parked spec-gap
+A parked run is a **safe stop, not a failure**: when a blind test and a blind implementation each defend a *different reasonable reading* of the spec, Parallax refuses to guess and stops with `run-state.status = needs-resolution`. That product choice is the one thing it can't decide for you — `/parallax:resolve` is how you supply it.
+
+```text
+/parallax:resolve <slug>            # show the open decisions and decide them, one at a time
+/parallax:resolve <slug> --status   # just list what's parked (read-only)
+```
+
+- **`--resume` ≠ `/parallax:resolve`.** `--resume` only continues a run that **paused on a usage limit** — same contract, same generation. `/parallax:resolve` handles a **contract decision**: it changes the spec, so it mints a **new contract generation** and rebuilds.
+- **Only real contract choices.** The resolver decides a spec-gap / under-specified behaviour / rescope. A circuit-breaker trip, an anti-cheat or safety flag, a plain code/test fault, or a provider limit are **not** "human exceptions" — it shows them and names the right path instead. Your options per decision: pick an offered behaviour, give your own rule, explicitly drop it from scope, or abandon the feature. There is no "ship anyway".
+- **A decision rebuilds the feature.** After you confirm by repeating an **exact one-time token**, Parallax fully invalidates the old certification and starts fresh against the new contract: a fresh epic base, all slices `pending`, the old code/tests **gone from the active tree** (the blind workers never see them), a fresh pre-freeze review, then `/parallax:run` again. Deliberately thorough — "completed" means "verified against what you actually decided".
+- **Where it lives.** Receipts under `.parallax/<slug>/resolutions/`; the structured queue is `resolution-queue.json`; the per-feature ledger is `feature-state.json`; the previous generation's contract/run-state/reviews are archived under `.parallax/<slug>/history/generation-<N>/`.
+- **The token is a consent marker, not a signature.** It records that an explicit decision was made; it is not cryptographic proof of *who* typed it. As everywhere, `epic → main` is still a human PR + CI.
+- **Continuing a cloud run.** A laptop-off run that parks can be continued without a live session: prepare the decision out-of-band and pass it with `/parallax:resolve <slug> --from-file <decision.json>` (it must carry the exact token + a valid decision — this is not autonomy deciding for you).
+- **Older runs.** A v0.30 feature is migrated on first resolve (idempotently); if only a free-text `escalations.md` survives with no structured source, the resolver fails closed and asks you to start a fresh `/parallax:spec` rather than guess.
 
 ## When *not* to use Parallax
 - **Trivial / throwaway changes** where writing a concrete spec costs more than the change.
@@ -174,18 +194,19 @@ bash tests/run.sh           # the plugin's own regression harness (executes the 
 The harness **executes** the invariants (git assembly/integration, the lock, the disposition gate, schema validation, `bash -n` on every fenced block) rather than grepping for strings. `tests/verify-codex.sh` / `tests/verify-gemini.sh` confirm the real `codex` / `gemini` CLIs on **your** machine.
 
 ## Command reference
-- **`/parallax:spec <idea>`** *(or `--autonomous --from-doc <brief>`)* — idea → frozen spec + slice manifest + validation contract, stopped at a gate.
+- **`/parallax:spec <idea>`** *(or `--autonomous --from-doc <brief>`)* — idea → frozen spec + slice manifest + validation contract, stopped at a gate. Includes an **Existing Affordance Review** so it reuses an existing seam instead of freezing a needless new subsystem.
 - **`/parallax:run [slug]`** *(`--autonomous` · `--parallel` · `--resume`)* — build each slice blind, arbitrate to green, integrate, push.
 - **`/parallax:auto <brief>`** *(`--resume <slug>`)* — autonomous end-to-end driver, headless and schedulable.
+- **`/parallax:resolve <slug>`** *(`--status` · `--item <R-id>` · `--from-file <decision.json>`)* — turn a parked spec-gap into a verified **safe completion**: decide the contract ambiguity, mint a new generation, fully invalidate, and rebuild. Not `--resume` (that only continues a limit-pause).
 
 ## Layout
 ```
 .claude-plugin/   plugin + marketplace manifests
-commands/         /parallax:spec, /parallax:run, /parallax:auto
+commands/         /parallax:spec, /parallax:run, /parallax:auto, /parallax:resolve
 agents/           arbiter, test-writer-*, blind-coder-*, codex-judge (dispatched by name)
 skills/           parallax-core, role-*, domain-*  (the operating contracts)
-assets/           codex/ schemas + codex.toml.example, run-state.schema.json, slices-lock.schema.json
-scripts/          pre-freeze-budget.py, triage.py, merge-ledger.py, epic-gate.py, hashes, cloud-setup.sh
+assets/           codex/ schemas + codex.toml.example, run-state + slices-lock + feature-state + resolution-queue/receipt schemas
+scripts/          pre-freeze-budget.py, triage.py, merge-ledger.py, epic-gate.py, resolution.py, generation-restart.sh, hashes, cloud-setup.sh
 references/        bundled testing-anti-patterns reference
 tests/            run.sh + t_*.sh git scenarios + smoke helpers
 ```

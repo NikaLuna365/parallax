@@ -3,11 +3,14 @@
   "owner": {
     "name": "NikaLuna365"
   },
+  "metadata": {
+    "description": "Parallax — a spec-driven, blind-coder TDD pipeline for Claude Code with an optional cross-model verifier and human-gated safe completion."
+  },
   "plugins": [
     {
       "name": "parallax",
       "source": "./",
-      "description": "Parallax — independent paths, one verified result. A spec-driven, parallel, blind-coder TDD pipeline: a read-only spec drives a test-writer and a blind-coder independently; a whole-seeing arbiter loops until green, then pushes a feature branch."
+      "description": "Parallax — independent paths, one verified result. A spec-driven, parallel, blind-coder TDD pipeline: a read-only spec drives a test-writer and a blind-coder independently; a whole-seeing arbiter loops until green, then pushes a feature branch. /parallax:resolve turns a parked spec-gap into a verified safe completion via a new contract generation; /parallax:spec runs an Existing Affordance Review to avoid needless new subsystems."
     }
   ]
 }

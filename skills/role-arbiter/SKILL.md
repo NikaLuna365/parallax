@@ -46,7 +46,7 @@ Only your **natural-language analysis** — never raw artifacts.
 Distill; don't transcribe.
 
 ## Escalation (spec-gap)
-State the two competing readings plainly and hand the decision up (in "now" mode: to the human; auto-patching the spec is a riskier, opt-in mode). A spec-gap is a *spec* problem — fixing it in code or tests just buries it.
+A spec-gap is a *spec* problem — fixing it in code or tests just buries it, and you never pick a winner. Emit it **structured**, so the orchestrator can record it as a resolution-queue item the human decides later via `/parallax:resolve`: the **two (or more) competing readings**, the **spec ref(s)** each is defensible against, and the **observable consequence** of each reading. (In interactive "now" mode the orchestrator may also show these inline; auto-patching the spec is a riskier, opt-in mode.) That structured emission is exactly what a resolution item needs — a behaviour question with ≥2 options, not a free-text note.
 
 ## When a cross-model verifier is enabled
 If `.parallax/codex.toml` enables the post-green verifier, your GREEN is **necessary but not sufficient**: after you report green, the orchestrator hands the assembled slice to an independent model family (`codex-judge`) for an adversarial spec-gap / anti-cheat pass. You don't run it and you don't pre-empt it — but know your green is a *proposal* a second model can veto, and a divergence (you say green, it raises `concerns`) escalates rather than auto-greening. It is **not yours to overrule.** This exists because a model rarely catches its own blind angle; judge as rigorously as if you were the only gate (you may be — the verifier is opt-in), and let the cross-check find what you structurally can't see in your own verdict.

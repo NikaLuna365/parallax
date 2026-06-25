@@ -100,10 +100,10 @@ for s in ['## Autonomous & parallel execution','## Limits, checkpointing & resum
 for a in ['assets/codex/verdict.schema.json','assets/codex/spec-adversary.schema.json','assets/codex/pre-freeze-state.schema.json','assets/run-state.schema.json','scripts/pre-freeze-budget.py']: assert os.path.exists(a),a
 PY
 
-echo "[shell_syntax]  (EXECUTES bash -n on every fenced bash block in run.md — locks P5)"
+echo "[shell_syntax]  (EXECUTES bash -n on every fenced bash block in run.md + resolve.md — locks P5)"
 python3 - <<'PY'
 import re
-t=open('commands/run.md').read(); n=0
+t=''.join(open(p).read() for p in ('commands/run.md','commands/resolve.md')); n=0
 for m in re.findall(r'```bash\n(.*?)```', t, re.S):
     s=re.sub(r'<[^>\n]*>','PH',m)           # neutralize <placeholders>
     open(f'/tmp/parallax_blk{n}.sh','w').write(s); n+=1
@@ -111,7 +111,7 @@ open('/tmp/parallax_nblk','w').write(str(n))
 PY
 nblk=$(cat /tmp/parallax_nblk); bad=0
 for i in $(seq 0 $((nblk-1))); do bash -n "/tmp/parallax_blk$i.sh" 2>/tmp/parallax_syn || { bad=1; echo "      block $i: $(cat /tmp/parallax_syn)"; }; done
-[ "$bad" = 0 ] && ok "all $nblk run.md bash blocks pass bash -n" || no "a run.md bash block has a shell syntax error"
+[ "$bad" = 0 ] && ok "all $nblk run.md + resolve.md bash blocks pass bash -n" || no "a run.md/resolve.md bash block has a shell syntax error"
 
 echo "[integration]  (EXECUTES the parallel wave — locks v0.19 #1 data-loss + #2 assembly worktree + #3 transactional + #4 binary)"
 bash tests/t_assembly.sh feature/ >/tmp/parallax_int1 2>&1 && ok "per-slice diff integration preserves a 2-slice wave (prefix feature/)" || { no "integration (feature/)"; sed 's/^/      /' /tmp/parallax_int1; }
@@ -450,6 +450,33 @@ if [ "$rracrc" = 2 ]; then echo "  · jsonschema not installed — resolution ra
 elif [ "$rracrc" = 0 ]; then ok "concurrent resolvers: the atomic feature-ref CAS lands EXACTLY ONE generation-2 restart; the loser refuses to clobber; the survivor is append-only (no force-push)"; else no "resolution race (v0.31 P2) wrong"; sed 's/^/      /' /tmp/parallax_rrace; fi
 { [ -f scripts/generation-restart.sh ] && ! grep -qE 'push[^|&]*(--force|-f )' scripts/generation-restart.sh; } && ok "scripts/generation-restart.sh present and never force-pushes (append-only by construction)" || no "generation-restart.sh missing or force-pushes"
 
+echo "[resolution_migrate]  (v0.31 P3 — EXECUTES resolution.py migrate: v0.30 run-state -> gen-1 feature-state, idempotent, fail-closed)"
+bash tests/t_resolution_migration.sh >/tmp/parallax_rmig 2>&1; rmigrc=$?
+if [ "$rmigrc" = 2 ]; then echo "  · jsonschema not installed — migration test skipped";
+elif [ "$rmigrc" = 0 ]; then ok "migrate: synthesizes a gen-1 feature-state + stamps run-state (feature_id/contract_generation); idempotent re-run; resolve-ready; fail-closed on a missing/garbled run-state"; else no "resolution migrate (v0.31 P3) wrong"; sed 's/^/      /' /tmp/parallax_rmig; fi
+
+echo "[resolution_command]  (v0.31 P4 — /parallax:resolve drives safe-completion; producers emit STRUCTURED resolution items at a spec-gap park)"
+{ [ -f commands/resolve.md ] && grep -q 'name: resolve' commands/resolve.md \
+  && grep -qF 'resolution.py migrate' commands/resolve.md && grep -qF 'resolution.py apply' commands/resolve.md \
+  && grep -qF 'generation-restart.sh' commands/resolve.md; } \
+  && ok "resolve.md present; orchestrates migrate -> queue -> exact one-time token -> apply -> generation restart -> rebuild" \
+  || no "commands/resolve.md missing or not wired to resolution.py/generation-restart.sh"
+{ grep -qi 'choose-option' commands/resolve.md && grep -qi 'rescope' commands/resolve.md && grep -qi 'ship anyway' commands/resolve.md; } \
+  && ok "resolve.md: only choose-option/custom-rule/rescope/abandon — no ignore/ship-anyway/manual-fixed" \
+  || no "resolve.md missing the allowed-outcomes / no-ship-anyway boundary"
+{ grep -qi 'anti-cheat' commands/resolve.md && grep -qi 'circuit-breaker' commands/resolve.md && grep -qiF 'refused' commands/resolve.md; } \
+  && ok "resolve.md refuses non-contract parks (breaker/anti-cheat/code-fault/limit) and names the correct next path" \
+  || no "resolve.md missing the unsupported-reason boundary"
+{ grep -qF 'resolution.py add-item' commands/run.md && grep -q 'needs-resolution' commands/run.md; } \
+  && ok "run.md: a spec-gap park records a structured resolution item + sets needs-resolution (queue is authoritative, not escalations.md)" \
+  || no "run.md spec-gap park not wired to the resolution queue"
+{ grep -qi 'competing readings' skills/role-arbiter/SKILL.md && grep -qi 'resolution-queue item' skills/role-arbiter/SKILL.md; } \
+  && ok "role-arbiter emits a structured spec-gap (competing readings + spec refs + consequence) for the resolution queue" \
+  || no "role-arbiter not wired for structured spec-gap items"
+{ grep -qF '/parallax:resolve' commands/auto.md && grep -q 'needs-resolution' commands/auto.md; } \
+  && ok "auto.md surfaces /parallax:resolve for a needs-resolution park and never self-resolves" \
+  || no "auto.md missing the needs-resolution -> /parallax:resolve path"
+
 echo "[affordance_review]  (v0.31 patch — /parallax:spec forces an Existing Affordance Review before approach choice; prompt-contract only: no new command/script/schema/state)"
 { grep -q "Existing Affordance Review" commands/spec.md \
   && grep -q "^## Existing affordance review" commands/spec.md \
@@ -483,6 +510,15 @@ grep -qE 'sk-[A-Za-z0-9]{16,}|AIza[0-9A-Za-z_-]{20,}|[0-9]{6,}:[A-Za-z0-9_-]{20,
 echo "[cloud_setup]  (real install attempts, not commented-out — locks #6)"
 grep -qE '^\s*command -v codex .*\|\| npm i -g' scripts/cloud-setup.sh && ok "cloud-setup.sh actually ATTEMPTS the CLI installs (uncommented)" || no "cloud-setup.sh installs are still commented out"
 grep -qiE 'best-effort|adjust the package names' README.md && ok "README is honest about best-effort installs" || no "README overclaims that setup installs"
+
+echo "[release_coherence]  (v0.31 — manifest/changelog/docs/benchmark agree on the release)"
+{ grep -q '"version": "0.31.0"' .claude-plugin/plugin.json \
+  && grep -q '^## 0.31.0' CHANGELOG.md \
+  && grep -qF '/parallax:resolve' README.md \
+  && grep -qF '/parallax:resolve' .claude-plugin/marketplace.json \
+  && [ -f tests/safe-completion-benchmark.md ]; } \
+  && ok "version 0.31.0 in plugin.json; CHANGELOG 0.31.0 entry; README + marketplace document /parallax:resolve; AC9 benchmark plan present" \
+  || no "release coherence: version/changelog/docs/benchmark not aligned for 0.31.0"
 
 echo ""
 echo "== $PASS passed, $FAIL failed =="
