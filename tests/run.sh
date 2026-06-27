@@ -661,6 +661,31 @@ echo "[live_run_evidence_claim_honesty]"
   && ok "transcript is auxiliary provenance only (parallax-core); README frames v0.36 as auditability evidence, explicitly NOT a benchmark/quality claim" \
   || no "claim-honesty wiring missing (transcript-primary or no auditability/not-a-benchmark note)"
 
+echo "[blindfold_guard]  (v0.37 P0.1 — EXECUTES blindfold-guard.py: the mechanical blindness wall)"
+bash tests/t_blindfold.sh >/tmp/parallax_bf 2>&1 && ok "blindfold-guard.py rejects leaked impl/dist in the test worktree and leaked tests in the coder worktree; clean tracks pass (per wave, fail-closed)" || { no "blindfold guard (P0.1)"; sed 's/^/      /' /tmp/parallax_bf; }
+grep -qF 'blindfold-guard.py' commands/run.md && ok "run.md dispatches blindfold-guard.py before each blind track and its done-gate (per wave)" || no "run.md does not wire blindfold-guard.py (P0.1)"
+{ grep -qiF 'contamination' skills/role-arbiter/SKILL.md && grep -qiF 'natural-language fault' commands/run.md; } && ok "role-arbiter anti-cheat adds cross-worktree contamination; run.md redispatch carries only spec-anchored natural-language faults (no selectors/file:line/exports)" || no "contamination/redispatch wording missing (P0.1)"
+grep -qiF 'baseline' skills/role-test-writer/SKILL.md && ok "role-test-writer brownfield rule: spec inlines the baseline / names a public fixture; never inspect impl or compiled output for expected values" || no "role-test-writer brownfield baseline guidance missing (P0.1)"
+
+echo "[finalize_gate]  (v0.37 P0.2 — EXECUTES finalize-gate.py: standalone arbiter+evidence+freshness gate)"
+bash tests/t_finalize_gate.sh >/tmp/parallax_fg 2>&1; fgrc=$?
+if [ "$fgrc" = 2 ]; then echo "  · jsonschema not installed — finalize-gate execution test skipped";
+elif [ "$fgrc" = 0 ]; then ok "finalize-gate.py holds on missing per-slice arbiter receipt, missing committed evidence, a green-unverified slice, and a stale run-state; finalizes only the complete set (deep verifier/contract/tree checks delegated to epic-gate.py)"; else no "finalize-gate.py (git-based) wrong"; sed 's/^/      /' /tmp/parallax_fg; fi
+grep -qF 'finalize-gate.py' commands/run.md && ok "run.md runs the standalone finalize-gate.py before feature push / epic advance (not only orchestrator Step 4)" || no "run.md does not wire finalize-gate.py (P0.2)"
+{ grep -qiF 'green-unverified' commands/run.md && grep -qiF 'no-codex' commands/run.md; } && ok "run.md documents verifier-limited continuation (build to green-unverified, integrate only when drained) + loud no-codex degradation for trust/anti-cheat/money/PII/security specs" || no "run.md verifier-limited / no-codex wording missing (P0.2)"
+
+echo "[feature_sweep]  (v0.37 P0.3 — EXECUTES feature-sweep.py: whole-feature invariant sweep)"
+bash tests/t_feature_sweep.sh >/tmp/parallax_fs 2>&1 && ok "feature-sweep.py catches a cross-file PII serialization a per-slice green misses, honours the explicit mock-only stamp, and fails closed on a missing invariants manifest" || { no "feature sweep (P0.3)"; sed 's/^/      /' /tmp/parallax_fs; }
+{ grep -qiF 'prohibition' commands/spec.md && grep -qF 'invariants.json' commands/spec.md; } && ok "spec.md adds the prohibition-reconciliation substep recording .parallax/<slug>/invariants.json (what must NOT be violated, not only what to reuse)" || no "spec.md prohibition-reconciliation substep missing (P0.3)"
+grep -qiF 'live-consumer' skills/role-arbiter/SKILL.md && ok "role-arbiter requires live-consumer proof for a new/changed shared-contract field (a unit-test mention is not coverage)" || no "role-arbiter live-consumer rule missing (P0.3)"
+
+echo "[contract_amend]  (v0.37 P0.4 — EXECUTES contract-amend.py: auditable frozen-contract tightening)"
+bash tests/t_contract_amend.sh >/tmp/parallax_ca 2>&1 && ok "contract-amend.py rejects an in-place post-freeze edit, accepts a sanctioned mechanical-tightening chain (prev->new hash, propagation all-true, pre-freeze pass), and rejects incomplete propagation" || { no "contract amend (P0.4)"; sed 's/^/      /' /tmp/parallax_ca; }
+{ grep -qF 'contract-amend.py' commands/run.md || grep -qF 'contract-amend.py' commands/resolve.md; } && ok "the sanctioned tightening path is wired into an existing command (run.md/resolve.md) — no new public command" || no "contract-amend.py not wired into an existing command (P0.4)"
+
+echo "[governance_evidence_required]  (v0.37 P1.5 — finalize needs committed evidence + a session lease)"
+{ grep -qiF 'evidence' commands/run.md && grep -qiF 'lease' commands/run.md; } && ok "run.md requires committed evidence at finalize and a session lease/ownership before resume/advance" || no "run.md evidence-required / lease wording missing (P1.5)"
+
 echo "[security_no_secrets]  (locks repo hygiene)"
 grep -qE 'sk-[A-Za-z0-9]{16,}|AIza[0-9A-Za-z_-]{20,}|[0-9]{6,}:[A-Za-z0-9_-]{20,}' assets/codex/codex.toml.example && no "config has a secret-shaped value" || ok "config has no secret-shaped values (only *_env names)"
 { [ -f SECURITY.md ] && grep -q '^\.env$' .gitignore; } && ok "SECURITY.md + .gitignore (.env) present" || no "SECURITY.md/.gitignore missing"
@@ -669,19 +694,22 @@ echo "[cloud_setup]  (real install attempts, not commented-out — locks #6)"
 grep -qE '^\s*command -v codex .*\|\| npm i -g' scripts/cloud-setup.sh && ok "cloud-setup.sh actually ATTEMPTS the CLI installs (uncommented)" || no "cloud-setup.sh installs are still commented out"
 grep -qiE 'best-effort|adjust the package names' README.md && ok "README is honest about best-effort installs" || no "README overclaims that setup installs"
 
-echo "[release_coherence]  (v0.36.1 — manifest/changelog/docs agree on the release; v0.31-v0.36 kept)"
-{ grep -q '"version": "0.36.1"' .claude-plugin/plugin.json \
+echo "[release_coherence]  (v0.37.0 — manifest/changelog/docs agree on the release; v0.31-v0.36.1 kept)"
+{ grep -q '"version": "0.37.0"' .claude-plugin/plugin.json \
+  && grep -q '^## 0.37.0' CHANGELOG.md \
   && grep -q '^## 0.36.1' CHANGELOG.md \
   && grep -q '^## 0.36.0' CHANGELOG.md \
   && grep -q '^## 0.35.0' CHANGELOG.md \
   && grep -q '^## 0.31.0' CHANGELOG.md \
+  && grep -qiF 'runtime governance' README.md \
   && grep -qiF 'live-run evidence' README.md \
-  && grep -qiF 'evaluation harness v2' README.md \
   && grep -qF '/parallax:resolve' README.md \
+  && [ -f references/runtime-governance.md ] \
   && [ -f references/live-run-evidence.md ] \
-  && [ -f references/evaluation-harness-v2.md ]; } \
-  && ok "version 0.36.1 in plugin.json; CHANGELOG has 0.36.1 (0.36.0/0.35.0/0.31.0 kept); README documents live-run evidence + harness v2 + /parallax:resolve; v0.35/v0.36 references present" \
-  || no "release coherence: version/changelog/docs not aligned for 0.36.1"
+  && [ -f scripts/blindfold-guard.py ] && [ -f scripts/finalize-gate.py ] \
+  && [ -f scripts/feature-sweep.py ] && [ -f scripts/contract-amend.py ]; } \
+  && ok "version 0.37.0 in plugin.json; CHANGELOG has 0.37.0 (0.36.1/0.36.0/0.35.0/0.31.0 kept); README documents runtime governance + prior boundaries; v0.37 reference + four gate scripts present" \
+  || no "release coherence: version/changelog/docs not aligned for 0.37.0"
 
 echo ""
 echo "== $PASS passed, $FAIL failed =="

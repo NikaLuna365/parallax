@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Parallax whole-feature invariants manifest (v0.37 P0.3)",
+  "description": "Declared at .parallax/<slug>/invariants.json by the /parallax:spec prohibition-reconciliation substep: the concrete cross-file invariant classes a per-slice green could still violate (PII/trust/anti-cheat exposure, money/pricing rules, shared-entity serialization, dead fields/seams, shared-interface breakage, mock-only I/O). scripts/feature-sweep.py executes it against the integrated tree before final completion. This is a CONCRETE-INVARIANT sweep, NOT a broad style/architecture review — every entry names a precise, checkable consequence.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "slug"],
+  "properties": {
+    "schema_version": { "const": "parallax-feature-invariants-v1" },
+    "slug": { "type": "string", "minLength": 1 },
+    "forbidden_patterns": {
+      "type": "array",
+      "description": "Patterns that must NOT appear in shipped code under `paths` (e.g. a PII field serialized into a response, a forbidden money literal). A match is a whole-feature violation.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["id", "pattern", "paths", "reason"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "pattern": { "type": "string", "minLength": 1, "description": "Python regex." },
+          "paths": { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": "fnmatch globs (repo-relative) to scan." },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "required_consumers": {
+      "type": "array",
+      "description": "A new/changed shared field must have a LIVE consumer — it is not 'covered' merely because a producer or a unit test mentions it. If `field` appears in `producer_paths` but nowhere in `consumer_paths`, it is a dead field/seam.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["id", "field", "producer_paths", "consumer_paths", "reason"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "field": { "type": "string", "minLength": 1, "description": "Literal token or Python regex of the shared field/identifier." },
+          "producer_paths": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+          "consumer_paths": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "mock_only_slices": {
+      "type": "array",
+      "description": "I/O-heavy slices whose unit tests are mock-only. Each must EITHER ship an integration/contract check matching `integration_glob` OR carry the visible `externals mocked -> integration unverified` stamp file; otherwise completion is blocked.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["slice_id", "integration_glob", "stamp"],
+        "properties": {
+          "slice_id": { "type": "string", "minLength": 1 },
+          "integration_glob": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+          "stamp": { "type": "string", "minLength": 1, "description": "Repo-relative path to the explicit mock-only stamp file, e.g. .parallax/<slug>/stamps/<id>.mock-only" }
+        }
+      }
+    }
+  }
+}

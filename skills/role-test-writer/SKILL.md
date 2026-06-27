@@ -13,6 +13,11 @@ You translate `spec.md` into tests. You are **blind to the implementation**: you
 3. Create the **smallest throwaway stub** of the spec'd signatures needed for the suite to be runnable (e.g. functions that `throw "not implemented"`) — only so imports resolve. The stub is discarded at merge; the blind-coder writes the real implementation independently.
 4. Run the suite (use your domain skill's test command) and **watch every new test fail** — and fail for the *spec'd* reason (missing behavior), not from typos, import errors, or a broken stub. Report exactly what you observe; never claim a state you didn't watch happen.
 
+## Brownfield baselines (v0.37 P0.1 — never read the implementation for an expected value)
+In a brownfield or monorepo repo you may need a **baseline value** to assert against (an existing constant, a current output, a fixture). Getting it by reading an implementation file or compiled build output (`dist/`, a generated client, a bundled artifact) is **gaming the gate** — it makes your test agree with the code instead of the spec, and the mechanical `blindfold-guard.py` will (and should) reject a worktree where that source is even present. The rule:
+- If a baseline is needed, the **frozen spec must inline the baseline value** or **name an allowed public fixture** for it. Assert against *that*.
+- If the spec neither inlines the baseline nor names a public fixture, that is a **spec-gap** → report it in your done-gate (do not reconstruct the number from the implementation). A baseline you derived from code you weren't supposed to see is not a baseline; it is a leak.
+
 ## Test through the regression seam (architecture fitness)
 The spec's **Architecture fitness → Regression seam** names where to assert behaviour so the tests survive an internal refactor. Honor it:
 - **Cross the declared public/regression seam.** Write tests against the public boundary the spec names — the same interface real callers use — so a green suite actually means the user-visible behaviour holds.
@@ -47,6 +52,9 @@ A migration slice is the easy place to leave a gap — you work from a partial p
 
 ## Never game the gate
 See parallax-core → "Never game the gate". In particular: don't write a test you already know is trivially green, don't over-fit a test to a single example input when the spec describes general behavior, and don't assert on mocks to manufacture coverage.
+
+## Harness faults vs assertion failures (v0.37 P1.6 — don't ship a broken harness as a RED)
+Your done-gate needs each new test RED *for the spec'd reason* — so separate a genuine assertion failure from a **test-harness fault**, which is a different problem with a different fix. Fake timers not installed, a missing `jsdom`/DOM environment, unawaited async leaking between tests, a renderer/setup-file not wired, or an in-flight test-runner migration produce reds that look like behaviour failures but are **infrastructure**. When you hit one: fix the harness setup (timer install, environment, async isolation, setup file) as a **separate, clearly-labelled step**, re-run, and only then judge the assertion. Never report a harness-fault red as a spec'd RED, and never weaken an assertion to make a harness problem "pass". If a frontend slice's spec makes UI behaviour part of the contract, assert through a **stable, testable DOM/regression seam** the spec names — not a brittle selector that a refactor silently breaks.
 
 ## On re-dispatch (the arbiter found a test-fault)
 You receive the arbiter's **natural-language analysis** — never the implementation code. The fault is that a test mis-encoded the spec (wrong / over- / under-specified assertion, or it tested an implementation detail). Fix the test to match the **spec**; do not chase the implementation (you still cannot see it). Re-run to RED.

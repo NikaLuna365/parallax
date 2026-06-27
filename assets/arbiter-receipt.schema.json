@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Parallax per-slice arbiter receipt (v0.37 P0.2)",
+  "description": "Committed at .parallax/<slug>/arbiter/<slice_id>.json by the independent whole-seeing arbiter when it drove a slice's assembled tracks to green. It is a FRESH, per-slice receipt the standalone finalize gate (scripts/finalize-gate.py) requires for every integrated slice, so the orchestrator cannot self-green a slice or fold arbitration inline. The receipt binds the green verdict to the exact assembled diff the arbiter saw (verified_diff) and to the slice identity. The receipt proves an arbiter verdict was recorded; that the arbiter was a genuinely independent dispatch is a prompt-contract obligation the harness cannot prove mechanically.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "slug", "slice_id", "arbiter", "verdict", "verified_diff"],
+  "properties": {
+    "schema_version": { "const": "parallax-arbiter-receipt-v1" },
+    "slug": { "type": "string", "minLength": 1 },
+    "slice_id": { "type": "string", "minLength": 1 },
+    "arbiter": { "type": "string", "minLength": 1, "description": "Identifier of the independent arbiter dispatch that produced this verdict (agent_type/agent_id or session ref)." },
+    "verdict": { "enum": ["green"], "description": "Only a green arbiter verdict is a valid integration receipt; a non-green slice is not integrated." },
+    "verified_diff": { "type": "string", "minLength": 1, "description": "Hash/sha of the assembled diff the arbiter ran the tests against — binds the green to a concrete tree, matching run-state.slices[].verified_diff." },
+    "code_tip": { "type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$" },
+    "test_tip": { "type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$" },
+    "at": { "type": ["string", "null"], "description": "ISO timestamp the arbiter recorded the verdict." }
+  }
+}
