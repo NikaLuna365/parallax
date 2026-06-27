@@ -2,6 +2,14 @@
 
 All notable changes to the Parallax plugin. Versions are cumulative.
 
+## 0.37.2 — Finalize Gate Ordering Remediation
+Remediates the independent-verifier **FAIL** for v0.37.1. The freshness *mechanics* passed, but `commands/run.md` Step 4 documented a shell flow that **pushed the feature branch before running `scripts/finalize-gate.py`** — gate-after-push instead of gate-before-push. A prompt-contract ordering fix only: **no behaviour, command, schema, or claim change**, and every v0.31–v0.37.1 boundary preserved. (Append-only: v0.37.1's tag/artifacts and its FAIL report are left as-is.)
+
+- **Gate before push (`commands/run.md`).** Step 4 now: commit the terminal receipt/evidence bundle → CAS-update the *local* feature ref → remove the finalize worktree → pin `VERIFIED_OID` → run `finalize-gate.py` on that OID → **only if the gate passes**, push the feature branch at the same `VERIFIED_OID` → product-copy hold → epic-gate + epic advance at that same OID. The standalone finalize gate is no longer duplicated after the push; the feature push, epic gate, and epic push all use the one immutable `VERIFIED_OID`, never force-pushed.
+- **Honest hold message.** The finalize-gate failure now states **`feature NOT pushed; epic NOT advanced`** (v0.37.1 wrongly said "feature pushed for review", because the push had already happened). The epic-gate hold — which is genuinely reached after the gated feature push — still reads "feature pushed for review; epic NOT advanced".
+- **Mechanical ordering guard (`tests/run.sh`).** A new `[finalize_push_order]` section finds the first `finalize-gate.py --feature-ref "$VERIFIED_OID"` line and the first `git -C "$ROOT" push origin "$VERIFIED_OID:refs/heads/$TIP_REF"` line in `run.md` and **fails unless the gate line comes first**, and asserts the finalize hold contains `feature NOT pushed`. The previous harness only checked that `finalize-gate.py` was *mentioned*, which let the contradiction pass. `[release_coherence]` asserts 0.37.2.
+- **Unchanged.** `finalize-gate.py` and `run-state.schema.json` are not touched (their mechanics already passed); the v0.37.1 freshness fixture `tests/t_finalize_gate.sh` still passes. Harness `0 failed`; `claude plugin validate` passes; `bench/` and `parallax_push` untouched. The independent verifier sub-agent remains the primary release gate.
+
 ## 0.37.1 — Finalize Freshness Patch
 Closes the one accepted v0.37.0 follow-up (Codex rerun finding F1): `finalize-gate.py` documented a "fresh run-state" requirement but implemented it as only a non-empty `updated_at`. v0.37.1 makes freshness a real mechanical binding. **A patch — no new public command, no benchmark/quality claim**; every v0.31–v0.37.0 boundary preserved.
 

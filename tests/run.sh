@@ -686,6 +686,13 @@ bash tests/t_contract_amend.sh >/tmp/parallax_ca 2>&1 && ok "contract-amend.py r
 echo "[governance_evidence_required]  (v0.37 P1.5 — finalize needs committed evidence + a session lease)"
 { grep -qiF 'evidence' commands/run.md && grep -qiF 'lease' commands/run.md; } && ok "run.md requires committed evidence at finalize and a session lease/ownership before resume/advance" || no "run.md evidence-required / lease wording missing (P1.5)"
 
+echo "[finalize_push_order]  (v0.37.2 — the remote feature push must be GATED: finalize-gate.py runs BEFORE the feature push)"
+FG_LINE=$(grep -n -F 'scripts/finalize-gate.py --feature-ref "$VERIFIED_OID" --slug "$SLUG"' commands/run.md | head -1 | cut -d: -f1)
+PUSH_LINE=$(grep -n -F 'git -C "$ROOT" push origin "$VERIFIED_OID:refs/heads/$TIP_REF"' commands/run.md | head -1 | cut -d: -f1)
+{ [ -n "$FG_LINE" ] && [ -n "$PUSH_LINE" ] && [ "$FG_LINE" -lt "$PUSH_LINE" ] && grep -qF 'feature NOT pushed' commands/run.md; } \
+  && ok "run.md runs finalize-gate.py (line $FG_LINE) BEFORE the feature-branch push (line $PUSH_LINE); the finalize hold says 'feature NOT pushed' (v0.37.2 gate-before-push)" \
+  || no "run.md finalization order wrong: finalize-gate (line ${FG_LINE:-none}) must precede the feature push (line ${PUSH_LINE:-none}) and the finalize hold must say 'feature NOT pushed'"
+
 echo "[security_no_secrets]  (locks repo hygiene)"
 grep -qE 'sk-[A-Za-z0-9]{16,}|AIza[0-9A-Za-z_-]{20,}|[0-9]{6,}:[A-Za-z0-9_-]{20,}' assets/codex/codex.toml.example && no "config has a secret-shaped value" || ok "config has no secret-shaped values (only *_env names)"
 { [ -f SECURITY.md ] && grep -q '^\.env$' .gitignore; } && ok "SECURITY.md + .gitignore (.env) present" || no "SECURITY.md/.gitignore missing"
@@ -694,12 +701,12 @@ echo "[cloud_setup]  (real install attempts, not commented-out — locks #6)"
 grep -qE '^\s*command -v codex .*\|\| npm i -g' scripts/cloud-setup.sh && ok "cloud-setup.sh actually ATTEMPTS the CLI installs (uncommented)" || no "cloud-setup.sh installs are still commented out"
 grep -qiE 'best-effort|adjust the package names' README.md && ok "README is honest about best-effort installs" || no "README overclaims that setup installs"
 
-echo "[release_coherence]  (v0.37.1 — manifest/changelog/docs agree on the release; v0.31-v0.37.0 kept)"
-{ grep -q '"version": "0.37.1"' .claude-plugin/plugin.json \
+echo "[release_coherence]  (v0.37.2 — manifest/changelog/docs agree on the release; v0.31-v0.37.1 kept)"
+{ grep -q '"version": "0.37.2"' .claude-plugin/plugin.json \
+  && grep -q '^## 0.37.2' CHANGELOG.md \
   && grep -q '^## 0.37.1' CHANGELOG.md \
   && grep -q '^## 0.37.0' CHANGELOG.md \
   && grep -q '^## 0.36.1' CHANGELOG.md \
-  && grep -q '^## 0.35.0' CHANGELOG.md \
   && grep -q '^## 0.31.0' CHANGELOG.md \
   && grep -qiF 'runtime governance' README.md \
   && grep -qiF 'live-run evidence' README.md \
@@ -709,8 +716,8 @@ echo "[release_coherence]  (v0.37.1 — manifest/changelog/docs agree on the rel
   && [ -f references/live-run-evidence.md ] \
   && [ -f scripts/blindfold-guard.py ] && [ -f scripts/finalize-gate.py ] \
   && [ -f scripts/feature-sweep.py ] && [ -f scripts/contract-amend.py ]; } \
-  && ok "version 0.37.1 in plugin.json; CHANGELOG has 0.37.1 (0.37.0/0.36.1/0.35.0/0.31.0 kept); README documents the finalize-freshness completion receipt + prior boundaries; v0.37 reference + four gate scripts present" \
-  || no "release coherence: version/changelog/docs not aligned for 0.37.1"
+  && ok "version 0.37.2 in plugin.json; CHANGELOG has 0.37.2 (0.37.1/0.37.0/0.36.1/0.31.0 kept); README documents the finalize gate-before-push ordering + prior boundaries; v0.37 reference + four gate scripts present" \
+  || no "release coherence: version/changelog/docs not aligned for 0.37.2"
 
 echo ""
 echo "== $PASS passed, $FAIL failed =="
