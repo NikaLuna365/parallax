@@ -106,6 +106,7 @@ def build(fs_status="complete", rs_gen=1, fs_gen=1, run_id="RUN1", active_run="R
     rs = {"run_id": run_id, "slug": "demo", "epic": "feature/epic", "base_tip": "d" * 40, "status": "complete",
           "verified_tree": vt, "feature_id": "F1", "contract_generation": rs_gen,
           "slices": [{"id": "S1", "status": "integrated"}], "integrated": ["S1"], "updated_at": "t"}
+    rs["completion"] = {"completed_at": "2026-06-27T00:00:00+00:00", "run_id": run_id, "verified_tree": vt, "run_evidence_sha256": "0"*64, "events_jsonl_sha256": "0"*64, "terminal_event": "run_completed"}
     json.dump(rs, open(R + "/.parallax/demo/run-state.json", "w"))
     fs = {"schema_version": 1, "feature_id": "F1", "slug": "demo", "generation": fs_gen, "active_run_id": active_run,
           "parent_run_id": None if fs_gen == 1 else "RUNx", "generation_base_oid": "d" * 40,

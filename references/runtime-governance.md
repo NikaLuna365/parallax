@@ -31,6 +31,17 @@ the harness can only check is *present*, not that a live model obeyed it).
   and **loud no-codex degradation** for trust / anti-cheat / money / PII / security / safety specs.
   The receipt's *presence + identity + green verdict* is mechanical; that the arbiter was a genuinely
   independent dispatch is a role obligation the schema cannot prove.
+- **Freshness (v0.37.1, mechanical evidence binding — NOT wall-clock recency).** v0.37.0 treated a
+  "fresh" run-state as merely a non-empty `updated_at`. v0.37.1 binds freshness to a terminal
+  `completion` receipt on the run-state (`assets/run-state.schema.json`, required once `status==complete`):
+  `finalize-gate.py` fails closed unless the run-state is schema-valid; `updated_at` and
+  `completion.completed_at` parse as ISO-8601; `completion.run_id`/`verified_tree` match the run-state and
+  `verified_tree` equals the recomputed `code-tree-hash`; the committed `run-evidence.json` validates and
+  its `run.run_id`/`slug`/`status` agree; every `events.jsonl` line validates and a same-run
+  `run_completed` event exists; and the **sha256** of the committed `run-evidence.json` / `events.jsonl`
+  equal `completion.*_sha256`. This deliberately avoids a wall-clock max-age rule (which would make long
+  autonomous runs flaky) and avoids a self-referential commit-oid; it proves the *terminal bundle is
+  internally consistent*, not that it is recent. Harness: the `[finalize_freshness]` section.
 
 ### P0.3 — Whole-feature invariant sweep (`scripts/feature-sweep.py`)
 - **Mechanical:** against the integrated tree the sweep executes the invariant classes the spec

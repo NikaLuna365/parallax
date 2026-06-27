@@ -41,6 +41,7 @@ def build(slices_lock=("S1","S2"), rs_slices=None, ledgers=None, status="complet
         json.dump(d, open(f"{R}/.parallax/demo/reviews/{sid}.json","w"))
     rs={"run_id":"r","slug":"demo","epic":"feature/epic","base_tip":"d"*40,"status":status,"verified_tree":vt,
         "slices":[{"id":s,"status":st} for s,st in rs_slices],"integrated":[s for s,_ in rs_slices],"updated_at":"t"}
+    if status=="complete": rs["completion"]={"completed_at":"2026-06-27T00:00:00+00:00","run_id":"r","verified_tree":vt,"run_evidence_sha256":"0"*64,"events_jsonl_sha256":"0"*64,"terminal_event":"run_completed"}
     if status=="running": rs["lock"]={"holder":"r","acquired_at":"t","expires_at":"t2"}
     json.dump(rs, open(R+"/.parallax/demo/run-state.json","w"))
     sh("git","-C",R,"add","-A"); sh("git","-C",R,"commit","-q","-m","complete")

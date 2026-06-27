@@ -667,10 +667,10 @@ grep -qF 'blindfold-guard.py' commands/run.md && ok "run.md dispatches blindfold
 { grep -qiF 'contamination' skills/role-arbiter/SKILL.md && grep -qiF 'natural-language fault' commands/run.md; } && ok "role-arbiter anti-cheat adds cross-worktree contamination; run.md redispatch carries only spec-anchored natural-language faults (no selectors/file:line/exports)" || no "contamination/redispatch wording missing (P0.1)"
 grep -qiF 'baseline' skills/role-test-writer/SKILL.md && ok "role-test-writer brownfield rule: spec inlines the baseline / names a public fixture; never inspect impl or compiled output for expected values" || no "role-test-writer brownfield baseline guidance missing (P0.1)"
 
-echo "[finalize_gate]  (v0.37 P0.2 — EXECUTES finalize-gate.py: standalone arbiter+evidence+freshness gate)"
+echo "[finalize_freshness]  (v0.37 P0.2 + v0.37.1 — EXECUTES finalize-gate.py: terminal completion receipt bound to committed evidence)"
 bash tests/t_finalize_gate.sh >/tmp/parallax_fg 2>&1; fgrc=$?
 if [ "$fgrc" = 2 ]; then echo "  · jsonschema not installed — finalize-gate execution test skipped";
-elif [ "$fgrc" = 0 ]; then ok "finalize-gate.py holds on missing per-slice arbiter receipt, missing committed evidence, a green-unverified slice, and a stale run-state; finalizes only the complete set (deep verifier/contract/tree checks delegated to epic-gate.py)"; else no "finalize-gate.py (git-based) wrong"; sed 's/^/      /' /tmp/parallax_fg; fi
+elif [ "$fgrc" = 0 ]; then ok "finalize-gate.py finalizes only a self-consistent terminal bundle; HOLDS on: no completion receipt (updated_at-only), non-ISO timestamp, run-evidence run_id mismatch, missing run_completed event, evidence byte-tamper (sha256!=completion), verified_tree!=code-tree-hash, missing arbiter receipt, missing evidence, green-unverified — deep checks still delegated to epic-gate.py"; else no "finalize-gate.py (git-based freshness) wrong"; sed 's/^/      /' /tmp/parallax_fg; fi
 grep -qF 'finalize-gate.py' commands/run.md && ok "run.md runs the standalone finalize-gate.py before feature push / epic advance (not only orchestrator Step 4)" || no "run.md does not wire finalize-gate.py (P0.2)"
 { grep -qiF 'green-unverified' commands/run.md && grep -qiF 'no-codex' commands/run.md; } && ok "run.md documents verifier-limited continuation (build to green-unverified, integrate only when drained) + loud no-codex degradation for trust/anti-cheat/money/PII/security specs" || no "run.md verifier-limited / no-codex wording missing (P0.2)"
 
@@ -694,22 +694,23 @@ echo "[cloud_setup]  (real install attempts, not commented-out — locks #6)"
 grep -qE '^\s*command -v codex .*\|\| npm i -g' scripts/cloud-setup.sh && ok "cloud-setup.sh actually ATTEMPTS the CLI installs (uncommented)" || no "cloud-setup.sh installs are still commented out"
 grep -qiE 'best-effort|adjust the package names' README.md && ok "README is honest about best-effort installs" || no "README overclaims that setup installs"
 
-echo "[release_coherence]  (v0.37.0 — manifest/changelog/docs agree on the release; v0.31-v0.36.1 kept)"
-{ grep -q '"version": "0.37.0"' .claude-plugin/plugin.json \
+echo "[release_coherence]  (v0.37.1 — manifest/changelog/docs agree on the release; v0.31-v0.37.0 kept)"
+{ grep -q '"version": "0.37.1"' .claude-plugin/plugin.json \
+  && grep -q '^## 0.37.1' CHANGELOG.md \
   && grep -q '^## 0.37.0' CHANGELOG.md \
   && grep -q '^## 0.36.1' CHANGELOG.md \
-  && grep -q '^## 0.36.0' CHANGELOG.md \
   && grep -q '^## 0.35.0' CHANGELOG.md \
   && grep -q '^## 0.31.0' CHANGELOG.md \
   && grep -qiF 'runtime governance' README.md \
   && grep -qiF 'live-run evidence' README.md \
   && grep -qF '/parallax:resolve' README.md \
+  && grep -qiF 'completion' README.md \
   && [ -f references/runtime-governance.md ] \
   && [ -f references/live-run-evidence.md ] \
   && [ -f scripts/blindfold-guard.py ] && [ -f scripts/finalize-gate.py ] \
   && [ -f scripts/feature-sweep.py ] && [ -f scripts/contract-amend.py ]; } \
-  && ok "version 0.37.0 in plugin.json; CHANGELOG has 0.37.0 (0.36.1/0.36.0/0.35.0/0.31.0 kept); README documents runtime governance + prior boundaries; v0.37 reference + four gate scripts present" \
-  || no "release coherence: version/changelog/docs not aligned for 0.37.0"
+  && ok "version 0.37.1 in plugin.json; CHANGELOG has 0.37.1 (0.37.0/0.36.1/0.35.0/0.31.0 kept); README documents the finalize-freshness completion receipt + prior boundaries; v0.37 reference + four gate scripts present" \
+  || no "release coherence: version/changelog/docs not aligned for 0.37.1"
 
 echo ""
 echo "== $PASS passed, $FAIL failed =="

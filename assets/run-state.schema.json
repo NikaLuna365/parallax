@@ -95,6 +95,20 @@
         "acquired_at": { "type": "string", "description": "ISO timestamp the lease was taken." },
         "expires_at": { "type": "string", "description": "ISO timestamp; after this a resume may steal the lease (the holder is presumed dead)." }
       }
+    },
+    "completion": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "v0.37.1 terminal completion receipt. REQUIRED once status==complete: it binds this run-state to the exact terminal evidence bundle being finalized — not merely a non-empty updated_at. scripts/finalize-gate.py recomputes the evidence sha256s and the code-tree hash from the committed feature ref and requires every field here to match.",
+      "required": ["completed_at", "run_id", "verified_tree", "run_evidence_sha256", "events_jsonl_sha256", "terminal_event"],
+      "properties": {
+        "completed_at": { "type": "string", "minLength": 1, "description": "ISO-8601 timestamp; finalize-gate.py parses it as ISO (a non-ISO value like 't' is rejected)." },
+        "run_id": { "type": "string", "minLength": 1, "description": "Must equal top-level run_id." },
+        "verified_tree": { "type": "string", "pattern": "^[0-9a-f]{7,64}$", "description": "Must equal top-level verified_tree and the recomputed code-tree hash of the committed ref." },
+        "run_evidence_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "sha256 of the committed .parallax/<slug>/evidence/run-evidence.json bytes." },
+        "events_jsonl_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "sha256 of the committed .parallax/<slug>/evidence/events.jsonl bytes." },
+        "terminal_event": { "const": "run_completed", "description": "Exactly run_completed — the terminal event that must also be present in events.jsonl for this run." }
+      }
     }
   },
   "allOf": [
@@ -103,7 +117,7 @@
     { "if": { "properties": { "status": { "const": "paused-on-limit" } }, "required": ["status"] },
       "then": { "required": ["paused"], "properties": { "paused": { "type": "object" } } } },
     { "if": { "properties": { "status": { "const": "complete" } }, "required": ["status"] },
-      "then": { "required": ["verified_tree"], "properties": { "verified_tree": { "type": "string", "pattern": "^[0-9a-f]{7,64}$" } } } },
+      "then": { "required": ["verified_tree", "completion"], "properties": { "verified_tree": { "type": "string", "pattern": "^[0-9a-f]{7,64}$" }, "completion": { "type": "object" } } } },
     { "if": { "properties": { "status": { "const": "needs-resolution" } }, "required": ["status"] },
       "then": { "required": ["resolution_queue"], "properties": { "resolution_queue": { "type": "string", "minLength": 1 } } } },
     { "if": { "properties": { "status": { "const": "resolving" } }, "required": ["status"] },

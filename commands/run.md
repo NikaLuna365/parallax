@@ -240,10 +240,23 @@ TIP=$(git -C "$ROOT" rev-parse "$TIP_REF")
 FWT="$(dirname "$ROOT")/.parallax-wt/$SLUG-finalize"
 git -C "$ROOT" worktree add -q --detach "$FWT" "$TIP"
 VT=$(bash "$ROOT/scripts/code-tree-hash.sh" HEAD "$FWT")
-# In $FWT, write .parallax/$SLUG/run-state.json with status="complete" and verified_tree="$VT" (the schema
-# requires verified_tree once complete). It touches only .parallax/, so it does NOT move $VT.
-( cd "$FWT" && git add -- ".parallax/$SLUG/run-state.json" \
-    && git commit -q -m "$SLUG: run complete (feature-level verified_tree receipt)" )
+# In $FWT, write the TERMINAL bundle in ONE commit (v0.37.1 freshness — finalize-gate.py binds all of it;
+# it touches only .parallax/, so $VT is unmoved). Order matters:
+#   1. drain verifier/arbiter debt (done before Step 4);
+#   2. set run-evidence.json run.status="complete";
+#   3. append a terminal run_completed event (same run_id+slug) to events.jsonl;
+#   4. sha256 the two committed-intended evidence files;
+#   5. write run-state.json status="complete", verified_tree="$VT", a fresh ISO updated_at, and a
+#      completion receipt {completed_at (ISO), run_id, verified_tree="$VT", run_evidence_sha256,
+#      events_jsonl_sha256, terminal_event:"run_completed"};
+#   6. commit the whole bundle so the receipt and the bytes it hashes are the same committed object.
+# A present-but-unbound updated_at is NOT freshness: freshness means the terminal run-state, terminal
+# evidence, the run_completed event, and the verified code tree all match.
+RE=".parallax/$SLUG/evidence/run-evidence.json"; EV=".parallax/$SLUG/evidence/events.jsonl"
+RE_SHA=$(sha256sum "$FWT/$RE" | cut -d' ' -f1); EV_SHA=$(sha256sum "$FWT/$EV" | cut -d' ' -f1)
+# ... write $FWT/.parallax/$SLUG/run-state.json with status=complete, verified_tree=$VT, completion{ run_evidence_sha256=$RE_SHA, events_jsonl_sha256=$EV_SHA, terminal_event=run_completed } ...
+( cd "$FWT" && git add -- "$RE" "$EV" ".parallax/$SLUG/run-state.json" \
+    && git commit -q -m "$SLUG: run complete (terminal completion receipt; evidence bound)" )
 git -C "$ROOT" update-ref "refs/heads/$TIP_REF" "$(git -C "$FWT" rev-parse HEAD)" "$TIP"   # CAS: lands the receipt on feature even when $ROOT is detached
 git -C "$ROOT" worktree remove --force "$FWT"
 # (b) PIN the verified commit as an immutable OID — gate THIS and push THIS, never the moving ref.
@@ -259,7 +272,7 @@ fi
 - Never force-push. If the remote rejects (non-fast-forward on a re-run), report it and stop — do not overwrite remote history.
 - **Product-copy hold.** If any slice in this feature created or changed strings the spec marked as **product copy** (user-facing wording — dictionary text, labels, bot/UI messages), stop **before** advancing the epic and get an explicit human OK on the *words*. A green build proves the copy is wired correctly, not that it says the right thing; wording is a product decision, not an engineering one. (Numbers inside those strings are already constant-sourced per the money checklist — only the language needs sign-off.) Keep the feature out of the epic until approved.
 
-**Standalone finalize gate (v0.37 P0.2 + P1.5).** Before any feature push or epic advance, run the single mechanical gate `python3 scripts/finalize-gate.py --feature-ref "$VERIFIED_OID" --slug "$SLUG"`, so completion never rests only on ideal Step-4 behaviour. It reads the committed ref and **holds** unless: the run-state is present, `complete`, and fresh (a missing or stale checkpoint never finalizes); **no slice is `green-unverified`** (owed cross-model verification must be drained first); the required **evidence** artifacts `.parallax/$SLUG/evidence/{run-evidence.json,events.jsonl}` are committed; and **every** slice carries a committed, schema-valid green **arbiter receipt** `.parallax/$SLUG/arbiter/<id>.json` — so the orchestrator can never self-green a slice or fold arbitration inline. It then delegates the deep verifier / contract-hash / verified-tree / frozen-slice-set checks to `epic-gate.py`. A hold parks an *epic-hold* escalation and does **not** advance.
+**Standalone finalize gate (v0.37 P0.2 + P1.5).** Before any feature push or epic advance, run the single mechanical gate `python3 scripts/finalize-gate.py --feature-ref "$VERIFIED_OID" --slug "$SLUG"`, so completion never rests only on ideal Step-4 behaviour. It reads the committed ref and **holds** unless: the run-state is present, schema-valid, `complete`, and **fresh** — bound by a terminal `completion` receipt (v0.37.1) whose `updated_at`/`completed_at` are real ISO timestamps and whose `run_evidence_sha256` / `events_jsonl_sha256` / `verified_tree` match the committed evidence bytes, the recomputed code-tree hash, and a same-run `run_completed` event in `events.jsonl`. A present-but-unbound `updated_at` is **not** freshness. It also holds unless: **no slice is `green-unverified`** (owed cross-model verification must be drained first); the required **evidence** artifacts `.parallax/$SLUG/evidence/{run-evidence.json,events.jsonl}` are committed; and **every** slice carries a committed, schema-valid green **arbiter receipt** `.parallax/$SLUG/arbiter/<id>.json` — so the orchestrator can never self-green a slice or fold arbitration inline. It then delegates the deep verifier / contract-hash / verified-tree / frozen-slice-set checks to `epic-gate.py`. A hold parks an *epic-hold* escalation and does **not** advance.
 
 **Verifier-limited continuation (v0.37 P0.2).** A build may legitimately reach `green-unverified` (e.g. paused on a Codex limit) and keep building independent slices, but it must **not** integrate or finalize until the verifier debt is drained — reuse the existing `paused-on-limit` + `paused.service="codex"` semantics; add no new run-state status. **No-codex degradation must be loud:** for any spec touching trust, anti-cheat, money, PII, security, or safety, no-codex mode must **refuse auto-green** and require a clearly labelled interactive hold — never silently treat a Claude-only green as verified, and never weaken the verifier just because it is slow or expensive.
 
