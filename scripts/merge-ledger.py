@@ -29,18 +29,79 @@ Mechanical rules:
   * rounds_used += 1  (one merge == one completed verifier round; the initial post-green review
     is round 1, so [review].max_rounds = 2 permits at most two verifier invocations).
 
+  * path canonicalization (v0.37.3 F4): the `file` component of `where` is free-text model
+    output, and a later round may echo a basename (`StorageSubscreen.test.tsx:882`) where an
+    earlier round recorded the repo-relative path — an exact-string fingerprint then treats
+    ONE defect as two (phantom duplicate) and leaves the real one unresolved (the live-run F4
+    failure). With `--repo-root`, the file component is canonicalized against the repo's
+    TRACKED files before hashing: an exact tracked path stays itself; a unique path-suffix or
+    unique basename resolves to its tracked repo-relative path; an AMBIGUOUS basename (two+
+    tracked files share it) is NOT silently merged — it keeps its literal form, is reported
+    in `path_warnings`, and printed to stderr, so a human sees the identity gap instead of a
+    wrong merge. Existing ledger fingerprints are re-derived under the same canonicalization
+    on load (ids never change — fingerprint is derived metadata), so pre-v0.37.3 ledgers
+    converge instead of splitting. Without --repo-root, behavior is byte-identical to v0.37.2.
+
 Usage:
     merge-ledger.py LEDGER.json ROUND.json --slice S1 --current-diff <sha> [--slug <slug>]
+                    [--repo-root <path>]
 LEDGER.json is created if absent. Writes the updated ledger back to LEDGER.json.
 """
-import argparse, hashlib, json, os, re, sys
+import argparse, hashlib, json, os, re, subprocess, sys
 from collections import defaultdict
+
+# v0.37.3 F4 — module-level canonicalizer, installed by main() when --repo-root is given.
+# Threading it through _file_of keeps EVERY fingerprint call site (pass A id-consistency,
+# pass B grouping, resolved fallback, ledger re-derivation) on one identical path form.
+_CANON = None
+_PATH_WARNINGS = []
+
+
+class PathIndexError(Exception):
+    pass
+
+
+def build_canonicalizer(repo_root):
+    """Index the repo's tracked files (git ls-files) for canonical path resolution.
+    Fail closed on a broken index: the caller explicitly asked for repo-anchored identity,
+    so a missing repo must be a hard error, never a silent fall-back to string matching."""
+    p = subprocess.run(["git", "-C", repo_root, "ls-files"], capture_output=True, text=True)
+    if p.returncode != 0:
+        raise PathIndexError(f"git ls-files failed in {repo_root!r}: {p.stderr.strip()}")
+    tracked = [l.strip() for l in p.stdout.splitlines() if l.strip()]
+    exact = {t.lower() for t in tracked}
+    by_base = defaultdict(set)
+    for t in tracked:
+        by_base[os.path.basename(t).lower()].add(t.lower())
+
+    def canon(file_lower):
+        f = file_lower.lstrip("./") if file_lower.startswith("./") else file_lower
+        if not f:
+            return f
+        if f in exact:                                   # already a tracked repo-relative path
+            return f
+        suffix = {t for t in exact if t.endswith("/" + f)}
+        if len(suffix) == 1:                             # unique partial path (sub-path drift)
+            return next(iter(suffix))
+        cands = by_base.get(os.path.basename(f), set()) if len(suffix) == 0 else suffix
+        if len(cands) == 1:                              # unique basename
+            return next(iter(cands))
+        if len(cands) > 1:                               # ambiguous: NEVER silently merge
+            w = f"ambiguous path {f!r} matches {sorted(cands)}; kept distinct (not canonicalized)"
+            if w not in _PATH_WARNINGS:
+                _PATH_WARNINGS.append(w)
+                print(f"WARNING: {w}", file=sys.stderr)
+        return f                                         # unknown/ambiguous: keep literal form
+
+    return canon
 
 
 def _file_of(where):
-    """The stable part of a location: the file path, dropping :line[:col] and surrounding noise."""
+    """The stable part of a location: the file path, dropping :line[:col] and surrounding
+    noise — canonicalized to a tracked repo-relative path when --repo-root is active (F4)."""
     w = (where or "").strip()
-    return re.split(r"[:#]", w, 1)[0].strip().lower()
+    f = re.split(r"[:#]", w, 1)[0].strip().lower()
+    return _CANON(f) if _CANON else f
 
 
 def fingerprint(kind, spec_ref, where):
@@ -169,9 +230,31 @@ def main(argv):
     ap.add_argument("--slug")
     ap.add_argument("--policy", help="trusted .parallax/codex.toml — records the [review] policy_hash this ledger was triaged under (epic-gate.py checks it == the committed policy).")
     ap.add_argument("--contract-hash", dest="contract_hash", help="frozen hash of the normative spec contract (scripts/contract-hash.sh) — recorded into the ledger and frozen per run, like policy_hash.")
+    ap.add_argument("--repo-root", dest="repo_root",
+                    help="v0.37.3 F4: repository root whose TRACKED files anchor the file "
+                         "component of `where` before fingerprinting — a basename echoed by a "
+                         "later round then resolves to the same repo-relative path as round 1 "
+                         "instead of minting a phantom duplicate. Ambiguous basenames are kept "
+                         "distinct with a loud warning, never silently merged.")
     a = ap.parse_args(argv)
+    global _CANON
+    if a.repo_root:
+        try:
+            _CANON = build_canonicalizer(a.repo_root)
+        except PathIndexError as exc:
+            print(json.dumps({"error": f"path canonicalization unavailable: {exc}",
+                              "detail": "--repo-root was requested; refusing to fall back to raw string identity"}))
+            return 3
     ledger = json.load(open(a.ledger)) if os.path.exists(a.ledger) else {}
     rnd = json.load(open(a.round)) if a.round != "-" else json.loads(sys.stdin.read())
+    if _CANON:
+        # Re-derive every existing fingerprint under the SAME canonicalization (ids never
+        # change — fingerprint is derived grouping metadata). A pre-v0.37.3 ledger whose
+        # round-1 fingerprints were hashed from a different path form converges here, so the
+        # canonical round being merged matches the old entry instead of splitting it.
+        for f in ledger.get("findings", []):
+            if f.get("fingerprint"):
+                f["fingerprint"] = fingerprint(f.get("kind"), f.get("spec_ref"), f.get("where"))
     new_policy_hash = None
     if a.policy:
         import triage as T
@@ -195,8 +278,11 @@ def main(argv):
     if a.ledger != "-":
         os.makedirs(os.path.dirname(a.ledger) or ".", exist_ok=True)
         json.dump(out, open(a.ledger, "w"), indent=2)
-    print(json.dumps({"slice_id": out["slice_id"], "rounds_used": out["rounds_used"],
-                      "findings": len(out["findings"])}))
+    summary = {"slice_id": out["slice_id"], "rounds_used": out["rounds_used"],
+               "findings": len(out["findings"])}
+    if _PATH_WARNINGS:
+        summary["path_warnings"] = list(_PATH_WARNINGS)   # ambiguous paths kept distinct (F4) — loud, never silent
+    print(json.dumps(summary))
     return 0
 
 

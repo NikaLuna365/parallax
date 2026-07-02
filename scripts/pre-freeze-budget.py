@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
-"""Fail-closed budget gate for Parallax pre-freeze verifier rounds."""
+"""Fail-closed budget gate for Parallax pre-freeze verifier rounds.
+
+v0.37.3 F3 — independent closure. The state now carries a required `closure` object
+(schema: assets/codex/pre-freeze-state.schema.json) that mechanically separates the two
+trust levels a live run collapsed into one boolean: `independent-pass` (this script
+recorded a round whose own schema-valid verifier verdict was `pass`) versus everything
+else (`open` — concerns rounds, a budget cap, a human grant, orchestrator prose). Only
+record() writes closure, only a `pass` round flips it, and validate_state_semantics()
+re-derives it from the round inventory on every read — so a hand-edited closure (or a
+bolted-on `all_resolved: true`) fails the gate instead of certifying a freeze. A human
+grant-one authorizes exactly one more verifier round; it never closes anything itself.
+"""
 
 from __future__ import annotations
 
@@ -104,6 +115,27 @@ def validate_state_semantics(state: dict[str, Any]) -> None:
             raise GateError(f"round {item['round']} points at a non-canonical artifact")
         if item["contract_dir"] != f"pre_freeze.round{item['round']}.contract":
             raise GateError(f"round {item['round']} points at a non-canonical contract snapshot")
+    # v0.37.3 F3 — closure must be CONSISTENT with the machine-written round inventory, in
+    # both directions. `independent-pass` must name the LAST recorded round, whose verdict
+    # must really be `pass`, with a matching artifact + provider — so a hand-crafted
+    # closure, or a stale one left over while a later `concerns` round is live, fails the
+    # gate instead of certifying it. Conversely, a terminal `pass` round must be reflected
+    # as `independent-pass`, so a doctored `open` cannot mask an inconsistent state. An
+    # orchestrator/human/self-attested closure needs no branch here: the schema's status
+    # enum cannot represent one.
+    closure = state["closure"]
+    last = rounds[-1] if rounds else None
+    if closure["status"] == "independent-pass":
+        if last is None or closure["round"] != last["round"]:
+            raise GateError("closure claims independent-pass but does not name the last recorded round")
+        if last["verdict"] != "pass":
+            raise GateError("closure claims independent-pass but the last round's verdict is not pass")
+        if closure["artifact"] != last["artifact"]:
+            raise GateError("closure artifact does not match the last recorded round")
+        if closure["provider"] != last["provider"]:
+            raise GateError("closure provider does not match the last recorded round")
+    elif last is not None and last["verdict"] == "pass":
+        raise GateError("last recorded round is a pass but closure was not machine-written as independent-pass")
 
 
 def contract_hash(files: list[tuple[str, bytes]]) -> str:
@@ -205,6 +237,7 @@ def load_or_init(path: Path, policy: Path, slug: str) -> dict[str, Any]:
         "rounds_used": 0,
         "grants": [],
         "rounds": [],
+        "closure": {"status": "open"},
         "updated_at": now(),
     }
     write_state(path, state)
@@ -231,6 +264,7 @@ def check(args: argparse.Namespace) -> int:
         "rounds_used": state["rounds_used"],
         "authorized_limit": authorized_limit(state),
         "next_round": next_round,
+        "closure": state["closure"]["status"],
     }
     if action == "checkpoint":
         payload["grant_token"] = expected_token(state["slug"], next_round)
@@ -282,11 +316,28 @@ def record(args: argparse.Namespace) -> int:
             "recorded_at": now(),
         }
     )
+    # v0.37.3 F3 — the ONLY closure writer. `independent-pass` is derived exclusively from
+    # this round's own schema-valid verifier verdict; a `concerns` round (including the one
+    # that exhausts the budget) leaves closure `open`. Nothing else — no flag, no free-text
+    # note, no human grant — can produce a closed state, and validate_state_semantics()
+    # re-derives this from the round inventory on every subsequent read.
+    if verdict["verdict"] == "pass":
+        state["closure"] = {
+            "status": "independent-pass",
+            "round": round_number,
+            "artifact": canonical.name,
+            "provider": args.provider,
+            "closed_at": now(),
+            "closed_by": "independent-verifier",
+        }
+    else:
+        state["closure"] = {"status": "open"}
     state["updated_at"] = now()
     write_state(args.state, state)
 
     if verdict["verdict"] == "pass":
-        return emit({"decision": "pass", "round": round_number, "artifact": canonical.name})
+        return emit({"decision": "pass", "round": round_number, "artifact": canonical.name,
+                     "closure": "independent-pass"})
     next_action, code = decision(state)
     payload = {
         "decision": "revise" if next_action == "run" else "checkpoint",

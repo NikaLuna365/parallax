@@ -66,6 +66,7 @@ assert [r["round"] for r in s["rounds"]] == [1,2,3]
 assert all(os.path.exists(os.path.join(os.path.dirname(sys.argv[1]),r["artifact"])) for r in s["rounds"])
 assert all(os.path.isdir(os.path.join(os.path.dirname(sys.argv[1]),r["contract_dir"])) for r in s["rounds"])
 assert all(len(r["contract_hash"]) == 64 for r in s["rounds"])
+assert s["closure"] == {"status": "open"}, s["closure"]   # v0.37.3 F3: three concerns rounds never close
 PY
   if [ "$PF_BAD" = 0 ] && [ "$PF_R2" = 2 ] && [ "$PF_CAP" = 2 ] && [ "$PF_FAKE" = 2 ] \
      && [ "$PF_R3" = 2 ] && [ "$PF_RECAP" = 2 ] && [ "$PF_TAMPER" = 2 ] && [ "$PF_DRIFT" = 2 ]; then
@@ -75,6 +76,30 @@ PY
   fi
   rm -rf "$PFT"
 fi
+
+echo "[pre_freeze_closure]  (v0.37.3 F3 — EXECUTES pre-freeze-budget.py closure: only a schema-valid verifier PASS closes; self-attestation cannot)"
+bash tests/t_pre_freeze_closure.sh >/tmp/parallax_pfcl 2>&1; pfclrc=$?
+if [ "$pfclrc" = 2 ] && grep -q SKIP /tmp/parallax_pfcl; then echo "  · jsonschema not installed — closure execution test skipped (the gate itself fails closed)";
+elif [ "$pfclrc" = 0 ]; then ok "closure: verifier pass -> independent-pass (machine-derived, surfaced by check); concerns at cap stays checkpoint+open; bolted-on all_resolved, hand-flipped independent-pass, closed_by=orchestrator, and a doctored open over a real pass ALL rejected; a human grant authorizes one round and closes nothing itself"; else no "pre-freeze closure (F3)"; sed 's/^/      /' /tmp/parallax_pfcl; fi
+python3 - <<'PY' && ok "pre-freeze-state schema: closure required; status enum exactly {open, independent-pass} (no self-attested value representable); closed_by is a machine const" || no "pre-freeze-state closure schema shape wrong (F3)"
+import json
+s = json.load(open('assets/codex/pre-freeze-state.schema.json'))
+assert "closure" in s["required"], s["required"]
+c = s["properties"]["closure"]
+assert set(c["properties"]["status"]["enum"]) == {"open", "independent-pass"}
+assert c["properties"]["closed_by"] == {"const": "independent-verifier"}
+assert c["additionalProperties"] is False
+PY
+{ grep -qF -- 'Autonomous mode is the flag COMBINATION `--autonomous --from-doc' commands/spec.md \
+  && grep -qF -- 'never `--from-doc` alone' commands/spec.md \
+  && ! grep -qF -- '**Autonomous mode** (`--from-doc`)' commands/spec.md \
+  && ! grep -qF -- '*Autonomous (`--from-doc`):*' commands/spec.md; } \
+  && ok "spec.md flag semantics: every no-human-OK path requires --autonomous --from-doc together; the two bare --from-doc autonomous gates (old lines 34/153) are gone; plain --from-doc stays human-gated intake" \
+  || no "spec.md still gates a no-human-OK path on bare --from-doc (F3)"
+{ grep -qF 'Pre-freeze closure, mechanically' commands/spec.md && grep -qF 'independent-pass' commands/spec.md \
+  && grep -qF 'grant-one' commands/spec.md; } \
+  && ok "spec.md wires the closure mechanics: autonomous freeze requires closure.status=independent-pass; a grant authorizes one round, never certifies" \
+  || no "spec.md closure wiring missing (F3)"
 
 echo "[schemas_valid]"
 python3 - <<'PY' && ok "all JSON schemas + manifests valid" || no "invalid JSON"
@@ -667,6 +692,99 @@ grep -qF 'blindfold-guard.py' commands/run.md && ok "run.md dispatches blindfold
 { grep -qiF 'contamination' skills/role-arbiter/SKILL.md && grep -qiF 'natural-language fault' commands/run.md; } && ok "role-arbiter anti-cheat adds cross-worktree contamination; run.md redispatch carries only spec-anchored natural-language faults (no selectors/file:line/exports)" || no "contamination/redispatch wording missing (P0.1)"
 grep -qiF 'baseline' skills/role-test-writer/SKILL.md && ok "role-test-writer brownfield rule: spec inlines the baseline / names a public fixture; never inspect impl or compiled output for expected values" || no "role-test-writer brownfield baseline guidance missing (P0.1)"
 
+echo "[blindfold_monorepo]  (v0.37.3 F1 — EXECUTES blindfold-guard.py --scope-manifest against a REAL pnpm-style workspace)"
+bash tests/t_blindfold_monorepo.sh >/tmp/parallax_bfm 2>&1; bfmrc=$?
+if [ "$bfmrc" = 2 ] && grep -q SKIP /tmp/parallax_bfm; then echo "  · jsonschema not installed — monorepo blindfold execution test skipped (the guard itself fails closed)";
+elif [ "$bfmrc" = 0 ]; then ok "slice-scoped mode: sibling src+dist + existing base tree pass on the test side while the slice's OWN new impl (and its own dist/) still fail closed — protected beats every allowlist; code side rejects the slice's own test file; .parallax/**/spec.md never a leak (strict AND scoped); bin/ not compiled by default but --compiled-glob 'bin/**' restores it; '**'/'**/*' dependency globs schema-rejected; slug mismatch + missing manifest = exit 3; t_blindfold.sh still green"; else no "blindfold monorepo mode (F1)"; sed 's/^/      /' /tmp/parallax_bfm; fi
+{ [ -f assets/blindfold-scope.schema.json ] && grep -qF '"parallax-blindfold-scope-v1"' assets/blindfold-scope.schema.json; } && ok "assets/blindfold-scope.schema.json present (schema_version parallax-blindfold-scope-v1, slice-specific by construction)" || no "blindfold-scope.schema.json missing/wrong (F1)"
+{ grep -qF -- '--scope-manifest' commands/run.md && grep -qF 'blindfold-scope.$SID.json' commands/run.md && grep -qF 'Monorepo dependency roots' commands/run.md; } && ok "run.md derives a per-slice scope manifest (protected paths from each track's committed diff, dep roots from validation.md) and passes --scope-manifest per wave — no whole-tree workaround" || no "run.md monorepo scope wiring missing (F1)"
+grep -qF 'Monorepo dependency roots' commands/spec.md && ok "spec.md validation-contract format records the optional Monorepo dependency roots line (the manifest's source)" || no "spec.md Monorepo dependency roots line missing (F1)"
+python3 - <<'PY' && ok "blindfold-guard.py source safeguards: bin/ out of the default compiled alternation; .parallax/ is shared surface; strict-only impl heuristic is scope-gated" || no "blindfold-guard.py source safeguards missing (F1)"
+import re
+src = open('scripts/blindfold-guard.py').read()
+m = re.search(r'_COMPILED_DIR = re\.compile\(\s*\n?\s*r"([^"]+)"', src)
+assert m and '|bin|' not in m.group(1) and '(bin|' not in m.group(1) and '|bin)' not in m.group(1), m and m.group(1)
+assert '_SHARED_DIR' in src and re.search(r'_SHARED_DIR\s*=\s*re\.compile\(r"[^"]*parallax', src)
+assert 'protected_impl' in src and 'protected_test' in src and 'dependency_allow_globs' in src
+assert 'scope is None and (not is_test)' in src   # base tree visible by design in scoped mode
+PY
+
+echo "[merge_ledger_path_drift]  (v0.37.3 F4 — EXECUTES merge-ledger.py --repo-root against a REAL git repo)"
+bash tests/t_merge_ledger_path_drift.sh >/tmp/parallax_mlpd 2>&1 && ok "path drift: a basename/sub-path echo of round-1's repo-relative path binds to the SAME finding (resolve settles it, re-report regresses it — no phantom duplicate); an ambiguous basename stays distinct with loud path_warnings (never silently merged, never closes the wrong finding); bad --repo-root = exit 3, no silent fallback; cited-id consistency intact; legacy no-flag behavior unchanged" || { no "merge-ledger path drift (F4)"; sed 's/^/      /' /tmp/parallax_mlpd; }
+grep -qF -- '--repo-root "$ASSEMBLED"' commands/run.md && ok "run.md passes --repo-root \$ASSEMBLED to merge-ledger.py, anchoring fingerprints to the reviewed tree's tracked files" || no "run.md merge-ledger --repo-root wiring missing (F4)"
+
+echo "[run_phase_evidence_events]  (v0.37.3 F5 — EXECUTES evidence-event.py: the build phase leaves a first-class timeline, not a spec_frozen stub)"
+bash tests/t_evidence_events_run_phase.sh >/tmp/parallax_evre 2>&1; evrerc=$?
+if [ "$evrerc" = 2 ] && grep -q SKIP /tmp/parallax_evre; then echo "  · jsonschema not installed — run-phase evidence execution test skipped (the helper itself fails closed)";
+elif [ "$evrerc" = 0 ]; then ok "helper appends a schema-valid build timeline (slice_dispatched, arbiter_iteration_started/finished, codex_round_started/finished, slice_green, run_completed — every line independently re-validated); run-evidence.json moves frozen-spec -> running -> complete; append-only holds byte-for-byte; unknown event type / run_id mismatch / invalid status / missing run-evidence all refused with nothing written"; else no "run-phase evidence events (F5)"; sed 's/^/      /' /tmp/parallax_evre; fi
+python3 - <<'PY' && ok "run-evidence-event schema carries all 9 F5 build-phase types, prior types kept (additive only)" || no "event schema missing F5 types (F5)"
+import json
+e = set(json.load(open('assets/run-evidence-event.schema.json'))["properties"]["event_type"]["enum"])
+new = {"arbiter_iteration_started","arbiter_iteration_finished","codex_round_started","codex_round_finished",
+       "slice_green","pr_opened","pr_merged","session_handoff","feature_merged"}
+old = {"intake_received","intake_response","spec_frozen","slice_dispatched","test_writer_red","blind_coder_done",
+       "arbiter_green","arbiter_red","verifier_pass","verifier_concerns","run_completed","run_parked","failed_infra"}
+assert new <= e, new - e
+assert old <= e, old - e
+PY
+{ grep -qF 'scripts/evidence-event.py' commands/run.md && grep -qF 'update-run' commands/run.md \
+  && grep -qF 'arbiter_iteration_started' commands/run.md && grep -qF 'codex_round_started' commands/run.md \
+  && grep -qF 'slice_green' commands/run.md && grep -qF 'session_handoff' commands/run.md \
+  && grep -qF 'feature_merged' commands/run.md && grep -qF -- '--status running' commands/run.md; } \
+  && ok "run.md writes Phase 2-5 events THROUGH the helper at dispatch/red/done/arbiter-iteration/codex-round/green/pause/park/terminal/PR-merge points, and moves run.status off frozen-spec at preflight" \
+  || no "run.md run-phase event wiring incomplete (F5)"
+{ grep -qF 'human-authorized' commands/run.md && grep -qF 'self-continued' commands/run.md; } \
+  && ok "verifier-round events record human-authorized vs self-continued as distinct facts (P2)" || no "round-authorization distinction missing (P2)"
+{ grep -qiF 'not captured by this run' commands/run.md || grep -qiF 'evidence_limits' commands/run.md && grep -qiF 'factual' commands/run.md; } \
+  && ok "evidence_limits wording stays factual — no categorical 'transcript unavailable' claims when the path exists (P2)" || no "evidence_limits honesty wording missing (P2)"
+
+echo "[ui_reachability]  (v0.37.3 F2 — directive: a user-reachable frontend seam needs interaction proof, not router membership)"
+{ grep -qiF 'user-reachable' skills/role-arbiter/SKILL.md && grep -qiF 'interaction' skills/role-arbiter/SKILL.md \
+  && grep -qiF 'destination content appears' skills/role-arbiter/SKILL.md && grep -qiF 'no interaction harness available' skills/role-arbiter/SKILL.md; } \
+  && ok "role-arbiter: reachability classes set the proof bar; membership insufficient for user-reachable; harness-present-but-no-proof routes as test/code-fault; no-harness -> recorded limitation + cross-model verifier inspects" \
+  || no "role-arbiter user-reachability rule missing (F2)"
+{ grep -qiF 'user-reachable' skills/role-test-writer/SKILL.md && grep -qiF 'stale route-membership' skills/role-test-writer/SKILL.md; } \
+  && ok "role-test-writer: never reuse a stale route-membership test where the spec demands user reachability — write a fresh interaction test" \
+  || no "role-test-writer stale-route-test rule missing (F2)"
+{ grep -qF 'internal/import-only' commands/spec.md && grep -qF 'route-registered' commands/spec.md && grep -qiF 'user-reachable' commands/spec.md; } \
+  && ok "spec.md slice manifest marks each frontend seam internal/import-only | route-registered | user-reachable" \
+  || no "spec.md seam reachability classes missing (F2)"
+grep -qiF 'user-reachable' commands/run.md && ok "run.md arbiter dispatch carries the user-reachability proof requirement" || no "run.md dispatch reachability wording missing (F2)"
+{ [ -f tests/frontend-reachability-eval-cases.md ] && grep -qiF 'tab' tests/frontend-reachability-eval-cases.md \
+  && grep -qiF 'must NOT be green' tests/frontend-reachability-eval-cases.md \
+  && grep -qiF 'import-only' tests/frontend-reachability-eval-cases.md \
+  && grep -qiF 'destination content appears' tests/frontend-reachability-eval-cases.md; } \
+  && ok "frontend-reachability eval fixture present: hidden-tab must-not-green, click-through acceptable, import-only smoke import suffices (+ stale-test and no-harness cases)" \
+  || no "frontend reachability eval cases missing/incomplete (F2)"
+
+echo "[provider_transport]  (v0.37.3 F6/P1 — EXECUTES strip-openai-schema.py; canonical codex exec is hang-proof; timeout != rate limit)"
+STMP=$(mktemp -d)
+python3 scripts/strip-openai-schema.py assets/codex/review-round.schema.json "$STMP/rr.openai.json" >/tmp/parallax_strip 2>&1 \
+  && python3 - "$STMP/rr.openai.json" <<'PY' && ok "review-round provider copy: top-level allOf stripped for the CALL, full schema intact and still rejects a verdict/findings-inconsistent response (the stripped copy is never the acceptance bar)" || no "strip-openai-schema.py behavior wrong (F6)"
+import json, sys, jsonschema
+stripped = json.load(open(sys.argv[1]))
+assert "allOf" not in stripped, "top-level allOf still present in the provider copy"
+full = json.load(open('assets/codex/review-round.schema.json'))
+assert "allOf" in full, "full schema lost its allOf (must stay untouched)"
+bad = {"verdict": "pass", "findings": [{"severity": "high", "kind": "spec-gap", "spec_ref": "B1",
+        "where": "x.ts:1", "claim": "c", "evidence": "e"}]}
+jsonschema.validate(bad, stripped)          # the weaker call copy admits it…
+try:
+    jsonschema.validate(bad, full); raise SystemExit("full schema failed to reject inconsistency")
+except jsonschema.ValidationError:
+    pass                                     # …the FULL schema still rejects it
+PY
+rm -rf "$STMP"
+{ grep -qF 'codex exec' skills/role-codex-judge/SKILL.md && grep -qF '< /dev/null' skills/role-codex-judge/SKILL.md; } \
+  && ok "role-codex-judge canonical codex exec ends in < /dev/null (stdin hang closed at the wrapper, not remembered per prompt)" \
+  || no "canonical codex exec missing < /dev/null (F6)"
+grep -qF 'strip-openai-schema.py' skills/role-codex-judge/SKILL.md \
+  && ok "role-codex-judge routes allOf schemas through the stripped provider copy and validates the RESPONSE against the full schema" \
+  || no "role-codex-judge allOf schema-copy path missing (F6)"
+{ grep -qiF 'empty stdout' skills/role-codex-judge/SKILL.md && grep -qiF 'NOT a rate limit' skills/role-codex-judge/SKILL.md; } \
+  && ok "provider error classification: timeout with empty stdout/stderr is a hang, never reported as a rate limit" \
+  || no "timeout-vs-limit classification missing (F6)"
+
 echo "[finalize_freshness]  (v0.37 P0.2 + v0.37.1 — EXECUTES finalize-gate.py: terminal completion receipt bound to committed evidence)"
 bash tests/t_finalize_gate.sh >/tmp/parallax_fg 2>&1; fgrc=$?
 if [ "$fgrc" = 2 ]; then echo "  · jsonschema not installed — finalize-gate execution test skipped";
@@ -701,23 +819,30 @@ echo "[cloud_setup]  (real install attempts, not commented-out — locks #6)"
 grep -qE '^\s*command -v codex .*\|\| npm i -g' scripts/cloud-setup.sh && ok "cloud-setup.sh actually ATTEMPTS the CLI installs (uncommented)" || no "cloud-setup.sh installs are still commented out"
 grep -qiE 'best-effort|adjust the package names' README.md && ok "README is honest about best-effort installs" || no "README overclaims that setup installs"
 
-echo "[release_coherence]  (v0.37.2 — manifest/changelog/docs agree on the release; v0.31-v0.37.1 kept)"
-{ grep -q '"version": "0.37.2"' .claude-plugin/plugin.json \
+echo "[release_coherence]  (v0.37.3 — manifest/changelog/docs agree on the release; v0.31-v0.37.2 kept)"
+{ grep -q '"version": "0.37.3"' .claude-plugin/plugin.json \
+  && grep -q '^## 0.37.3' CHANGELOG.md \
   && grep -q '^## 0.37.2' CHANGELOG.md \
   && grep -q '^## 0.37.1' CHANGELOG.md \
   && grep -q '^## 0.37.0' CHANGELOG.md \
   && grep -q '^## 0.36.1' CHANGELOG.md \
   && grep -q '^## 0.31.0' CHANGELOG.md \
+  && grep -qiF 'reliability hardening' README.md \
+  && grep -qiF 'monorepo' README.md \
+  && grep -qiF 'user-reachab' README.md \
   && grep -qiF 'runtime governance' README.md \
   && grep -qiF 'live-run evidence' README.md \
   && grep -qF '/parallax:resolve' README.md \
   && grep -qiF 'completion' README.md \
   && [ -f references/runtime-governance.md ] \
   && [ -f references/live-run-evidence.md ] \
+  && [ -f references/live-run-audit-findings.md ] \
   && [ -f scripts/blindfold-guard.py ] && [ -f scripts/finalize-gate.py ] \
-  && [ -f scripts/feature-sweep.py ] && [ -f scripts/contract-amend.py ]; } \
-  && ok "version 0.37.2 in plugin.json; CHANGELOG has 0.37.2 (0.37.1/0.37.0/0.36.1/0.31.0 kept); README documents the finalize gate-before-push ordering + prior boundaries; v0.37 reference + four gate scripts present" \
-  || no "release coherence: version/changelog/docs not aligned for 0.37.2"
+  && [ -f scripts/feature-sweep.py ] && [ -f scripts/contract-amend.py ] \
+  && [ -f scripts/evidence-event.py ] && [ -f scripts/strip-openai-schema.py ] \
+  && [ -f assets/blindfold-scope.schema.json ]; } \
+  && ok "version 0.37.3 in plugin.json; CHANGELOG has 0.37.3 (0.37.2/0.37.1/0.37.0/0.36.1/0.31.0 kept); README covers live-run reliability hardening (monorepo blindfold, closure, path-stable ledger, run-phase events, UI reachability) + prior boundaries; audit-findings reference + new scripts/schema present" \
+  || no "release coherence: version/changelog/docs not aligned for 0.37.3"
 
 echo ""
 echo "== $PASS passed, $FAIL failed =="

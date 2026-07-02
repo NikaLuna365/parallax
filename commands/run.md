@@ -86,17 +86,46 @@ TEST_PATHSPECS=( ':(glob)tests/**'  ':(glob)**/*.test.*' )   # = validation.md T
     && git commit -q -m "parallax: blindfold code tree (remove tests)" || true )
 ( cd "$WT/test" && git rm -q -r --ignore-unmatch -- "${SRC_PATHSPECS[@]}" \
     && git commit -q -m "parallax: blindfold test tree (remove src)" || true )
+# v0.37.3 F1 — slice-scoped monorepo mode. In a pnpm/monorepo checkout the strict whole-tree
+# sweep false-positives: the test worktree legitimately keeps sibling-package source/dist for
+# cross-package import resolution, and to static heuristics that looks identical to a leak.
+# If validation.md's Path scoping declares "Monorepo dependency roots" for this slice, write a
+# per-slice scope manifest (assets/blindfold-scope.schema.json) and pass --scope-manifest —
+# NEVER a whole-tree --allow-glob '**' (the schema rejects all-wildcard globs by construction).
+# protected_* = THIS slice's own new/changed paths, re-derived fresh per wave from each track's
+# committed diff vs the slice's fork point, so the fail-closed core follows the actual work:
+SID="S<n>"                                   # current slice id (re-declare per slice, every wave)
+BASE_OID=$(git -C "$ROOT" rev-parse "${PREFIX}$SLUG")   # the tip the track branches forked from (parallel: the slice's recorded wave_base)
+DEP_ALLOW_GLOBS=()   # >>> the REAL "Monorepo dependency roots" globs from validation.md, e.g. ( "packages/shared/src/**" "packages/shared/dist/**" ); leave empty for strict mode <<<
+SCOPE_ARGS=()
+if [ "${#DEP_ALLOW_GLOBS[@]}" -gt 0 ]; then
+  SCOPE_MANIFEST=".parallax/$SLUG/blindfold-scope.$SID.json"
+  IMPL_CHANGED=$(git -C "$WT/code" diff --name-only --diff-filter=ACMR "$BASE_OID" HEAD -- "${SRC_PATHSPECS[@]}")
+  TEST_CHANGED=$(git -C "$WT/test" diff --name-only --diff-filter=ACMR "$BASE_OID" HEAD -- "${TEST_PATHSPECS[@]}")
+  IMPL_CHANGED="$IMPL_CHANGED" TEST_CHANGED="$TEST_CHANGED" DEPS="$(printf '%s\n' "${DEP_ALLOW_GLOBS[@]}")" \
+  python3 - "$ROOT/$SCOPE_MANIFEST" "$SLUG" "$SID" <<'PY'
+import json, os, sys
+out, slug, sid = sys.argv[1], sys.argv[2], sys.argv[3]
+sp = lambda v: sorted({l.strip() for l in os.environ.get(v, "").splitlines() if l.strip()})
+os.makedirs(os.path.dirname(out), exist_ok=True)
+json.dump({"schema_version": "parallax-blindfold-scope-v1", "slug": slug, "slice_id": sid,
+           "protected_impl_paths": sp("IMPL_CHANGED"), "protected_test_paths": sp("TEST_CHANGED"),
+           "dependency_allow_globs": [l.strip() for l in os.environ["DEPS"].splitlines() if l.strip()]},
+          open(out, "w"), indent=2)
+PY
+  SCOPE_ARGS=( --scope-manifest "$ROOT/$SCOPE_MANIFEST" )
+fi
 # v0.37 P0.1 — mechanically ASSERT the wall held (per wave, not just here): the code worktree must carry
 # no tracked test paths, and the test worktree no tracked implementation source OR compiled build output
 # (a committed dist/, an answer-bearing fixture, a leaked source file in a brownfield/monorepo checkout).
 # A leak PARKS the slice fail-closed — it is contamination, never something to "continue anyway" past.
-python3 "$ROOT/scripts/blindfold-guard.py" --worktree "$WT/code" --side code --slug "$SLUG" \
+python3 "$ROOT/scripts/blindfold-guard.py" --worktree "$WT/code" --side code --slug "$SLUG" "${SCOPE_ARGS[@]}" \
   || { echo "PARK: code worktree contaminated by test paths — fail closed (v0.37 P0.1)"; exit 2; }
-python3 "$ROOT/scripts/blindfold-guard.py" --worktree "$WT/test" --side test --slug "$SLUG" \
-  || { echo "PARK: test worktree contaminated by implementation/compiled output — fail closed (v0.37 P0.1)"; exit 2; }
+python3 "$ROOT/scripts/blindfold-guard.py" --worktree "$WT/test" --side test --slug "$SLUG" "${SCOPE_ARGS[@]}" \
+  || { echo "PARK: test worktree contaminated by implementation/compiled output — fail closed (v0.37 P0.1 / v0.37.3 F1)"; exit 2; }
 ```
 
-Re-run both `blindfold-guard.py` assertions **again before accepting each track's done-gate** (Step 2b), not only at setup — a track can fetch or generate the opposite side's files mid-slice, and the wall must hold on every wave.
+Re-run both `blindfold-guard.py` assertions **again before accepting each track's done-gate** (Step 2b), not only at setup — a track can fetch or generate the opposite side's files mid-slice, and the wall must hold on every wave. On every re-check **re-derive the scope manifest first** (`protected_impl_paths` / `protected_test_paths` are each track's committed diff vs the slice's fork point, so they must reflect the track's latest commit) and pass the same `--scope-manifest`; the `dependency_allow_globs` come verbatim from the frozen contract's *Monorepo dependency roots* line and never widen mid-slice. In a plain (non-monorepo) repo `DEP_ALLOW_GLOBS` stays empty and the guard runs the strict whole-tree mode exactly as v0.37. The manifest path exists **only** to retire the documented live-run workaround — a whole-tree `--allow-glob '**'` is never an acceptable monorepo answer, and the scope-manifest schema rejects it mechanically.
 
 Note: build **manifests/lockfiles** the coder may edit (e.g. `package.json`) are **coder-owned** — keep them in `SRC_GLOBS` so assembly pulls them from the code branch. The test command must already run with existing test tooling (confirmed in the contract); if the test-writer needs a *new* test dependency, that's a contract gap → escalate, don't patch silently.
 
@@ -140,7 +169,7 @@ git checkout "${PREFIX}$SLUG-test" -- "${TEST_PATHSPECS[@]}"    # real tests
 ```
 The integration tree now **mirrors** the combined state — current `src/` from the code branch + current `tests/` from the test branch, with any file a track branch *deleted* also gone here (that's what the leading `git rm` buys). The test-writer's throwaway stub is untracked, so it is never on the test branch and never pulled. Then:
 
-- → `arbiter` (cwd = the **assembled tree**: sequential `$ROOT` on `${PREFIX}$SLUG`; **parallel `$WT/S<n>/assembly`**, never `$ROOT` — see *Autonomous & parallel execution*): *"Assembled integration tree for slice `S.id` (real src + real tests). Spec: `.parallax/<slug>/spec.md`. Slice manifest: `.parallax/<slug>/slices.md`. Validation contract: `.parallax/<slug>/validation.md` — run the full check + lint + typecheck + build. Report exactly what you observe. Scan the diff for anti-cheat. Before any green, verify every integration seam this slice declares in `slices.md` actually resolves from its named entry point (a compilable smoke-import — not mere presence in `src/`); an unresolved seam is a code-fault. For a **type** seam, also probe its narrowness — a deliberately-bad literal assigned to the exported type must fail to compile; a type that silently widened (e.g. a union collapsed to `string`) is a code-fault. On red, classify each failure against the spec and route. Author nothing."*
+- → `arbiter` (cwd = the **assembled tree**: sequential `$ROOT` on `${PREFIX}$SLUG`; **parallel `$WT/S<n>/assembly`**, never `$ROOT` — see *Autonomous & parallel execution*): *"Assembled integration tree for slice `S.id` (real src + real tests). Spec: `.parallax/<slug>/spec.md`. Slice manifest: `.parallax/<slug>/slices.md`. Validation contract: `.parallax/<slug>/validation.md` — run the full check + lint + typecheck + build. Report exactly what you observe. Scan the diff for anti-cheat. Before any green, verify every integration seam this slice declares in `slices.md` actually resolves from its named entry point (a compilable smoke-import — not mere presence in `src/`); an unresolved seam is a code-fault. For a **type** seam, also probe its narrowness — a deliberately-bad literal assigned to the exported type must fail to compile; a type that silently widened (e.g. a union collapsed to `string`) is a code-fault. For a frontend seam the manifest marks **user-reachable**, router/import membership is NOT proof (v0.37.3 F2): require an actual interaction test — drive the real entry affordance (click/tab/navigate) and assert the destination content appears; a hidden/disabled entry point is a code-fault, a stale route-membership test standing in for interaction proof is a test-fault, and if the repo has no render/interaction harness, record that limitation explicitly instead of greening past it. On red, classify each failure against the spec and route. Author nothing."*
 
 ### 2c. Route the verdict (loop until green or breaker)
 Maintain a per-slice **iteration counter** (max **3**) and a private **attempt history** per worker (hub-and-spoke: you hold it; workers never see each other's).
@@ -184,7 +213,12 @@ Maintain a per-slice **iteration counter** (max **3**) and a private **attempt h
     # CONTRACT_HASH = the frozen normative spec the work is verified AGAINST (spec/slices/validation/slices.lock).
     CONTRACT_HASH=$(bash scripts/contract-hash.sh HEAD "$SLUG" "$ASSEMBLED")
     # merge-ledger stamps policy_hash AND contract_hash, both FROZEN per run; a mid-run change => exit!=0 => PARK.
-    python3 scripts/merge-ledger.py "$LEDGER" "$ROUND_JSON" --slice "$SID" --current-diff "$DIFF" --slug "$SLUG" --policy "$POLICY" --contract-hash "$CONTRACT_HASH" \
+    # --repo-root (v0.37.3 F4) anchors the fingerprint's file component to the ASSEMBLED tree's tracked
+    # files, so a verifier round that echoes a basename ("StorageSubscreen.test.tsx:882") where round 1
+    # recorded the repo-relative path still binds to the SAME finding — no phantom duplicate, no
+    # already-fixed finding re-opened by path drift. An ambiguous basename is kept distinct with a loud
+    # path_warnings entry (never silently merged); treat such a warning as a round-quality problem to fix.
+    python3 scripts/merge-ledger.py "$LEDGER" "$ROUND_JSON" --slice "$SID" --current-diff "$DIFF" --slug "$SLUG" --policy "$POLICY" --contract-hash "$CONTRACT_HASH" --repo-root "$ASSEMBLED" \
       || { echo "PARK: review policy or spec contract changed mid-run (frozen per run) — requires a fresh full review"; exit 2; }
     python3 scripts/triage.py "$LEDGER" --policy "$POLICY" --current-diff "$DIFF"; case $? in   # 0 green / 1 block / 2 escalate
       0) git -C "$ASSEMBLED" add -- "$REL_LEDGER"      # reviewed src+tests already staged by 2b; stage ONLY the receipt. NEVER 'git add -A' (it would sweep in un-reviewed untracked files — v0.22 P0#1). Committing the index = reviewed tree + receipt.
@@ -431,13 +465,30 @@ When `[notify]` in `.parallax/codex.toml` is enabled, the orchestrator pushes **
 
 ---
 
-## Live-run evidence (v0.36 — auditability, not a benchmark)
+## Live-run evidence (v0.36 auditability; v0.37.3 F5 — written through the deterministic helper, across the WHOLE build)
 Maintain `.parallax/<slug>/evidence/run-evidence.json` (`assets/run-evidence.schema.json`) and the **append-only** `.parallax/<slug>/evidence/events.jsonl` (`assets/run-evidence-event.schema.json`) across the build, stamping `plugin.version` from `.claude-plugin/plugin.json`. These are plugin-run artifacts, not a benchmark result.
 
-For `/parallax:run` (`command_entry: "run"`):
-- at **preflight**: initialize or load `run-evidence.json`, set `run.status = running`, record `repo` (root / branch / base_tip / dirty_at_start).
-- per **slice dispatch**: append `slice_dispatched`.
-- on the **test-writer** RED done-gate: append `test_writer_red`; on the **blind-coder** done-gate: append `blind_coder_done` (include `agent_type` / `branch` / `commit` / `worktree` when known).
-- on **arbiter** verdicts: append `arbiter_green` / `arbiter_red` (with the exact commands + artifact paths the arbiter ran); on **verifier** verdicts: append `verifier_pass` / `verifier_concerns`.
-- on **complete / parked / failed-infra**: set `run.status` accordingly and append the terminal event (`run_completed` / `run_parked` / `failed_infra`), with `feature_tip` + `dirty_at_end`.
+**Write events through `scripts/evidence-event.py`, never by hand-assembling JSON (v0.37.3 F5).** Three audited production runs left `events.jsonl` stopped at `spec_frozen` and `run.status` stuck at `frozen-spec` for the entire build — the prose wiring alone didn't survive a real run. The helper validates each event against the schema before appending (fail closed), creates the directory when missing, preserves append-only, and refuses an event whose `run_id`/`slug` don't match the sibling `run-evidence.json`:
+```bash
+EVD=".parallax/$SLUG/evidence"
+python3 scripts/evidence-event.py append "$EVD" --run-id "$RUN_ID" --slug "$SLUG" \
+  --event-type slice_dispatched --actor main \
+  --summary "S<n> dispatched to both blind tracks" \
+  --artifact-paths '{}'
+python3 scripts/evidence-event.py update-run "$EVD" --status running --run-id "$RUN_ID" --slug "$SLUG"
+```
+
+For `/parallax:run` (`command_entry: "run"`), the call points — every one is a real helper invocation at the moment it happens, not a summary written at the end:
+- at **preflight**: initialize or load `run-evidence.json`, record `repo` (root / branch / base_tip / dirty_at_start), then `update-run --status running` — the build phase must never sit at `frozen-spec` (the exact live-run defect this fixes).
+- per **slice dispatch** (every wave): append `slice_dispatched`.
+- on the **test-writer** RED done-gate: append `test_writer_red`; on the **blind-coder** done-gate: append `blind_coder_done` (include `--agent-type` / `--branch` / `--commit` / `--worktree` when known).
+- per **arbiter iteration** (each 2b→2c cycle, not just the verdict): append `arbiter_iteration_started` when you dispatch the arbiter and `arbiter_iteration_finished` when it reports, then the verdict event `arbiter_green` / `arbiter_red` (with the exact commands + artifact paths the arbiter ran — its role contract already hands you both).
+- per **cross-model verifier round**: append `codex_round_started` at dispatch and `codex_round_finished` when the round is merged (name the provider in the summary; put the ledger path in `artifact_paths`), then the verdict event `verifier_pass` / `verifier_concerns`. **Record the round's authorization honestly (P2):** a round taken under a fresh explicit human grant is `human-authorized`; a round the orchestrator continued from a prior result with no new gate is `self-continued` — two different facts, never collapsed into one label.
+- on a slice clearing 2c entirely (arbiter green + verifier disposition green): append `slice_green`; in parallel mode also after the CAS integration lands.
+- on a **green-unverified pause** (verifier limit — verification owed): append `run_parked` with the pause reason (`paused-on-limit`, service, retry_after) in the summary, and checkpoint per *Limits*.
+- on **run parked** (spec-gap → needs-resolution, breaker trip): append `run_parked` and set `run.status` accordingly (`update-run --status needs-resolution`).
+- at **finalize** (Step 4a, inside the terminal bundle): `update-run --status complete --feature-tip <sha> --dirty-at-end <bool>` and append the terminal `run_completed` — this is the same terminal event `finalize-gate.py` freshness-checks (v0.37.1), now written by the helper.
+- on the **feature entering the epic** (Step 4e push succeeds): append `feature_merged`; if a PR for the feature/epic is opened or merged where the orchestrator can observe it (e.g. via `gh`), append `pr_opened` / `pr_merged` when known — absent knowledge stays absent, never invented.
+- on a **session handoff** (context exhaustion → a fresh session resumes the checkpoint): append `session_handoff` from the resuming session, summarizing what was inherited.
 - a summary is not proof: when a file/log exists, put its path in the event's `artifact_paths`.
+- **`evidence_limits` stays factual (P2):** never assert a transcript/session path is "unavailable" categorically when it merely wasn't captured — record the actual path when it exists, else `null` plus a note of *why* it's absent. An evidence-limits line that overstates unavailability is itself an evidence defect.

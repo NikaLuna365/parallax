@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Parallax blindfold slice-scope manifest (v0.37.3 F1)",
+  "description": "Per-slice input to scripts/blindfold-guard.py --scope-manifest (monorepo mode). SLICE-SPECIFIC by construction, never a whole-repo allowlist: it names the slice's OWN new/changed implementation/test paths (which always fail closed when visible to the opposite blind track, before any allowlist) and the sibling-package roots the test-writer side may see for cross-package import resolution only. Written by /parallax:run per slice at .parallax/<slug>/blindfold-scope.<slice_id>.json, derived from slices.md/slices.lock plus validation.md's 'Monorepo dependency roots' line. A whole-tree dependency glob ('**' or any all-wildcard variant) is rejected here at the schema level — monorepo mode must never degrade into a blanket --allow-glob '**' bypass.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "slug", "slice_id", "protected_impl_paths", "protected_test_paths", "dependency_allow_globs"],
+  "properties": {
+    "schema_version": { "const": "parallax-blindfold-scope-v1" },
+    "slug": { "type": "string", "minLength": 1 },
+    "slice_id": { "type": "string", "minLength": 1 },
+    "protected_impl_paths": {
+      "type": "array",
+      "description": "The slice's OWN new/changed implementation files (exact repo-relative paths, not globs). Contamination on the test side whenever tracked — checked before --allow-glob and before dependency_allow_globs, so no allowlist can mask them.",
+      "items": { "type": "string", "minLength": 1, "not": { "pattern": "^[*/. ]*$" } }
+    },
+    "protected_test_paths": {
+      "type": "array",
+      "description": "The slice's OWN test files (exact repo-relative paths, not globs). Contamination on the code side whenever tracked, in addition to the guard's normal test heuristics.",
+      "items": { "type": "string", "minLength": 1, "not": { "pattern": "^[*/. ]*$" } }
+    },
+    "dependency_allow_globs": {
+      "type": "array",
+      "description": "Resolvable sibling-package roots the TEST side may see for import resolution only (e.g. 'packages/shared/src/**', 'packages/shared/dist/**'). Must stay package-specific: any glob made only of wildcards/slashes ('**', '**/*', '*', …) is schema-invalid — a whole-tree allowlist is not an acceptable monorepo mode.",
+      "items": { "type": "string", "minLength": 1, "not": { "pattern": "^[*/. ]*$" } }
+    }
+  }
+}

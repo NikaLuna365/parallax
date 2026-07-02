@@ -1,16 +1,37 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Parallax pre-freeze review budget state",
-  "description": "Machine-written audit state for bounded pre-freeze verifier rounds. Lives at .parallax/<slug>/reviews/pre-freeze-state.json and is written only by scripts/pre-freeze-budget.py.",
+  "description": "Machine-written audit state for bounded pre-freeze verifier rounds. Lives at .parallax/<slug>/reviews/pre-freeze-state.json and is written only by scripts/pre-freeze-budget.py. v0.37.3 F3: the required 'closure' object mechanically separates the two trust levels a bare all_resolved boolean used to collapse — an INDEPENDENT verifier pass ('independent-pass', written by record() only when that round's schema-valid verdict is pass) versus any orchestrator/human self-attestation, which this schema deliberately cannot represent: the status enum has no self-attested/orchestrator/human-approved member, and additionalProperties:false rejects any bolted-on all_resolved-style field.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["slug", "policy_hash", "base_limit", "rounds_used", "grants", "rounds", "updated_at"],
+  "required": ["slug", "policy_hash", "base_limit", "rounds_used", "grants", "rounds", "closure", "updated_at"],
   "properties": {
     "slug": { "type": "string", "minLength": 1 },
     "policy_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "base_limit": { "type": "integer", "minimum": 1 },
     "rounds_used": { "type": "integer", "minimum": 0 },
     "updated_at": { "type": "string", "minLength": 1 },
+    "closure": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Freeze-sufficiency state of the pre-freeze review. 'open' = not independently closed (the only state a concerns round, a budget cap, a human grant, or any orchestrator note can produce); 'independent-pass' = the last recorded round's own schema-valid verdict was pass. Written exclusively by scripts/pre-freeze-budget.py record; the script additionally cross-checks on every read that an independent-pass closure names the LAST round, that round's verdict is pass, and the artifact matches — a hand-edited closure fails the gate rather than certifying it.",
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["open", "independent-pass"] },
+        "round": { "type": "integer", "minimum": 1 },
+        "artifact": { "type": "string", "pattern": "^pre_freeze\\.round[1-9][0-9]*\\.json$" },
+        "provider": { "type": "string", "minLength": 1 },
+        "closed_at": { "type": "string", "minLength": 1 },
+        "closed_by": { "const": "independent-verifier" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "independent-pass" } }, "required": ["status"] },
+          "then": { "required": ["round", "artifact", "provider", "closed_at", "closed_by"] },
+          "else": { "maxProperties": 1 }
+        }
+      ]
+    },
     "grants": {
       "type": "array",
       "items": {

@@ -24,6 +24,23 @@ its own artifacts — not reconstructed after the fact from a Claude transcript.
 Missing data is `null`/absent per schema, **never silently invented**. A summary is not proof when a
 file/log exists — put its path in `artifact_paths`.
 
+## Run-phase coverage (v0.37.3 F5)
+Three audited production runs showed `events.jsonl` stopping at `spec_frozen` and `run.status`
+stuck at `frozen-spec` for the whole build — the v0.36 wiring existed for Phase 1 only as prose for
+Phase 2-5. From v0.37.3 the build phase is covered **through a deterministic helper**,
+`scripts/evidence-event.py`: `append` schema-validates each event *before* writing (fail closed,
+append-only, run_id/slug cross-checked against `run-evidence.json`), and `update-run` moves
+`run.status` (`frozen-spec → running → complete`, or `needs-resolution`) under full-document
+validation. The event schema adds the build-phase types the audit found missing —
+`arbiter_iteration_started/finished`, `codex_round_started/finished`, `slice_green`, `pr_opened`,
+`pr_merged`, `session_handoff`, `feature_merged` — additively (all v0.36 types unchanged).
+`commands/run.md` invokes the helper at every Phase 2-5 transition: slice dispatch, track done-gates,
+each arbiter iteration, each verifier round (recording `human-authorized` vs `self-continued`
+rounds as distinct facts), slice green, pauses/parks, the terminal `run_completed`, and
+feature-merged/PR events when known. Still auditability only: structured observations of what the
+run did — not a benchmark, and `evidence_limits` must stay factual (never assert a transcript is
+"unavailable" when it merely wasn't captured — record the real path when it exists).
+
 ## Why this release (the GPI lesson, in the abstract)
 A recent real Parallax run demonstrated the method end-to-end — intake/spec, Architecture Fitness,
 blind TDD tracks, a live e2e, and a post-e2e **trust defect** that was turned into a spec assumption,

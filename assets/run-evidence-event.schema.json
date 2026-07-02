@@ -11,12 +11,16 @@
     "slug": { "type": "string", "minLength": 1 },
     "at": { "type": "string", "minLength": 1 },
     "event_type": {
+      "description": "v0.37.3 F5 adds the build-phase types (arbiter_iteration_*, codex_round_*, slice_green, pr_opened, pr_merged, session_handoff, feature_merged) so the timeline no longer stops at spec_frozen for Phase 2-5; every pre-existing type is kept unchanged (backwards-compatible, additive only).",
       "enum": [
         "intake_received", "intake_response", "spec_frozen", "scout_dispatched", "scout_reported",
         "scout_verified_by_main", "architecture_fitness_recorded", "slice_dispatched", "test_writer_red",
-        "blind_coder_done", "arbiter_green", "arbiter_red", "verifier_pass", "verifier_concerns",
+        "blind_coder_done", "arbiter_iteration_started", "arbiter_iteration_finished",
+        "arbiter_green", "arbiter_red", "codex_round_started", "codex_round_finished",
+        "verifier_pass", "verifier_concerns", "slice_green",
         "e2e_started", "e2e_passed", "e2e_failed", "defect_found", "assumption_recorded",
-        "defect_test_added", "defect_fix_implemented", "defect_reverified", "run_completed",
+        "defect_test_added", "defect_fix_implemented", "defect_reverified",
+        "pr_opened", "pr_merged", "session_handoff", "feature_merged", "run_completed",
         "run_parked", "failed_infra"
       ]
     },
