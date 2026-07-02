@@ -38,8 +38,11 @@ narrows the guarantee to what actually matters for THIS slice:
     side when tracked, in addition to the normal test heuristics.
   * `dependency_allow_globs` — sibling-package roots the test side may see for import
     resolution only (e.g. `packages/shared/src/**`, `packages/shared/dist/**`). They must
-    be package-specific: the schema rejects a whole-tree glob (`**` and its variants), so
-    monorepo mode is never a blanket `--allow-glob '**'` bypass.
+    be package-specific — mechanically, the schema requires the FIRST path segment to be a
+    fully literal directory name (no `*`/`?`/`[…]` anywhere in it, not dot-leading), which
+    makes every whole-tree-equivalent form (`**`, `**/*`, `*`, `*.*`, `?*`, `[a-z]*`,
+    `./**`, `/**`, …) unrepresentable while still allowing `packages/*/dist/**`. Monorepo
+    mode is therefore never a blanket `--allow-glob '**'` bypass.
 
 In slice-scoped mode the TEST side's blindness guarantee is deliberately re-anchored: the
 existing BASE tree is visible by design (a monorepo test worktree cannot resolve imports

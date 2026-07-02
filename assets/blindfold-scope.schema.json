@@ -21,8 +21,12 @@
     },
     "dependency_allow_globs": {
       "type": "array",
-      "description": "Resolvable sibling-package roots the TEST side may see for import resolution only (e.g. 'packages/shared/src/**', 'packages/shared/dist/**'). Must stay package-specific: any glob made only of wildcards/slashes ('**', '**/*', '*', …) is schema-invalid — a whole-tree allowlist is not an acceptable monorepo mode.",
-      "items": { "type": "string", "minLength": 1, "not": { "pattern": "^[*/. ]*$" } }
+      "description": "Resolvable sibling-package roots the TEST side may see for import resolution only (e.g. 'packages/shared/src/**', 'packages/shared/dist/**'). Must stay package-specific — mechanically: the FIRST path segment must be a fully literal directory name (letters/digits/._@- , not starting with a dot), with no fnmatch wildcard ('*', '?', '[…]') anywhere in it. That kills every whole-tree-equivalent form ('**', '**/*', '*', '*.*', './**', '/**', '?*', '[a-z]*', …) while allowing real package roots like 'packages/*/dist/**' (literal 'packages' first, wildcards only below it). A whole-tree allowlist is not an acceptable monorepo mode.",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9_@-][A-Za-z0-9._@-]*(/.+)?$"
+      }
     }
   }
 }

@@ -47,6 +47,18 @@ You are the **orchestrator** for Phase 2-5. You author **no code and no tests** 
      - **Not listed** → **stop and escalate to the human.** The base may be poisoned (built by copy/rebuild, or the local ref was stale); a green here would be meaningless, and the fix is to rebuild the base by *merging* the real tips into `origin/<epic>` — not to proceed. Once the human confirms it's a benign, compensated deviation, that resolution is appended to the registry as a new row, so the *next* preflight recognizes it instead of re-deriving it.
    - (This ancestor scan is the machine check for the epic's **append-only invariant** — see Standing rules: *epic integration*. The registry keeps the check strict while retiring repeat investigations of an already-understood deviation.)
 
+7. **Evidence bootstrap (v0.37.3 F5 — do this before dispatching anything).** Set the run's evidence identity once and flip the status off `frozen-spec` the moment the build starts (the exact live-run defect: `run.status` sat at `frozen-spec` through entire builds). Re-declare `EVD`/`RUN_ID` in each later step's bash block (shell state doesn't persist across steps, same as `PREFIX`):
+   ```bash
+   EVD=".parallax/$SLUG/evidence"
+   RUN_ID="$(python3 -c 'import json;print(json.load(open(".parallax/'"$SLUG"'/evidence/run-evidence.json"))["run"]["run_id"])')"
+   python3 scripts/evidence-event.py update-run "$EVD" --status running --run-id "$RUN_ID" --slug "$SLUG"
+   ```
+   **Canonical event append — reuse this exact one-liner shape at every wiring point below (Steps 2a/2b/2c/4 and the limits/resume sections); it validates before writing and fails closed, never a silent skip:**
+   ```bash
+   python3 scripts/evidence-event.py append "$EVD" --run-id "$RUN_ID" --slug "$SLUG" \
+     --event-type slice_dispatched --actor main --summary "S<n>: <what happened>" --artifact-paths '{}'
+   ```
+
 ## Step 1 — Set up track branches + worktrees (once; **per-slice** under `--parallel` — see *Autonomous & parallel execution*)
 
 ```bash
@@ -147,6 +159,8 @@ Launch both subagents in a single message (or as background tasks). Give each on
 
 Each worker commits its own work to its own branch (`${PREFIX}$SLUG-code` / `${PREFIX}$SLUG-test`). Wait for both done-gates. If either reports a candidate spec-gap, hold and treat it at 2c.
 
+**Evidence (v0.37.3 F5 — inline, right here, not at the end of the run).** Immediately after launching both subagents, append `slice_dispatched` (actor `main`) via the canonical Step 0.7 call. As each done-gate reports back, append `test_writer_red` (actor `test-writer`) and `blind_coder_done` (actor `blind-coder`), carrying `--branch`/`--commit`/`--worktree` when known. These three calls per slice are what keep `events.jsonl` moving instead of stopping dead after `spec_frozen`.
+
 ### 2b. Assemble + dispatch the arbiter
 ```bash
 cd "$ROOT"
@@ -167,7 +181,9 @@ git rm -q -r --ignore-unmatch -- "${SRC_PATHSPECS[@]}" "${TEST_PATHSPECS[@]}"
 git checkout "${PREFIX}$SLUG-code" -- "${SRC_PATHSPECS[@]}"     # real implementation
 git checkout "${PREFIX}$SLUG-test" -- "${TEST_PATHSPECS[@]}"    # real tests
 ```
-The integration tree now **mirrors** the combined state — current `src/` from the code branch + current `tests/` from the test branch, with any file a track branch *deleted* also gone here (that's what the leading `git rm` buys). The test-writer's throwaway stub is untracked, so it is never on the test branch and never pulled. Then:
+The integration tree now **mirrors** the combined state — current `src/` from the code branch + current `tests/` from the test branch, with any file a track branch *deleted* also gone here (that's what the leading `git rm` buys). The test-writer's throwaway stub is untracked, so it is never on the test branch and never pulled.
+
+**Evidence (v0.37.3 F5).** Append `arbiter_iteration_started` (actor `main`, summary naming the slice + iteration number) via the canonical Step 0.7 call immediately before dispatching the arbiter below; when it reports, append `arbiter_iteration_finished`, then the verdict event `arbiter_green` / `arbiter_red` (actor `arbiter`, the exact commands it ran in the summary, log paths in `--artifact-paths`). Every iteration gets its pair — not only the first, not only the verdict. Then:
 
 - → `arbiter` (cwd = the **assembled tree**: sequential `$ROOT` on `${PREFIX}$SLUG`; **parallel `$WT/S<n>/assembly`**, never `$ROOT` — see *Autonomous & parallel execution*): *"Assembled integration tree for slice `S.id` (real src + real tests). Spec: `.parallax/<slug>/spec.md`. Slice manifest: `.parallax/<slug>/slices.md`. Validation contract: `.parallax/<slug>/validation.md` — run the full check + lint + typecheck + build. Report exactly what you observe. Scan the diff for anti-cheat. Before any green, verify every integration seam this slice declares in `slices.md` actually resolves from its named entry point (a compilable smoke-import — not mere presence in `src/`); an unresolved seam is a code-fault. For a **type** seam, also probe its narrowness — a deliberately-bad literal assigned to the exported type must fail to compile; a type that silently widened (e.g. a union collapsed to `string`) is a code-fault. For a frontend seam the manifest marks **user-reachable**, router/import membership is NOT proof (v0.37.3 F2): require an actual interaction test — drive the real entry affordance (click/tab/navigate) and assert the destination content appears; a hidden/disabled entry point is a code-fault, a stale route-membership test standing in for interaction proof is a test-fault, and if the repo has no render/interaction harness, record that limitation explicitly instead of greening past it. On red, classify each failure against the spec and route. Author nothing."*
 
@@ -181,7 +197,7 @@ Maintain a per-slice **iteration counter** (max **3**) and a private **attempt h
 
 > `mode` semantics (`panel`/`sole`) are contract behaviours **executed by the orchestrating model** and validated by integration runs — the unit harness checks that the branches exist and the deterministic git/schema mechanics, not the model's judgment. The GREEN/RED routing below is written for `split`/`panel`; under `sole`, substitute the verifier as judge per above.
 
-- **GREEN** (all checks pass, pristine, no gaming, every declared integration seam resolves from its entry point) → **then the cross-model verifier, if enabled.** Read `.parallax/codex.toml`; if `enabled` and `points` includes `post_green`, dispatch `codex-judge` on this assembled slice *before* committing. **First assert the frozen contract in the assembly worktree is identical to HEAD** (`git -C "$ASSEMBLED" diff --quiet HEAD -- .parallax/$SLUG/{spec.md,slices.md,validation.md,slices.lock}` + no untracked) — so the verifier reads the *committed* frozen spec, not a since-edited uncommitted one; if it differs, escalate (this is the same guard repeated in the disposition block below, so the stamped `contract_hash` represents exactly what was reviewed — v0.27 P0):
+- **GREEN** (all checks pass, pristine, no gaming, every declared integration seam resolves from its entry point) → **then the cross-model verifier, if enabled.** Read `.parallax/codex.toml`; if `enabled` and `points` includes `post_green`, dispatch `codex-judge` on this assembled slice *before* committing. **Evidence (v0.37.3 F5):** append `codex_round_started` (actor `main`) via the canonical Step 0.7 call right before dispatching, and `codex_round_finished` + the verdict event `verifier_pass` / `verifier_concerns` (actor `verifier`; provider + `human-authorized`/`self-continued` authorization in the summary, the ledger path in `--artifact-paths`) as soon as it returns — **before** the mechanical disposition below, so the round is on record even if `triage.py` then blocks or escalates. When the disposition lands green (case `0`, and in parallel mode after the CAS integration), append `slice_green` (actor `main`). **First assert the frozen contract in the assembly worktree is identical to HEAD** (`git -C "$ASSEMBLED" diff --quiet HEAD -- .parallax/$SLUG/{spec.md,slices.md,validation.md,slices.lock}` + no untracked) — so the verifier reads the *committed* frozen spec, not a since-edited uncommitted one; if it differs, escalate (this is the same guard repeated in the disposition block below, so the stamped `contract_hash` represents exactly what was reviewed — v0.27 P0):
   - → `codex-judge` (cwd = the **assembled tree**: sequential `$ROOT`; **parallel `$WT/S<n>/assembly`** — the judge must see the tree actually under review, not the shared root): *"Review slice `S.id`. Spec: `.parallax/<slug>/spec.md` §<sections>. Assembled tree: current `src/` + `tests/` for this slice. Validation output: «<the gates you just ran>». Prior findings to regression-check FIRST: «<the open+fixed findings from `.parallax/<slug>/reviews/S<n>.json`, **with their ids**>». Run the verifier read-only per your skills; emit a **review round** (`assets/codex/review-round.schema.json`): the findings you see now (echo the **id** of any prior finding you are re-reporting) + the prior ones you positively re-verified as `resolved` (cite their **id**, so a fix is matched precisely even when two defects share a file+section). Do not judge, filter, or merge it yourself."*
   - **The verifier round is dispositioned MECHANICALLY — a `pass` does NOT bypass the ledger.** Whatever the verdict (`pass` **or** `concerns`), do **not** commit by hand: fold the round into the per-slice ledger and let `triage.py` decide. A bare `pass` that merely omits a still-open prior finding must not slip through — `triage.py` re-judges the **whole** ledger, so any prior `open`/`regressed` finding the verifier did not positively list under `resolved` is still live and still blocks (verified: routing such a pass through merge+triage yields `escalate`/`block`, never green). Claude never authors the ledger or decides green by hand:
     ```bash
@@ -231,7 +247,7 @@ Maintain a per-slice **iteration counter** (max **3**) and a private **attempt h
        - **`block`** → route each blocker to its fault side with the arbiter's **NL framing** (`code-fault` → coder, `test-fault` → test-writer, `spec-gap`/`safety`/`anti-cheat` → `/parallax:spec` or the human) — never raw verifier text across the blindness wall. After the fix re-greens, **re-review with a fresh verifier**; it regression-checks the ledger first, and `merge-ledger.py` records the new round (+1 `rounds_used`).
        - **`escalate`** → park with the finding. The **one** thing Claude may add to the ledger is a `claude_rebuttal` (`duplicate`/`not-reproducible`/`contradicts-spec`/`out-of-scope`) — and a rebuttal can only **escalate** a blocker to a human, **never** green it; it is never a silent drop.
        - **`green`** (no live blocker: only `low` advisories remain, or every blocker is a codex-verified fix against the current reviewed-tree hash) → committed above (case `0`) as the reviewed tree + ledger receipt; advisories go to the run report (and verbose Telegram), not to a block.
-  - **`limit`** (the verifier returns `limit`, meaning **every** provider in its chain was rate-limited — a single provider's limit is handled by falling back to the next, e.g. Codex → Gemini, *inside* the judge) → neither a fault nor a `concerns`: do **not** commit, escalate, or fabricate a pass. Mark the slice `green-unverified` (arbiter passed, verification still owed) and **pause the run** per *Limits, checkpointing & resume* (the judge already did short retries + fallback before returning `limit`).
+  - **`limit`** (the verifier returns `limit`, meaning **every** provider in its chain was rate-limited — a single provider's limit is handled by falling back to the next, e.g. Codex → Gemini, *inside* the judge) → neither a fault nor a `concerns`: do **not** commit, escalate, or fabricate a pass. Mark the slice `green-unverified` (arbiter passed, verification still owed) and **pause the run** per *Limits, checkpointing & resume* (the judge already did short retries + fallback before returning `limit`). **Evidence (v0.37.3 F5):** append `run_parked` (actor `main`, summary `paused-on-limit: verifier debt owed (green-unverified), service=<svc>, retry_after=<hint>`) via the canonical Step 0.7 call as part of this pause.
   - **Verifier disabled or `codex` absent** → commit as before. Interactive falls back to the Claude-only gate; this is the default and leaves prior behavior unchanged.
 
 #### Review memory, rounds & disposition
@@ -287,6 +303,15 @@ VT=$(bash "$ROOT/scripts/code-tree-hash.sh" HEAD "$FWT")
 # A present-but-unbound updated_at is NOT freshness: freshness means the terminal run-state, terminal
 # evidence, the run_completed event, and the verified code tree all match.
 RE=".parallax/$SLUG/evidence/run-evidence.json"; EV=".parallax/$SLUG/evidence/events.jsonl"
+# v0.37.3 F5 — steps 2+3 of the order above are EXPLICIT helper calls, written INTO $FWT so the
+# terminal status + run_completed event land in the same one commit finalize-gate.py sha256-binds
+# (never appended after the fact). EVD_FWT points at the finalize worktree's evidence dir:
+EVD_FWT="$FWT/.parallax/$SLUG/evidence"    # RUN_ID as Step 0.7
+python3 scripts/evidence-event.py update-run "$EVD_FWT" --status complete \
+  --run-id "$RUN_ID" --slug "$SLUG" --feature-tip "$TIP" --dirty-at-end false
+python3 scripts/evidence-event.py append "$EVD_FWT" --run-id "$RUN_ID" --slug "$SLUG" \
+  --event-type run_completed --actor main \
+  --summary "run complete: all slices integrated and verified" --artifact-paths '{}'
 RE_SHA=$(sha256sum "$FWT/$RE" | cut -d' ' -f1); EV_SHA=$(sha256sum "$FWT/$EV" | cut -d' ' -f1)
 # ... write $FWT/.parallax/$SLUG/run-state.json with status=complete, verified_tree=$VT, completion{ run_evidence_sha256=$RE_SHA, events_jsonl_sha256=$EV_SHA, terminal_event=run_completed } ...
 ( cd "$FWT" && git add -- "$RE" "$EV" ".parallax/$SLUG/run-state.json" \
@@ -329,6 +354,12 @@ fi
 # (e) Advance the epic to the SAME pinned OID — immutable across the gate->push window (no TOCTOU, v0.25 P0#1).
 git fetch origin "<epic>"
 git push origin "$VERIFIED_OID:refs/heads/<epic>"   # rejected if NOT a fast-forward — never --force  (epic should share the PREFIX namespace)
+# Evidence (v0.37.3 F5): the feature entered the epic — record it (and pr_opened/pr_merged when
+# a PR is actually observable, e.g. via gh; absent knowledge stays absent, never invented).
+EVD=".parallax/$SLUG/evidence"   # + RUN_ID as Step 0.7
+python3 scripts/evidence-event.py append "$EVD" --run-id "$RUN_ID" --slug "$SLUG" \
+  --event-type feature_merged --actor main \
+  --summary "feature advanced into the epic at $VERIFIED_OID" --artifact-paths '{}'
 ```
 - If that push is **rejected** (`origin/<epic>` has advanced), do a **real merge**: in a transient checkout of `origin/<epic>`, `git merge "$VERIFIED_OID"` (the pinned tip), **run the full validation suite on the merged tree**, then non-force push and tear the checkout down. Never rebase/squash/rebuild to dodge the merge.
 - **Never push `main`.** The pipeline does not write to `main` under any circumstances — epic → `main` goes only through a PR with CI and external human review, merged as a **merge commit, not a squash** (a squash voids the "epic ⊆ main" ancestor check). The pipeline's green is *necessary, not sufficient* for shipping.
@@ -419,7 +450,7 @@ A resume is a normal headless invocation that happens to find a paused checkpoin
    Renew `expires_at` as you work. **Release with a fence**, so you never clobber a successor that legitimately stole an expired lease — delete only if origin still holds *your* oid: `git push origin --force-with-lease="$LOCKREF:$LOCKOID" ":$LOCKREF"` (locally `git update-ref -d "$LOCKREF" "$LOCKOID"`, which deletes only if it still equals your oid).
 2. Re-fetch `origin/<epic>` and re-run the **provenance** check (a resume must still start from the fresh remote tip — Step 0.6), then rebuild/verify the per-slice worktrees **at their recorded `code_tip`/`test_tip`**.
 3. **Fail fast if still limited:** try one cheap operation; if the limit is still in force, re-checkpoint `paused-on-limit`, **release the lease**, and exit — don't burn quota idling.
-4. Otherwise continue from the checkpoint: skip `integrated` slices; for a `green-unverified` slice run **only** the owed verification against its recorded `verified_diff` (don't rebuild it); resume `in_progress` slices from their `code_tip`/`test_tip`; dispatch `pending` slices as their deps integrate. Idempotent — nothing already done is redone.
+4. Otherwise continue from the checkpoint: skip `integrated` slices; for a `green-unverified` slice run **only** the owed verification against its recorded `verified_diff` (don't rebuild it); resume `in_progress` slices from their `code_tip`/`test_tip`; dispatch `pending` slices as their deps integrate. Idempotent — nothing already done is redone. **Evidence (v0.37.3 F5):** the resuming session appends `session_handoff` (actor `main`, summary: what was inherited — resumed-from status, slices already integrated, what continues) via the canonical Step 0.7 call before dispatching anything, so a run that outlived one session leaves a structured seam instead of an ad-hoc gap.
 5. When the last slice integrates, set `status = complete` and release the lease.
 
 Worst case for any interruption: re-running **one** slice's current iteration (its workers already committed to their own branches) — never the whole run.
@@ -478,7 +509,7 @@ python3 scripts/evidence-event.py append "$EVD" --run-id "$RUN_ID" --slug "$SLUG
 python3 scripts/evidence-event.py update-run "$EVD" --status running --run-id "$RUN_ID" --slug "$SLUG"
 ```
 
-For `/parallax:run` (`command_entry: "run"`), the call points — every one is a real helper invocation at the moment it happens, not a summary written at the end:
+For `/parallax:run` (`command_entry: "run"`), the call points — every one is a real helper invocation at the moment it happens, not a summary written at the end. **The concrete inline call sites live in the steps themselves** (Step 0.7 bootstrap + canonical append shape; Step 2a dispatch/done-gates; Step 2b arbiter iterations; Step 2c verifier rounds, slice green and the limit pause; Step 4 terminal bundle + feature_merged; *Limits/Resume* session_handoff) — this list is the map, not the only mention:
 - at **preflight**: initialize or load `run-evidence.json`, record `repo` (root / branch / base_tip / dirty_at_start), then `update-run --status running` — the build phase must never sit at `frozen-spec` (the exact live-run defect this fixes).
 - per **slice dispatch** (every wave): append `slice_dispatched`.
 - on the **test-writer** RED done-gate: append `test_writer_red`; on the **blind-coder** done-gate: append `blind_coder_done` (include `--agent-type` / `--branch` / `--commit` / `--worktree` when known).

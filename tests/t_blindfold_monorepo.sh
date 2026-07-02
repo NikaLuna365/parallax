@@ -125,8 +125,10 @@ OUT=$(python3 "$G" --worktree "$T/bindir" --side test --slug demo --compiled-glo
 [ "$RC" -eq 2 ] || fail "6b: --compiled-glob 'bin/**' did not reject bin/tool (rc=$RC): $OUT"
 echo "$OUT" | grep -qF 'compiled-build-output-visible-to-test-writer' || fail "6b: wrong reason for bin/ rejection: $OUT"
 
-# --- 7) a whole-tree dependency glob is schema-rejected ('**' and '**/*' alike)
-for BAD in '**' '**/*'; do
+# --- 7) every whole-tree-EQUIVALENT dependency glob is schema-rejected (first path segment
+#        must be fully literal): '**', '**/*', '*', '*.*', '?*', '[a-z]*', './**', '/**',
+#        a wildcarded first segment 'p*/src/**', and a dot-leading '.hidden/**'.
+for BAD in '**' '**/*' '*' '*.*' '?*' '[a-z]*' './**' '/**' 'p*/src/**' '.hidden/**'; do
   BADSCOPE="$T/bad.json"
   python3 - "$SCOPE" "$BADSCOPE" "$BAD" <<'PY'
 import json, sys
@@ -135,8 +137,20 @@ d["dependency_allow_globs"] = [sys.argv[3]]
 json.dump(d, open(sys.argv[2], "w"))
 PY
   python3 "$G" --worktree "$T/mono" --side test --slug demo --scope-manifest "$BADSCOPE" >/dev/null; RC=$?
-  [ "$RC" -eq 3 ] || fail "7: whole-tree dependency glob '$BAD' was NOT rejected (rc=$RC)"
+  [ "$RC" -eq 3 ] || fail "7: whole-tree-equivalent dependency glob '$BAD' was NOT rejected (rc=$RC)"
 done
+# …while a REAL package-root shape with a literal first segment still validates and works
+# (drop the case-2 protected leak first — this is the CLEAN-tree positive):
+git -C "$T/mono" rm -q packages/app/src/new-screen.tsx; ci "$T/mono"
+OKSCOPE="$T/ok.json"
+python3 - "$SCOPE" "$OKSCOPE" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["dependency_allow_globs"] = ["packages/*/src/**", "packages/*/dist/**"]
+json.dump(d, open(sys.argv[2], "w"))
+PY
+python3 "$G" --worktree "$T/mono" --side test --slug demo --scope-manifest "$OKSCOPE" >/dev/null; RC=$?
+[ "$RC" -eq 0 ] || fail "7b: literal-first-segment glob 'packages/*/…' wrongly rejected (rc=$RC)"
 
 # --- 8) slug mismatch and unreadable manifest are bad input (exit 3), never silent strict fallback
 python3 "$G" --worktree "$T/mono" --side test --slug OTHER --scope-manifest "$SCOPE" >/dev/null; RC=$?
