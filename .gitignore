@@ -10,9 +10,12 @@ __pycache__/
 # secrets — NEVER commit (see SECURITY.md). The plugin references env-var NAMES only.
 .env
 .env.*
+*.env
 .envrc
 *.token
 *_secret*
 *.secret
 *.pem
 .parallax/**/secret*
+.parallax/**/*.env
+.parallax/zai.env

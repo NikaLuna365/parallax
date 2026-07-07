@@ -4,7 +4,7 @@
 
 A spec-driven, blind-coder TDD pipeline (Claude Code plugin). *Code and tests look at one specification from independent vantage points; their divergence reveals the hidden defect — like parallax: two lines of sight on one object expose its true depth.*
 
-A maximally-concrete, **read-only spec** drives two **independent** tracks — a test-writer and a blind coder that never sees the tests — and a single whole-seeing **arbiter** loops with failure analysis until green, then integrates and pushes. An optional, structurally-independent **cross-model verifier** (Codex, with a Gemini fallback) reviews the spec before the blind tracks and each green slice after.
+A maximally-concrete, **read-only spec** drives two **independent** tracks — a test-writer and a blind coder that never sees the tests — and a single whole-seeing **arbiter** loops with failure analysis until green, then integrates and pushes. An optional, structurally-independent **cross-model verifier** (Codex, with a z.ai GLM or Gemini fallback) reviews the spec before the blind tracks and each green slice after.
 
 ---
 
@@ -16,7 +16,7 @@ A maximally-concrete, **read-only spec** drives two **independent** tracks — a
 | **Claude Code** (with plugins) | runs the command/agent/skill contracts |
 | **Git** + a real repo with a clean tree | the whole pipeline lives on branches |
 | **Python 3.11+** and `pip install jsonschema` | the deterministic `scripts/` + the disposition gate (fails closed without `jsonschema`) |
-| *optional* **Codex** and/or **Gemini** CLI | the cross-model verifier (opt-in; without it you get Claude-only gates) |
+| *optional* **Codex** / **Gemini** CLI, or a **z.ai (GLM)** API key | the cross-model verifier (opt-in; without it you get Claude-only gates) — z.ai needs no CLI, just `ZAI_API_KEY` in the env |
 | *optional* Telegram bot | progress notifications for autonomous runs |
 
 ### 1. Install
@@ -164,10 +164,13 @@ provider = "codex"
 form     = "cli"
 model    = "gpt-5.5"                           # confirm against your installed `codex`
 
-[fallback]
-provider = "gemini"
-form     = "cli"
-model    = "gemini-3-pro"                      # confirm the id your `gemini` exposes
+[fallback]                                    # codex → z.ai GLM (HTTP API — no CLI needed)
+provider = "zai"
+form     = "api"
+model    = "glm-5.2"
+base_url = "https://api.z.ai/api/paas/v4/chat/completions"
+key_env  = "ZAI_API_KEY"                       # env-var NAME; put the key in untracked .parallax/zai.env and `source` it
+# (Gemini instead: provider="gemini" form="cli" model="gemini-3-pro")
 
 [review]
 pre_freeze_max_rounds = 2                     # spec-adversary rounds, then a human checkpoint

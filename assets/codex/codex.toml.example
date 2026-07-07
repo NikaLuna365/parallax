@@ -47,18 +47,32 @@ branch_prefix = "feature/"
 # must return a verdict matching assets/codex/verdict.schema.json.
 
 [primary]
-provider = "codex"     # model family: codex | gemini
+provider = "codex"     # model family: codex | gemini | zai
 form     = "cli"       # cli | api
 model    = "gpt-5.5"   # confirm vs your installed `codex` (/model). Not a *-mini — the judge wants the strongest reasoning.
 # codex CLI enforces the schema natively (codex exec --output-schema).
 
+# === Fallback: z.ai (GLM) — an OpenAI-compatible HTTP API (v0.37.4) ===
+# When codex is unavailable or rate-limited, the judge falls back to GLM here. No CLI
+# needed — it's plain HTTP, so it works anywhere curl does (incl. cloud routines).
 [fallback]
-provider = "gemini"
-form     = "cli"
-model    = "gemini-3-pro"   # EXAMPLE — confirm the id your `gemini` exposes; don't hardcode a version.
-# Gemini CLI has NO custom output-schema: the judge embeds verdict.schema.json IN THE
-# PROMPT and validates the returned JSON itself. For the API form instead: set
-# form="api" and add  key_env = "GEMINI_API_KEY"  (secret via env var, never in this file).
+provider = "zai"        # model family: codex | gemini | zai
+form     = "api"        # z.ai is HTTP-only (no CLI)
+model    = "glm-5.2"    # confirmed live 2026-07-07 against api.z.ai; a REASONING model — budget generous max_tokens
+base_url = "https://api.z.ai/api/paas/v4/chat/completions"   # OpenAI-compatible chat/completions
+key_env  = "ZAI_API_KEY"   # NAME of the env var holding the key. The secret itself is NEVER in this committed file.
+# Put the real key in an UNTRACKED, gitignored file and source it before the run, e.g.:
+#     .parallax/zai.env   ->   export ZAI_API_KEY="…"        (already gitignored by the plugin)
+#     $ source .parallax/zai.env    # before /parallax:run or the autonomous routine
+# API form (see skills/role-codex-judge): the judge curls base_url with
+#   Authorization: Bearer $ZAI_API_KEY  and  response_format={"type":"json_object"}
+# (or a json_schema via scripts/strip-openai-schema.py), then validates the returned JSON
+# against the FULL schema itself — exactly like the gemini-api path. GLM's chain-of-thought
+# lands in message.reasoning_content; the verdict JSON is message.content.
+#
+# Alternative fallback — Gemini CLI:  provider="gemini" form="cli" model="gemini-3-pro"
+#   (embed verdict.schema.json in the prompt; validate the returned JSON yourself).
+#   For the Gemini API instead: form="api" key_env="GEMINI_API_KEY".
 
 
 # Resume/retry policy for limit-pauses (applies to BOTH Claude and Codex limits).

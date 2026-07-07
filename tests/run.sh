@@ -19,7 +19,13 @@ python3 - <<'PY' && ok "config: root scalars at root; tables hold only their key
 import tomllib
 d=tomllib.load(open('assets/codex/codex.toml.example','rb'))
 for k in ('enabled','points','mode','on_missing','timeout_s'): assert k in d, f"root key '{k}' swallowed by a [table]"
-assert set(d['primary'])<= {'provider','form','model'} and set(d['fallback'])<= {'provider','form','model'}
+_pkeys={'provider','form','model','base_url','key_env'}  # api providers (v0.37.4 zai) add base_url + key_env
+assert set(d['primary'])<= _pkeys and set(d['fallback'])<= _pkeys
+# an api-form provider MUST name its key via key_env (a NAME) and MUST NOT inline a secret
+for _t in ('primary','fallback'):
+    if d[_t].get('form')=='api':
+        assert 'key_env' in d[_t] and 'base_url' in d[_t], f"{_t} api form needs base_url + key_env"
+        assert 'key' not in d[_t] and 'api_key' not in d[_t], f"{_t} inlines a secret — forbidden"
 assert d['git']['branch_prefix']=="feature/" and d['notify']['enabled'] is False
 r=d['review']; assert r['pre_freeze_max_rounds']==2 and r['max_rounds']==2 and r['resume_codex_session'] is False and r['recheck_fixed'] is True
 assert r['block_severities']==["medium","high"] and r['advisory_severities']==["low"]
@@ -785,6 +791,28 @@ grep -qF 'strip-openai-schema.py' skills/role-codex-judge/SKILL.md \
   && ok "provider error classification: timeout with empty stdout/stderr is a hang, never reported as a rate limit" \
   || no "timeout-vs-limit classification missing (F6)"
 
+echo "[zai_provider]  (v0.37.4 — z.ai/GLM OpenAI-compatible API fallback; the secret lives in env, never committed)"
+{ grep -qF 'provider = "zai"' assets/codex/codex.toml.example \
+  && grep -qF 'form     = "api"' assets/codex/codex.toml.example \
+  && grep -qF 'base_url' assets/codex/codex.toml.example \
+  && grep -qF 'key_env  = "ZAI_API_KEY"' assets/codex/codex.toml.example; } \
+  && ok "codex.toml.example documents the codex→z.ai fallback (provider=zai, form=api, base_url, key_env=ZAI_API_KEY — a NAME, not a secret)" \
+  || no "codex.toml.example missing the z.ai api fallback (v0.37.4)"
+{ grep -qiF 'Authorization: Bearer' skills/role-codex-judge/SKILL.md \
+  && grep -qF 'key_env' skills/role-codex-judge/SKILL.md \
+  && grep -qF 'reasoning_content' skills/role-codex-judge/SKILL.md \
+  && grep -qF 'response_format' skills/role-codex-judge/SKILL.md; } \
+  && ok "role-codex-judge documents the z.ai api call (Bearer \$key_env, response_format json, reasoning-model max_tokens caveat, validate full schema)" \
+  || no "role-codex-judge missing the z.ai api invocation contract (v0.37.4)"
+grep -qF 'codex` / `gemini` / `zai' skills/role-codex-judge/SKILL.md \
+  && ok "provider chain stays directive and now enumerates zai (codex | gemini | zai)" \
+  || no "provider enum did not gain zai (v0.37.4)"
+if grep -rEnI --exclude-dir=.git '[0-9a-f]{32}\.[A-Za-z0-9]{16}' . >/tmp/parallax_zai_leak 2>/dev/null; then
+  no "SECRET LEAK: a literal z.ai-style key (32hex.16) is committed in the tree — it MUST live only in an untracked .parallax/zai.env"; sed 's/^/      /' /tmp/parallax_zai_leak
+else
+  ok "secret-leak guard: no literal z.ai-style key committed anywhere in the tree (env / untracked .parallax/zai.env only)"
+fi
+
 echo "[finalize_freshness]  (v0.37 P0.2 + v0.37.1 — EXECUTES finalize-gate.py: terminal completion receipt bound to committed evidence)"
 bash tests/t_finalize_gate.sh >/tmp/parallax_fg 2>&1; fgrc=$?
 if [ "$fgrc" = 2 ]; then echo "  · jsonschema not installed — finalize-gate execution test skipped";
@@ -819,8 +847,11 @@ echo "[cloud_setup]  (real install attempts, not commented-out — locks #6)"
 grep -qE '^\s*command -v codex .*\|\| npm i -g' scripts/cloud-setup.sh && ok "cloud-setup.sh actually ATTEMPTS the CLI installs (uncommented)" || no "cloud-setup.sh installs are still commented out"
 grep -qiE 'best-effort|adjust the package names' README.md && ok "README is honest about best-effort installs" || no "README overclaims that setup installs"
 
-echo "[release_coherence]  (v0.37.3 — manifest/changelog/docs agree on the release; v0.31-v0.37.2 kept)"
-{ grep -q '"version": "0.37.3"' .claude-plugin/plugin.json \
+echo "[release_coherence]  (v0.37.4 — manifest/changelog/docs agree on the release; v0.31-v0.37.3 kept)"
+{ grep -q '"version": "0.37.4"' .claude-plugin/plugin.json \
+  && grep -q '^## 0.37.4' CHANGELOG.md \
+  && grep -qiF 'z.ai' README.md \
+  && grep -qF 'ZAI_API_KEY' assets/codex/codex.toml.example \
   && grep -q '^## 0.37.3' CHANGELOG.md \
   && grep -q '^## 0.37.2' CHANGELOG.md \
   && grep -q '^## 0.37.1' CHANGELOG.md \
@@ -841,8 +872,8 @@ echo "[release_coherence]  (v0.37.3 — manifest/changelog/docs agree on the rel
   && [ -f scripts/feature-sweep.py ] && [ -f scripts/contract-amend.py ] \
   && [ -f scripts/evidence-event.py ] && [ -f scripts/strip-openai-schema.py ] \
   && [ -f assets/blindfold-scope.schema.json ]; } \
-  && ok "version 0.37.3 in plugin.json; CHANGELOG has 0.37.3 (0.37.2/0.37.1/0.37.0/0.36.1/0.31.0 kept); README covers live-run reliability hardening (monorepo blindfold, closure, path-stable ledger, run-phase events, UI reachability) + prior boundaries; audit-findings reference + new scripts/schema present" \
-  || no "release coherence: version/changelog/docs not aligned for 0.37.3"
+  && ok "version 0.37.4 in plugin.json; CHANGELOG has 0.37.4 (0.37.3/0.37.2/0.37.1/0.37.0/0.36.1/0.31.0 kept); README+config cover the z.ai/GLM verifier fallback; README covers live-run reliability hardening + prior boundaries; audit-findings reference + new scripts/schema present" \
+  || no "release coherence: version/changelog/docs not aligned for 0.37.4"
 
 echo ""
 echo "== $PASS passed, $FAIL failed =="
