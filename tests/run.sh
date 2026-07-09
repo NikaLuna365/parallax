@@ -900,6 +900,58 @@ assert good.returncode==0, good.stdout
 assert json.load(open(D+"/evidence/run-evidence.json"))["provenance"]["transcript_path"].endswith(".jsonl")
 PY
 
+echo "[subagent_manifest]  (v0.38 §5.1, gate M1 — EXECUTES subagent-manifest.py: the dispatched-track record adopt reconstructs from)"
+bash tests/t_subagent_manifest.sh >/tmp/parallax_sm 2>&1; smrc=$?
+if [ "$smrc" = 2 ] && grep -q SKIP /tmp/parallax_sm; then echo "  · jsonschema not installed — subagent-manifest execution test skipped (the helper itself fails closed)";
+elif [ "$smrc" = 0 ]; then ok "manifest: record writes a schema-valid entry + updates (slice,role) in place (no dup); a mismatched run_id is refused; reconcile marks a missing branch STALE (never trusted), reaps an ahead-of-wave_base background track (reported_commit read from git), and surfaces a tip-conflict"; else no "subagent manifest (M1)"; sed 's/^/      /' /tmp/parallax_sm; fi
+{ grep -qF 'subagent-manifest.py' commands/run.md && grep -qF 'subagents.json' commands/run.md; } && ok "run.md Step 2a records each dispatched track in subagents.json (committed to feature/<slug>)" || no "run.md F8 manifest wiring missing (M1)"
+python3 - <<'PY' && ok "subagents.schema.json: schema_version const, entry role/mode/status enums, required dispatch fields, hex wave_base" || no "subagents schema shape wrong (M1)"
+import json, jsonschema
+s=json.load(open('assets/subagents.schema.json'))
+assert s['properties']['schema_version']=={'const':'parallax-subagents-v1'}
+it=s['properties']['entries']['items']
+assert set(it['required'])>={'slice','role','branch','wave_base','dispatched_at','session_id','mode','status'}
+assert set(it['properties']['role']['enum'])=={'test-writer','blind-coder','arbiter','codex-judge'}
+assert set(it['properties']['mode']['enum'])=={'foreground','background'}
+assert set(it['properties']['status']['enum'])=={'dispatched','reported','reaped','stale'}
+assert it['additionalProperties'] is False and s['additionalProperties'] is False
+# a valid manifest accepts; a bad role / missing field rejects
+ok_doc={'schema_version':'parallax-subagents-v1','run_id':'r','slug':'d','entries':[
+  {'slice':'S1','role':'blind-coder','branch':'feature/d-S1-code','wave_base':'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0','dispatched_at':'t','session_id':'s','mode':'background','status':'dispatched'}]}
+jsonschema.validate(ok_doc,s)
+bad=json.loads(json.dumps(ok_doc)); bad['entries'][0]['role']='orchestrator'
+try: jsonschema.validate(bad,s); raise SystemExit('accepted bad role')
+except jsonschema.ValidationError: pass
+PY
+
+echo "[adopt_reconcile]  (v0.38 §5.2, gates A1-A5 + lease/conflict — EXECUTES adopt-reconcile.py: reconstruct an unclean interruption git-first, fail closed)"
+bash tests/t_adopt.sh >/tmp/parallax_ad 2>&1; adrc=$?
+if [ "$adrc" = 2 ] && grep -q SKIP /tmp/parallax_ad; then echo "  · jsonschema not installed — adopt execution test skipped (adopt-reconcile fails closed)";
+elif [ "$adrc" = 0 ]; then ok "adopt: A1 stale tip reconciled to git (git wins, not the checkpoint); A2 integrated skipped (no rework); A3 both-tracks-ahead reaped+assembled not re-dispatched; A4 only the missing track re-dispatched blind (present kept); A5 neither-track escalates+stops; a LIVE lease is refused, an EXPIRED one stealable; a tip-conflict escalates; A-P1 both bg tracks reaped w/o false green; A-P3 partial-assembly classified; run_id stable"; else no "adopt reconcile (A1-A5)"; sed 's/^/      /' /tmp/parallax_ad; fi
+{ grep -qF 'adopt-reconcile.py' commands/run.md && grep -qF -- '--adopt' commands/run.md && grep -qF 'git is the truth' scripts/resume-reconcile.py; } && ok "run.md has an Adopt subsection wiring adopt-reconcile.py (consuming F7 resume-reconcile, not re-implementing it)" || no "run.md --adopt wiring missing (A1-A5)"
+grep -qF -- '--adopt' commands/auto.md && ok "auto.md exposes headless --adopt" || no "auto.md --adopt missing"
+python3 - <<'PY' && ok "run-state.schema.json: additive subagents path + optional adopted_from provenance (never required, never a receipt substitute)" || no "run-state adopt fields wrong (A1-A5)"
+import json, jsonschema
+s=json.load(open('assets/run-state.schema.json'))
+assert 'subagents' in s['properties'] and s['properties']['subagents']['type']=='string'
+af=s['properties']['adopted_from']; assert 'object' in af['type'] and 'null' in af['type']
+assert set(af['required'])=={'adopted_at','by_session'} and af['additionalProperties'] is False
+# additive: a v0.37.5 checkpoint WITHOUT these still validates
+H='a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0'
+base={'run_id':'r','slug':'d','epic':'e','base_tip':H,'status':'paused-on-limit','paused':{'service':'codex','at':'t'},'slices':[],'updated_at':'t'}
+jsonschema.validate(base,s)
+PY
+
+echo "[render_handoff]  (v0.38 §5.3, gate H1 — EXECUTES render-handoff.py: the machine handoff that replaces the hand-written RUN-HANDOFF.md)"
+bash tests/t_render_handoff.sh >/tmp/parallax_rh 2>&1; rhrc=$?
+if [ "$rhrc" = 0 ]; then ok "handoff.md names every in-flight track's branch+commit, carries the exact '/parallax:run --adopt <slug>' command, surfaces integrated + owed verifications, contains NO operator free-text field, and is deterministic (same inputs -> same bytes)"; else no "render handoff (H1)"; sed 's/^/      /' /tmp/parallax_rh; fi
+{ grep -qF 'render-handoff.py' commands/run.md && grep -qF 'handoff.md' commands/run.md; } && ok "run.md renders handoff.md on the session-boundary + adopt paths (machine-generated, not authored)" || no "run.md handoff wiring missing (H1)"
+
+echo "[adopt_evidence_required]  (v0.38 §5.4, gate E1 — EXECUTES evidence-event.py audit-slice: adopt-critical evidence is mandatory even hand-driven)"
+bash tests/t_evidence_required.sh >/tmp/parallax_er 2>&1; errc=$?
+if [ "$errc" = 0 ]; then ok "audit-slice: a slice with slice_dispatched + arbiter_green passes; a hand-driven slice with no such evidence is FLAGGED (not silently accepted); a dispatched-but-unarbitered slice is flagged; --no-require-arbiter relaxes correctly; slice ids match as whole tokens"; else no "adopt evidence required (E1)"; sed 's/^/      /' /tmp/parallax_er; fi
+grep -qF 'audit-slice' commands/run.md && ok "run.md marks adopt-critical evidence mandatory (slice_dispatched/session_handoff/manifest/receipts) or fail closed" || no "run.md adopt-critical-evidence directive missing (E1)"
+
 echo "[finalize_freshness]  (v0.37 P0.2 + v0.37.1 — EXECUTES finalize-gate.py: terminal completion receipt bound to committed evidence)"
 bash tests/t_finalize_gate.sh >/tmp/parallax_fg 2>&1; fgrc=$?
 if [ "$fgrc" = 2 ]; then echo "  · jsonschema not installed — finalize-gate execution test skipped";
@@ -934,8 +986,13 @@ echo "[cloud_setup]  (real install attempts, not commented-out — locks #6)"
 grep -qE '^\s*command -v codex .*\|\| npm i -g' scripts/cloud-setup.sh && ok "cloud-setup.sh actually ATTEMPTS the CLI installs (uncommented)" || no "cloud-setup.sh installs are still commented out"
 grep -qiE 'best-effort|adjust the package names' README.md && ok "README is honest about best-effort installs" || no "README overclaims that setup installs"
 
-echo "[release_coherence]  (v0.37.5 — manifest/changelog/docs agree on the release; v0.31-v0.37.4 kept)"
-{ grep -q '"version": "0.37.5"' .claude-plugin/plugin.json \
+echo "[release_coherence]  (v0.38.0 — manifest/changelog/docs agree on the release; v0.31-v0.37.5 kept)"
+{ grep -q '"version": "0.38.0"' .claude-plugin/plugin.json \
+  && grep -q '^## 0.38.0' CHANGELOG.md \
+  && grep -qiF 'adopt' README.md \
+  && grep -qiF 'multi-session' README.md \
+  && [ -f scripts/adopt-reconcile.py ] && [ -f scripts/subagent-manifest.py ] && [ -f scripts/render-handoff.py ] \
+  && [ -f assets/subagents.schema.json ] \
   && grep -q '^## 0.37.5' CHANGELOG.md \
   && grep -qiF 'self-attestation' README.md \
   && grep -qiF 'pinned' README.md \
@@ -965,8 +1022,8 @@ echo "[release_coherence]  (v0.37.5 — manifest/changelog/docs agree on the rel
   && [ -f scripts/feature-sweep.py ] && [ -f scripts/contract-amend.py ] \
   && [ -f scripts/evidence-event.py ] && [ -f scripts/strip-openai-schema.py ] \
   && [ -f assets/blindfold-scope.schema.json ]; } \
-  && ok "version 0.37.5 in plugin.json; CHANGELOG has 0.37.5 (0.37.4/0.37.3/0.37.2/0.37.1/0.37.0/0.36.1/0.31.0 kept); README covers governance self-attestation hardening (mode binding, pinned budget, receipts) + z.ai fallback + prior boundaries; new v0.37.5 scripts/schemas present" \
-  || no "release coherence: version/changelog/docs not aligned for 0.37.5"
+  && ok "version 0.38.0 in plugin.json; CHANGELOG has 0.38.0 (0.37.5/0.37.4/0.37.3/0.37.2/0.37.1/0.37.0/0.36.1/0.31.0 kept); README covers adopt & multi-session continuity + governance self-attestation + z.ai + prior boundaries; new v0.38 scripts (adopt-reconcile/subagent-manifest/render-handoff) + subagents schema present" \
+  || no "release coherence: version/changelog/docs not aligned for 0.38.0"
 
 echo ""
 echo "== $PASS passed, $FAIL failed =="

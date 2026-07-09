@@ -1,7 +1,7 @@
 ---
 name: run
 description: "Phase 2-5 of the Parallax pipeline. From a frozen .parallax/ spec, build each slice with a blind test-writer + blind coder in parallel, validate-and-loop through the arbiter until green, then push the feature branch. Run /parallax:spec first."
-argument-hint: "[feature-slug]   [--autonomous]  [--parallel]   [--resume]"
+argument-hint: "[feature-slug]   [--autonomous]  [--parallel]   [--resume]   [--adopt]"
 ---
 
 # /parallax:run — build the frozen spec, blind + arbitrated, then push
@@ -18,7 +18,7 @@ You are the **orchestrator** for Phase 2-5. You author **no code and no tests** 
 
 ## Step 0 — Preflight
 
-1. Resolve the slug: use `$ARGUMENTS` if given, else the current `feature/<slug>` branch. **If `--resume` is passed (or a `.parallax/<slug>/run-state.json` with status `paused-on-limit` exists), this is a RESUME:** load that checkpoint and continue from it per *Limits, checkpointing & resume* — skip the fresh dispatch for already-`integrated` slices. Otherwise start fresh and create the checkpoint.
+1. Resolve the slug: use `$ARGUMENTS` if given, else the current `feature/<slug>` branch. **If `--resume` is passed (or a `.parallax/<slug>/run-state.json` with status `paused-on-limit` exists), this is a RESUME:** load that checkpoint and continue from it per *Limits, checkpointing & resume* — skip the fresh dispatch for already-`integrated` slices. **If `--adopt` is passed, this is an ADOPT (v0.38):** the run was interrupted *uncleanly* (`status=running`, the session died, in-flight background tracks) — do **not** trust the checkpoint's `status`; go straight to *Adopt (`--adopt <slug>`)* below, which reconstructs the truth git-first before any dispatch. Otherwise start fresh and create the checkpoint.
 2. Read `PREFIX` from `.parallax/codex.toml` `[git] branch_prefix` (default `feature/`). `git switch ${PREFIX}<slug>`. Confirm `.parallax/<slug>/spec.md`, `.parallax/<slug>/slices.md`, `.parallax/<slug>/validation.md` exist (per-feature subdirectory, not the `.parallax/` root). If not → tell the user to run `/parallax:spec` first and stop.
 3. Confirm a clean working tree and that this is a local repo (`git rev-parse --show-toplevel`). Read the three artifacts. From `.parallax/<slug>/validation.md` extract: `SRC_GLOBS`, `TEST_GLOBS`, and the commands (fast, full, lint, typecheck, build) + external setup. From `.parallax/<slug>/slices.md` extract the ordered slice list with each slice's domain and dependencies.
 4. Order the slices by dependency (topological). You will process them **one at a time**; within a slice the two tracks run **in parallel**.
@@ -51,6 +51,12 @@ You are the **orchestrator** for Phase 2-5. You author **no code and no tests** 
    ```bash
    EVD=".parallax/$SLUG/evidence"
    RUN_ID="$(python3 -c 'import json;print(json.load(open(".parallax/'"$SLUG"'/evidence/run-evidence.json"))["run"]["run_id"])')"
+   # v0.38 F8 — the dispatched-subagent manifest + this session's id. SESSION_ID need only be
+   # UNIQUE PER SESSION (adopt uses it to know a background track dispatched in a DEAD session
+   # cannot have notified this one — see 'Adopt'); prefer a real session token when the
+   # environment exports one, else a per-session fallback. Re-declare in later steps (no carry).
+   SUBAGENTS=".parallax/$SLUG/subagents.json"
+   SESSION_ID="${PARALLAX_SESSION_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
    python3 scripts/evidence-event.py update-run "$EVD" --status running --run-id "$RUN_ID" --slug "$SLUG"
    ```
    **Canonical event append — reuse this exact one-liner shape at every wiring point below (Steps 2a/2b/2c/4 and the limits/resume sections); it validates before writing and fails closed, never a silent skip:**
@@ -160,6 +166,18 @@ Launch both subagents in a single message (or as background tasks). Give each on
 Each worker commits its own work to its own branch (`${PREFIX}$SLUG-code` / `${PREFIX}$SLUG-test`). Wait for both done-gates. If either reports a candidate spec-gap, hold and treat it at 2c.
 
 **Evidence (v0.37.3 F5 — inline, right here, not at the end of the run).** Immediately after launching both subagents, append `slice_dispatched` (actor `main`) via the canonical Step 0.7 call. As each done-gate reports back, append `test_writer_red` (actor `test-writer`) and `blind_coder_done` (actor `blind-coder`), carrying `--branch`/`--commit`/`--worktree` when known. These three calls per slice are what keep `events.jsonl` moving instead of stopping dead after `spec_frozen`.
+
+**Dispatched-subagent manifest (v0.38 F8 — the record `adopt` reconstructs from; write it AT dispatch, in the SAME step as `slice_dispatched`, not at the end).** The `slice_dispatched` event alone does not name the branch a background track lands on, the tip it forked from, or the session that launched it — so a run that dies mid-build leaves `adopt` blind to its in-flight tracks. Immediately after launching each track, record it in `.parallax/<slug>/subagents.json` via `scripts/subagent-manifest.py` (schema-validated, fail-closed, one entry per `(slice, role)` updated in place). Use `--mode background` when the track is a background agent (the default under `--parallel`/`--autonomous`, whose completion notification will NOT cross a session boundary — the exact RUN2 gap) and `--mode foreground` when it is awaited in-session:
+```bash
+for ROLE_BR in "test-writer:${PREFIX}$SLUG-test" "blind-coder:${PREFIX}$SLUG-code"; do   # parallel: ${PREFIX}$SLUG-$SID-{test,code}
+  ROLE="${ROLE_BR%%:*}"; BR="${ROLE_BR#*:}"
+  python3 scripts/subagent-manifest.py record "$SUBAGENTS" --run-id "$RUN_ID" --slug "$SLUG" \
+    --slice "$SID" --role "$ROLE" --branch "$BR" --wave-base "$BASE_OID" --session-id "$SESSION_ID" \
+    --mode background   # foreground in plain sequential/interactive
+done
+git add "$SUBAGENTS" && git commit -q -m "$SLUG $SID: record dispatched subagents (F8)"   # committed to feature/<slug> so it survives a session boundary / cloud clone
+```
+As each done-gate reports, update its entry: `subagent-manifest.py record … --status reported --reported-commit <tip>` (same one-liner, in-place update), and re-commit — so the manifest tracks the current in-flight state, and a background track that reported in-session is not later mistaken for one that never notified. The manifest is committed alongside the checkpoint on the same branch (same rule as the review ledgers), so `adopt` in a fresh session reads exactly what was dispatched here.
 
 ### 2b. Assemble + dispatch the arbiter
 ```bash
@@ -483,6 +501,48 @@ A resume is a normal headless invocation that happens to find a paused checkpoin
 5. When the last slice integrates, set `status = complete` and release the lease.
 
 Worst case for any interruption: re-running **one** slice's current iteration (its workers already committed to their own branches) — never the whole run.
+
+### Adopt (`--adopt <slug>`) — recover an UNCLEANLY-interrupted run (v0.38)
+`--resume` keys on a **clean** `paused-on-limit` checkpoint. `--adopt` closes the other case: a run that **died mid-build** in one session — `status=running`, never reached a clean pause — with one or more blind tracks left as **in-flight background branches** the checkpoint doesn't fully reflect (the RUN2 story: the completion notifications never crossed the session boundary, so the operator hand-wrote `RUN-HANDOFF.md` and did manual git archaeology). Adopt reconstructs the truth from **git + the dispatched-subagent manifest (`subagents.json`, F8) + the (v0.37.5-reconciled) checkpoint**, reaps the in-flight tracks, and continues — **failing closed on anything it cannot resolve**. It builds on `--resume` (it does not replace it) and it **never** trusts a stale checkpoint over git.
+
+1. **Take the lease safely — refuse a live one, steal only an expired one.** Reuse the existing `run-state.lock` mechanism (the unique-lock-commit ref from *Resume*). `adopt-reconcile.py` (step 2) makes the decision mechanically from `run-state.lock.expires_at`: a **live** lease (unexpired) ⇒ **refuse — another session may still be active** (exit 2, `refuse-live-lease`); an **expired** lease ⇒ steal it under a fenced lease pinned to the oid you observed, exactly as *Resume* step 1 (`--force-with-lease="$LOCKREF:$OLD"`). Adopt continues the **same** `run_id` (stable across the adopt), so the new lease's `holder` stays the `run_id`.
+2. **Reconstruct ground truth, git-first (this consumes v0.37.5 F7 — do not re-implement it).** Run the reconciler; it composes `resume-reconcile.py` (tips: git wins over the checkpoint) + `subagent-manifest.py reconcile` (reap ahead-of-`wave_base` background tracks; `stale` a vanished branch; flag a tip-conflict), then classifies every slice:
+   ```bash
+   ROOT=$(git rev-parse --show-toplevel); SLUG="<slug>"
+   PREFIX="$(awk -F'"' '/^\[git\]/{g=1} g&&/^branch_prefix/{print $2; exit}' .parallax/codex.toml 2>/dev/null)"; PREFIX="${PREFIX:-feature/}"
+   EVD=".parallax/$SLUG/evidence"; RUN_ID="$(python3 -c 'import json;print(json.load(open(".parallax/'"$SLUG"'/evidence/run-evidence.json"))["run"]["run_id"])')"
+   SESSION_ID="${PARALLAX_SESSION_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
+   python3 scripts/adopt-reconcile.py --repo "$ROOT" --slug "$SLUG" --prefix "$PREFIX" \
+     --session-id "$SESSION_ID" --write-back > .parallax/$SLUG/adopt-report.json; RC=$?
+   case $RC in
+     0) : ;;   # adoptable — proceed to steps 3-6
+     2) echo "STOP: adopt fails closed (live lease held by another session, OR irreconcilable/absent evidence) — see .parallax/$SLUG/escalations.md; NOTHING dispatched"; exit 0 ;;
+     3) echo "STOP: bad input (unreadable run-state / not a git repo / jsonschema missing)"; exit 2 ;;
+   esac
+   ```
+   The report (`adopt-report.json`) records, per slice, the class + action: `integrated` → **skip** (never redone); `green-unverified` → run **only** the owed verification against the recorded `verified_diff`; `in_progress` with **both** tracks ahead of `wave_base` → **reap** and carry to assembly; `in_progress` with **one** track missing/empty → **re-dispatch ONLY that track, blind** (the present track is kept, never discarded); `pending` → dispatch as deps integrate.
+3. **The reap replaces the notification that never arrived.** A track dispatched `background` in the dead session whose branch carries a commit ahead of `wave_base` is `reaped` (manifest `status→reaped`, `reported_commit` recorded by reading git) — that is how adopt learns a background track finished without a cross-session notification. `adopt-reconcile.py` already did this write-back in step 2.
+4. **Fail closed on unresolvable ambiguity — never guess.** If a slice is `in_progress` but **neither** track branch carries recoverable work, or two candidate tips conflict irreconcilably (a recorded `reported_commit` that is neither an ancestor nor a descendant of the live branch tip), or a manifest entry points at a **non-existent** branch for an otherwise-live slice, `adopt-reconcile.py` returns `escalate` (exit 2), appends the reason to `.parallax/<slug>/escalations.md`, and dispatches nothing. **Adopt never fabricates a missing track and never marks a slice done without its arbiter/verifier receipts** (Stop conditions). Re-dispatching a genuinely-missing track *blind* is not fabrication — guessing its artifact would be.
+5. **Emit the session seam + a machine handoff (replaces the hand-written RUN-HANDOFF.md).** Before dispatching anything, append `session_handoff` (actor `main`) summarizing the adopt (what was inherited: reconstructed-from status, reaped tracks, re-dispatched tracks, owed verifications), and **render** `.parallax/<slug>/handoff.md` from the reconciled artifacts — machine-generated, not authored (see *Session-boundary handoff*):
+   ```bash
+   python3 scripts/render-handoff.py --repo "$ROOT" --slug "$SLUG" --prefix "$PREFIX" \
+     --out ".parallax/$SLUG/handoff.md"
+   python3 scripts/evidence-event.py append "$EVD" --run-id "$RUN_ID" --slug "$SLUG" \
+     --event-type session_handoff --actor main \
+     --summary "adopt: reconstructed run git-first from subagents.json + reconciled checkpoint; reaped in-flight tracks; see handoff.md" \
+     --artifact-paths '{"handoff":".parallax/'"$SLUG"'/handoff.md","adopt_report":".parallax/'"$SLUG"'/adopt-report.json"}'
+   git -C "$ROOT" add ".parallax/$SLUG/run-state.json" ".parallax/$SLUG/subagents.json" ".parallax/$SLUG/handoff.md" "$EVD/events.jsonl" \
+     && git -C "$ROOT" commit -q -m "$SLUG: adopt reconciliation (git-true tips, reaped tracks, machine handoff)"
+   ```
+6. **Continue the normal build loop from the reconstructed state — idempotent.** Rebuild/verify per-slice worktrees at the now-git-true `code_tip`/`test_tip`; carry `reap-and-assemble` slices to Step 2b; re-dispatch only `redispatch-blind` tracks (Step 2a, which re-records them in the manifest); dispatch `pending` slices as deps integrate. Nothing already `integrated` is redone. From here it is an ordinary build.
+
+Adopt makes **no** change to the clean `--resume` limit-pause path, does **not** auto-push to `main`/epic beyond the normal feature-run gates, and adds **no** new top-level command — `--adopt` is a flag on `/parallax:run` (and `/parallax:auto`).
+
+### Session-boundary handoff (`handoff.md`, machine-generated — v0.38)
+On a session boundary (a context-exhaustion pause, or an explicit `--adopt`), the orchestrator **generates** `.parallax/<slug>/handoff.md` from `run-state.json` + `subagents.json` + `events.jsonl` via `scripts/render-handoff.py` — integrated slices, in-flight tracks with branch/commit/status, owed verifications, open escalations, and the exact `--adopt` command. It is **machine-rendered, not authored**: a fresh session (or `adopt`) reads it and needs no human prose, and it contains no free-text field an operator must fill. This is the durable replacement for the hand-written `RUN-HANDOFF.md` a stalled RUN2 needed. Emit it alongside the existing `session_handoff` event at every session-boundary pause (the limit-pause path renders it too), not only on adopt.
+
+### Adopt-critical evidence is mandatory (v0.38 §5.4)
+The evidence events `adopt` depends on — `slice_dispatched` (with its `subagents.json` manifest entry), `session_handoff`, manifest status updates, and the arbiter/verifier receipts — are emitted **even on a hand-driven or degraded path**, or the step **fails closed**. A slice integrated with no `slice_dispatched`/receipt evidence is a later-adopt blind spot; `scripts/evidence-event.py audit-slice` flags it (harness gate E1) rather than letting it pass silently. Adopt-critical evidence is not optional — a degraded mode may skip niceties, never these.
 
 ### Driving the hourly retry (scheduler-agnostic)
 The plugin provides `--resume` + the checkpoint; the **hourly trigger is external** (same headlessness as §3.5 scheduling): `cron`/CI calling `claude -p "/parallax:run --resume <slug>"` (or `/parallax:auto --resume <slug>`) each hour, or a Cowork scheduled task. Interval defaults to 60 min (`[retry]` in `.parallax/codex.toml`); if the limit error carried a `retry_after`, prefer it over blind hourly. The schedule **self-terminates**: a resume that finds `status = complete` no-ops and reports done (remove the schedule). Nothing reaches `main` regardless — epic → `main` is always a human PR.

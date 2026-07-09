@@ -23,6 +23,19 @@
     "parent_run_id": { "type": ["string", "null"], "description": "v0.31: run_id of the previous generation, or null for generation 1." },
     "resolution_queue": { "type": ["string", "null"], "description": "v0.31: path to .parallax/<slug>/resolution-queue.json (the structured spec-gap source of truth)." },
     "resolution_chain": { "type": "array", "items": { "type": "string", "pattern": "^RB-[0-9]+$" }, "description": "v0.31: applied resolution batch ids leading to this generation." },
+    "subagents": { "type": "string", "description": "v0.38 F8: path to .parallax/<slug>/subagents.json — the dispatched-subagent manifest /parallax:run --adopt reconstructs in-flight background tracks from. Optional (a run with no dispatched tracks yet has none); when present it is committed on feature/<slug> alongside this checkpoint." },
+    "adopted_from": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "description": "v0.38 §5.2: provenance stamp written when /parallax:run --adopt reconstructed this run from an unclean interruption. Absent on a run that was never adopted. Auditability only — it never substitutes for the arbiter/verifier receipts a slice still needs to be marked done.",
+      "required": ["adopted_at", "by_session"],
+      "properties": {
+        "adopted_at": { "type": "string", "minLength": 1, "description": "ISO timestamp of the adopt." },
+        "from_status": { "type": ["string", "null"], "description": "The run status adopt found (typically 'running' — the unclean case)." },
+        "by_session": { "type": "string", "minLength": 1, "description": "The adopting session's id." },
+        "prior_run_id": { "type": ["string", "null"], "description": "run_id carried across the adopt (stable — adopt continues the SAME run)." }
+      }
+    },
     "verified_tree": { "type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$", "description": "Feature-level receipt bound to the committed feature tip: the content hash of ALL tracked non-.parallax/ files (code+tests+config) at the tip when the run COMPLETED and every slice was verified (canonical form: `git ls-tree -r <tip> | grep -v <TAB>.parallax/ | git hash-object --stdin`). scripts/epic-gate.py recomputes this from the promoted feature commit and requires equality, so a code change after review (which leaves the per-slice ledgers untouched) is mechanically caught. REQUIRED once status=complete." },
     "status": {
       "enum": ["running", "paused-on-limit", "complete", "stuck", "needs-resolution", "resolving", "abandoned"],

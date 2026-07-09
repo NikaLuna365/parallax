@@ -170,6 +170,44 @@ def update_run(a: argparse.Namespace) -> int:
     return 0
 
 
+def audit_slice(a: argparse.Namespace) -> int:
+    """v0.38 §5.4 (gate E1) — adopt-critical evidence is mandatory even on hand-driven/degraded
+    paths. A slice that was integrated must carry, in events.jsonl, at least a `slice_dispatched`
+    event (the adopt entry point) and — unless --no-require-arbiter — an `arbiter_green` receipt.
+    A slice integrated with neither is a later-adopt blind spot: this FLAGS it (exit 2) rather
+    than letting it pass silently. Slice ids are matched as a whole token in the event summary."""
+    import re
+    evidence_dir = Path(a.evidence_dir)
+    events_path = evidence_dir / "events.jsonl"
+    if not events_path.exists():
+        return _fail(f"no events.jsonl at {events_path} — cannot audit slice {a.slice!r} (fail closed)", 2)
+    token = re.compile(r"(?<![A-Za-z0-9])" + re.escape(a.slice) + r"(?![A-Za-z0-9])")
+    seen = set()
+    try:
+        for line in events_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            ev = json.loads(line)
+            if a.slug is not None and ev.get("slug") != a.slug:
+                continue
+            if token.search(ev.get("summary", "")):
+                seen.add(ev.get("event_type"))
+    except Exception as exc:
+        return _fail(f"cannot read/parse events.jsonl: {exc}", 2)
+    required = {"slice_dispatched"}
+    if not a.no_require_arbiter:
+        required.add("arbiter_green")
+    missing = sorted(required - seen)
+    if missing:
+        return _fail(
+            f"slice {a.slice!r} is missing adopt-critical evidence {missing} in events.jsonl "
+            f"(saw {sorted(seen)}) — a hand-driven/degraded integration must still emit these or "
+            f"fail closed (v0.38 §5.4, gate E1)", 2)
+    print(json.dumps({"slice": a.slice, "ok": True, "evidence_present": sorted(seen & required)}))
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description=__doc__)
     subs = root.add_subparsers(dest="command", required=True)
@@ -204,6 +242,15 @@ def parser() -> argparse.ArgumentParser:
                      help="v0.37.5 D3: auxiliary provenance — must be the session .jsonl itself, "
                           "never a container directory")
     p_u.set_defaults(func=update_run)
+
+    p_s = subs.add_parser("audit-slice",
+                          help="v0.38 §5.4 (E1): flag a slice missing adopt-critical evidence")
+    p_s.add_argument("evidence_dir", help=".parallax/<slug>/evidence directory")
+    p_s.add_argument("--slice", required=True, help="slice id to audit (matched as a whole token in summaries)")
+    p_s.add_argument("--slug", default=None, help="restrict to events of this slug")
+    p_s.add_argument("--no-require-arbiter", dest="no_require_arbiter", action="store_true",
+                     help="require only slice_dispatched (default also requires arbiter_green)")
+    p_s.set_defaults(func=audit_slice)
     return root
 
 

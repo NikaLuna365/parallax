@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Parallax dispatched-subagent manifest (v0.38 F8)",
+  "description": "Per-slug machine record of every subagent track dispatched for a run, at .parallax/<slug>/subagents.json. Written AT DISPATCH (commands/run.md Step 2a) and updated as tracks report, then committed to feature/<slug> so it survives a session boundary and a fresh cloud clone (same rule as the review ledgers). This is the enabling artifact for /parallax:run --adopt: without it, a run that died mid-build with in-flight BACKGROUND tracks has no machine record of what was dispatched, on what branch, expecting what commit, in which session — exactly what RUN2's operator had to reconstruct by hand into RUN-HANDOFF.md. Not a benchmark and not a substitute for the arbiter/verifier receipts; it records WHAT WAS DISPATCHED, never that a slice is verified.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "slug", "entries"],
+  "properties": {
+    "schema_version": { "const": "parallax-subagents-v1" },
+    "run_id": { "type": "string", "minLength": 1, "description": "Must equal the run-state / run-evidence run_id — a manifest cannot be filed under another run." },
+    "slug": { "type": "string", "minLength": 1 },
+    "entries": {
+      "type": "array",
+      "description": "One entry per (slice, role) track. A re-dispatch of the same (slice, role) UPDATES its entry in place (latest branch/tip/status), never appends a duplicate — so the manifest always names the current in-flight state.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["slice", "role", "branch", "wave_base", "dispatched_at", "session_id", "mode", "status"],
+        "properties": {
+          "slice": { "type": "string", "minLength": 1, "description": "Slice id (e.g. S6)." },
+          "role": {
+            "enum": ["test-writer", "blind-coder", "arbiter", "codex-judge"],
+            "description": "Which subagent was dispatched. The two IN-FLIGHT tracks adopt reaps are test-writer and blind-coder; arbiter/codex-judge are recorded for a complete dispatch trail."
+          },
+          "branch": { "type": "string", "minLength": 1, "description": "The branch this track commits to (e.g. feature/<slug>-S6-code / -test in parallel, feature/<slug>-code / -test sequential). Adopt resolves the ACTUAL tip from git; this records what was EXPECTED." },
+          "wave_base": { "type": "string", "pattern": "^[0-9a-f]{7,64}$", "description": "The integration tip this track forked from — a track branch whose live tip is a descendant of wave_base carries real work and is reap-eligible; a tip equal to wave_base carries none." },
+          "dispatched_at": { "type": "string", "minLength": 1, "description": "ISO-8601 timestamp of dispatch." },
+          "session_id": { "type": "string", "minLength": 1, "description": "The session that dispatched this track — so adopt (a DIFFERENT session) knows the completion notification cannot have crossed the boundary." },
+          "mode": {
+            "enum": ["foreground", "background"],
+            "description": "background = dispatched as a background agent whose completion notification does NOT cross a session boundary (the RUN2 gap adopt reconstructs from git); foreground = awaited in-session."
+          },
+          "status": {
+            "enum": ["dispatched", "reported", "reaped", "stale"],
+            "description": "dispatched = launched, no report yet; reported = the track reported its done-gate in-session; reaped = adopt read a real commit off its branch to REPLACE the missed cross-session notification; stale = the recorded branch no longer exists (never silently trusted — a stale entry is drift, not a green)."
+          },
+          "reported_commit": {
+            "type": ["string", "null"],
+            "pattern": "^[0-9a-f]{7,64}$",
+            "description": "The commit the track was last known to have produced (from an in-session report, or read off git by adopt when reaped). null until known — never invented."
+          }
+        }
+      }
+    }
+  }
+}

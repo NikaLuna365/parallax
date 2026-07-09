@@ -20,6 +20,8 @@ its own artifacts — not reconstructed after the fact from a Claude transcript.
 | `evidence/events.jsonl` | `assets/run-evidence-event.schema.json` | **append-only** timeline: one JSON event per line (`intake_received`, `spec_frozen`, `slice_dispatched`, `arbiter_green`, `verifier_pass`, `defect_found`, `run_completed`, …) with actor + `artifact_paths` |
 | `evidence/e2e-checks.jsonl` (optional) | `assets/e2e-check.schema.json` | live e2e checks: command, result, exit code, output paths, observed claims. A `result=pass` must carry a real command or be explicitly `manual` with a note |
 | `evidence/defect-loop.jsonl` (optional) | `assets/defect-loop.schema.json` | the GPI A12 pattern: a live defect → `source_evidence` → spec/assumption change → test-writer RED → blind-coder fix → result → re-verification |
+| `subagents.json` (v0.38) | `assets/subagents.schema.json` | per-slug **dispatched-subagent manifest**: one entry per `(slice, role)` — `branch`, `wave_base`, `dispatched_at`, `session_id`, `mode` (foreground/background), `status` (dispatched/reported/reaped/stale), `reported_commit?`. Written at dispatch, committed to `feature/<slug>`; the record `--adopt` reconstructs in-flight background tracks from |
+| `handoff.md` (v0.38) | *(rendered, not schema'd)* | machine-generated session handoff — integrated slices, in-flight tracks (branch/commit/status), owed verifications, escalations, the exact `--adopt` command; deterministic, no operator free-text. Replaces the hand-written `RUN-HANDOFF.md` |
 
 Missing data is `null`/absent per schema, **never silently invented**. A summary is not proof when a
 file/log exists — put its path in `artifact_paths`.
@@ -40,6 +42,21 @@ rounds as distinct facts), slice green, pauses/parks, the terminal `run_complete
 feature-merged/PR events when known. Still auditability only: structured observations of what the
 run did — not a benchmark, and `evidence_limits` must stay factual (never assert a transcript is
 "unavailable" when it merely wasn't captured — record the real path when it exists).
+
+## Multi-session continuity (v0.38 — `subagents.json` + generated `handoff.md`)
+The v0.37.4 RUN2 soak exposed the gap: a build that outlives one session **uncleanly** (context death,
+in-flight background tracks) left no machine record of what was dispatched or where it landed, so the
+operator hand-wrote `RUN-HANDOFF.md` and reconstructed branch tips by hand. v0.38 makes both the record
+and the handoff **first-class artifacts**. `subagents.json` (F8) is written **at dispatch** through the
+deterministic `scripts/subagent-manifest.py` (schema-validated, fail-closed, one entry per track,
+committed on `feature/<slug>` so it survives a session boundary / cloud clone) and reconciled against
+live git on adopt — a vanished branch is `stale`, an ahead-of-`wave_base` background branch is `reaped`
+with its commit read off git (the notification that never crossed the boundary, replaced by reading
+git). `handoff.md` is **rendered**, not authored, by `scripts/render-handoff.py` from run-state +
+`subagents.json` + `events.jsonl` — deterministic, with the exact `/parallax:run --adopt <slug>` command
+and no free-text field a human must fill. Both are auditability/recovery artifacts, **not** a benchmark:
+they record what was dispatched and reconstruct the truth git-first; they never assert a slice is
+verified — that stays with the arbiter/verifier receipts, which adopt refuses to fabricate.
 
 ## Why this release (the GPI lesson, in the abstract)
 A recent real Parallax run demonstrated the method end-to-end — intake/spec, Architecture Fitness,

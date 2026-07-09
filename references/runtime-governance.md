@@ -161,6 +161,49 @@ threat model at three boundaries the mechanics did not yet cover. v0.37.5 mechan
 real autonomous freeze-gate exercise belong to the v0.37.5 production soak (≥1 multi-package run, ≥1
 autonomous `--from-doc` run reaching the freeze gate).
 
+## v0.38 — adopt & multi-session continuity (resume vs adopt)
+v0.38 is a **capability** minor, not another hardening pass: it closes the operational gap the
+v0.37.4 soak exposed (RUN2 `linkedin-selfservice-bot` hit context exhaustion mid-build; its
+background tracks' completion notifications did not cross the session boundary, so the operator
+hand-wrote `RUN-HANDOFF.md` and did manual git archaeology). Public claims stay design-intent until
+a production soak exercises adopt.
+
+**Resume vs adopt — two distinct recovery paths (do not conflate).**
+- **`--resume`** keys on a **clean** `status=paused-on-limit`: an eager checkpoint, an exact
+  per-slice tip resume, the cloud-atomic lock lease. Unchanged in v0.38.
+- **`--adopt`** (new) keys on an **unclean** `status=running` interruption: the session died, and one
+  or more blind tracks are in-flight **background** branches the checkpoint doesn't fully reflect. It
+  reconstructs ground truth **git-first** and continues, failing closed on anything it cannot resolve.
+  It **consumes** the v0.37.5 F7 reconciliation (`resume-reconcile.py`) for tips — it does not
+  re-implement it.
+
+- **Dispatched-subagent manifest (F8; mechanical; gate M1).** `.parallax/<slug>/subagents.json`
+  (schema `assets/subagents.schema.json`) records every dispatched track — `{slice, role, branch,
+  wave_base, dispatched_at, session_id, mode, status, reported_commit?}` — written at dispatch by
+  `scripts/subagent-manifest.py record` and committed to `feature/<slug>`. `reconcile` resolves each
+  entry against live git: a vanished branch ⇒ `stale` (never trusted), a background branch ahead of
+  `wave_base` ⇒ reaped with its git tip as `reported_commit`, a recorded commit conflicting with the
+  live tip ⇒ surfaced. Harness: `tests/t_subagent_manifest.sh`.
+- **Adopt reconstructor (mechanical; gates A1–A5).** `scripts/adopt-reconcile.py` takes the lease
+  safely (a **live** lease held by another session ⇒ refuse; an **expired** one is stealable),
+  reconciles tips via F7 (git wins), reaps in-flight background tracks via F8, then classifies each
+  slice: `integrated` → skip (A2); both tracks ahead → reap + assemble (A3); one track missing →
+  re-dispatch only that track blind, keep the present one (A4); neither track carries work, or a
+  tip-conflict ⇒ **escalate + stop** (A5). It stamps run-state `adopted_from` (+ a `subagents` path);
+  `run.md` gains an *Adopt* subsection parallel to *Resume*, `auto.md` a headless `--adopt`. Harness:
+  `tests/t_adopt.sh` (incl. interruption scenarios A-P1/A-P3).
+- **Machine handoff (mechanical; gate H1).** `scripts/render-handoff.py` deterministically renders
+  `.parallax/<slug>/handoff.md` — integrated slices, in-flight tracks with branch/commit/status, owed
+  verifications, escalations, the exact `--adopt` command — with no operator free-text field. It is the
+  durable replacement for the hand-written `RUN-HANDOFF.md`. Harness: `tests/t_render_handoff.sh`.
+- **Adopt-critical evidence mandatory (mechanical + directive; gate E1-adopt).** `evidence-event.py
+  audit-slice` flags a slice integrated with no `slice_dispatched`/receipt evidence even on a
+  hand-driven/degraded path, instead of accepting it silently. Harness: `tests/t_evidence_required.sh`.
+
+Adopt **never** fabricates a missing track (re-dispatching it blind is not fabrication — guessing its
+artifact would be) and **never** marks a slice done without its arbiter/verifier receipts. That is the
+exact failure this release prevents; the stop conditions are a hard part of the contract.
+
 ## What v0.37 is not
 Not a benchmark or quality claim, not a new product surface, and not a weakening of the Codex
 cross-model verifier (the live runs showed it catches real defects; the fix is controlled

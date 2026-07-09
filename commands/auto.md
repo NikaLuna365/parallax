@@ -1,7 +1,7 @@
 ---
 name: auto
 description: "Autonomous end-to-end driver of the Parallax pipeline. From a written brief, run Phase 1 (spec, autonomous) then Phases 2-5 (build, autonomous + parallel) with no human at the console: the human gates are replaced by the independent cross-model verifier, independent slices build in parallel waves, and anything genuinely ambiguous is parked to a queue for later human review. Headless and schedulable (cron/CI/Cowork). Use only when no principled fork remains to decide. Requires the cross-model verifier configured in .parallax/codex.toml."
-argument-hint: "<brief-path>   [feature-slug]   |   --resume <feature-slug>"
+argument-hint: "<brief-path>   [feature-slug]   |   --resume <feature-slug>   |   --adopt <feature-slug>"
 ---
 
 # /parallax:auto — drive the whole cycle unattended from a brief
@@ -37,6 +37,7 @@ Run the full pipeline end-to-end from a written **brief**, with no human gates, 
 A long autonomous run can hit either service's limit — Claude's (which kills the orchestrator) or Codex's (which fails the verifier). It never loses progress: the orchestrator checkpoints `.parallax/<slug>/run-state.json` eagerly and **pauses the whole run** on a sustained limit — but only **after the verifier exhausts its provider chain** (a Codex limit first falls back to e.g. z.ai GLM, no pause; the run pauses only when every provider is limited). A quota error is transient infra — never a fault, never `concerns`, never shipped. Mechanics live in `/parallax:run` → *Limits, checkpointing & resume*.
 
 - **Resume:** `/parallax:auto --resume <slug>` (or `/parallax:run --resume <slug>`) reads the checkpoint, re-fetches `origin/<epic>` (provenance still runs), and continues exactly where it paused — skipping `integrated` slices, finishing any owed verification, idempotently. Worst case lost on an interruption is one slice's current iteration; never the whole run.
+- **Adopt (unclean interruption, v0.38):** `/parallax:auto --adopt <slug>` (or `/parallax:run --adopt <slug>`) recovers a run that **died mid-build** — `status=running`, no clean pause, in-flight background tracks whose completion notifications never crossed the session boundary. It reconstructs the truth **git-first** from `subagents.json` (the F8 dispatched-subagent manifest) + the v0.37.5-reconciled checkpoint via `scripts/adopt-reconcile.py`, reaps in-flight background branches, re-dispatches only genuinely-missing tracks blind, and **fails closed** (escalates to `.parallax/<slug>/escalations.md`, dispatches nothing) on a live lease held by another session or on irreconcilable state — never fabricating a track or marking a slice done without its receipts. A machine-generated `.parallax/<slug>/handoff.md` (`scripts/render-handoff.py`) replaces the hand-written handoff a stalled run needed. Headless like the rest of `/parallax:auto`; full mechanics in `/parallax:run` → *Adopt (`--adopt <slug>`)*.
 - **Hourly retry:** drive it the same headless way as any schedule — `cron`/CI or a Cowork scheduled task firing the resume each hour (interval in `[retry]` of `.parallax/codex.toml`; prefer the limit error's `retry_after` if it carried one). The schedule **self-terminates** when the checkpoint reads `complete`.
 - A resume that is **still limited fails fast** — one cheap probe, re-checkpoint `paused-on-limit`, exit — so it never burns quota idling.
 
