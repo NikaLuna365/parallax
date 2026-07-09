@@ -90,7 +90,7 @@ def sweep(repo, slug, manifest_path=None):
                                    "path": rel, "reason": fp["reason"]})
 
     # 2) required consumers (a shared field with no live consumer is dead).
-    # v0.38 6.2 (gate C1) — a consumer match found ONLY in test files is a TEST-AUTHORED
+    # v0.37.5 6.2 (gate C1) — a consumer match found ONLY in test files is a TEST-AUTHORED
     # DUPLICATE, not a live consumer: the RUN2 audit caught a 19MB media-safety seam "proven"
     # by a test-file-local re-implementation of the production normalizer while the real
     # consumer path went unexercised. Production-path proof is the default; a deliberately
@@ -115,7 +115,7 @@ def sweep(repo, slug, manifest_path=None):
                                "field": rc["field"], "reason": rc["reason"],
                                "test_only_hits": [h for h in consumer_hits if h not in production_hits],
                                "detail": ("consumer found ONLY in test files — a test-authored "
-                                          "duplicate is not a live production consumer (v0.38 6.2)"
+                                          "duplicate is not a live production consumer (v0.37.5 6.2)"
                                           if consumer_hits else "no consumer at all")})
 
     # 3) mock-only I/O slices
@@ -136,7 +136,7 @@ def sweep(repo, slug, manifest_path=None):
 
 
 def write_receipt(repo, slug, manifest_path, code, detail, out_path=None):
-    """v0.38 D2 — a structured, committable proof the sweep EXECUTED (schema
+    """v0.37.5 D2 — a structured, committable proof the sweep EXECUTED (schema
     assets/sweep-receipt.schema.json). 'feature-sweep clean' as prose in a terminal event is
     not a receipt; scripts/finalize-gate.py refuses completion without this file committed,
     verdict clean, and manifest_sha256 matching the committed invariants.json bytes."""
@@ -158,12 +158,12 @@ def write_receipt(repo, slug, manifest_path, code, detail, out_path=None):
 
 
 def main(argv):
-    ap = argparse.ArgumentParser(description="Parallax v0.37 whole-feature invariant sweep (+ v0.38 receipt).")
+    ap = argparse.ArgumentParser(description="Parallax v0.37 whole-feature invariant sweep (+ v0.37.5 receipt).")
     ap.add_argument("--repo", default=".")
     ap.add_argument("--slug", required=True)
     ap.add_argument("--manifest", default=None, help="override path to invariants.json")
     ap.add_argument("--receipt", nargs="?", const="", default=None,
-                    help="v0.38 D2: write the structured sweep receipt (default path "
+                    help="v0.37.5 D2: write the structured sweep receipt (default path "
                          ".parallax/<slug>/sweep-receipt.json; pass a value to override). "
                          "finalize-gate requires the committed receipt — prose is not proof.")
     a = ap.parse_args(argv)

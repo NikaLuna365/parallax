@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Parallax pinned review-budget authority (v0.38 5.2, gates A3/A5) — shared module.
+"""Parallax pinned review-budget authority (v0.37.5 5.2, gates A3/A5) — shared module.
 
 The v0.37.4 live audit caught a mechanical gate being cleared by editing the policy it
 checks: an epic-gate HOLD on `rounds_used=3 > max_rounds=2` was resolved by sed-editing
@@ -7,7 +7,7 @@ checks: an epic-gate HOLD on `rounds_used=3 > max_rounds=2` was resolved by sed-
 was substantively correct, but the mechanism could not distinguish "budget widened for
 real safety work" from "budget retro-fitted to launder a breach".
 
-From v0.38 the budget authority is three-layered and fail-closed:
+From v0.37.5 the budget authority is three-layered and fail-closed:
 
   1. PINNED AT FREEZE — `.parallax/<slug>/review-policy.frozen.json` (written by
      `pre-freeze-budget.py pin-policy`, schema assets/review-policy-frozen.schema.json)

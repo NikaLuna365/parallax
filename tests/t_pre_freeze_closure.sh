@@ -13,7 +13,7 @@
 #      only that round's own pass (if it comes) closes pre-freeze.
 set -uo pipefail
 PLUGIN="$(cd "$(dirname "$0")/.." && pwd)"; cd "$PLUGIN"
-PF(){ python3 scripts/pre-freeze-budget.py "$@" --mode interactive; }   # v0.38 5.1: closure semantics exercised on the interactive path; mode binding has its own fixture
+PF(){ python3 scripts/pre-freeze-budget.py "$@" --mode interactive; }   # v0.37.5 5.1: closure semantics exercised on the interactive path; mode binding has its own fixture
 fail(){ echo "FAIL: $1"; exit 1; }
 python3 -c 'import jsonschema' >/dev/null 2>&1 || { echo "t_pre_freeze_closure SKIP (jsonschema not installed — the gate itself fails closed without it)"; exit 2; }
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT

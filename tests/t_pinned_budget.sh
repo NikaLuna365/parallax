@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v0.38 5.2 / TRIAGE gates A3+A5 — EXECUTES the pinned-budget authority end to end, replaying
+# v0.37.5 5.2 / TRIAGE gates A3+A5 — EXECUTES the pinned-budget authority end to end, replaying
 # the RUN1 live bypass: an epic-gate HOLD on rounds_used=3 > max_rounds=2 was cleared by
 # sed-editing codex.toml 2->3 and re-stamping all ledgers. Locks:
 #   A3a. rounds_used=3 vs pinned budget 2 -> epic-gate HOLD (reason names the PINNED budget);
@@ -161,6 +161,29 @@ if d.get("policy_hash") != NEW_HASH: fail(f"A5b: ledger not stamped with the AME
 sed_toml(R4)
 p = sh("python3", PIN, "pin-policy", "--policy", R4 + "/.parallax/codex.toml", "--slug", "demo", "--out", pinned)
 if p.returncode == 0: fail("PIN: pin-policy overwrote a DIFFERENT existing snapshot")
+
+# --- PIN2 / Gap-1 remediation) the DELETE + RE-PIN laundering path fails closed:
+#     rm the pin, re-pin from the edited codex.toml (max_rounds 3), re-stamp the ledger's
+#     policy_hash to the fresh pin, commit — the pin is part of contract-hash.sh's frozen
+#     contract set, so contract_hash moves, every ledger's stamped contract_hash mismatches,
+#     and the epic-gate HOLDs. (Re-stamping contract_hash too would then have to pass the
+#     v0.37 P0.4 contract-amend chain vs contract.frozen — the same tier that protects
+#     spec.md itself from post-freeze rewrites.)
+R5 = build(rounds_used=3)
+g = gate(R5)
+if g.returncode != 1: fail(f"PIN2-pre: expected rounds HOLD, got {g.returncode}")
+os.unlink(R5 + "/.parallax/demo/review-policy.frozen.json")
+sed_toml(R5)
+p = sh("python3", PIN, "pin-policy", "--policy", R5 + "/.parallax/codex.toml", "--slug", "demo",
+       "--out", R5 + "/.parallax/demo/review-policy.frozen.json")
+if p.returncode != 0: fail(f"PIN2: re-pin after delete failed unexpectedly: {p.stdout}{p.stderr}")
+fresh = json.load(open(R5 + "/.parallax/demo/review-policy.frozen.json"))["policy_hash"]
+restamp(R5, fresh)
+commit(R5, "delete pin + re-pin from edited toml + re-stamp (the laundering path)")
+g = gate(R5)
+if g.returncode != 1: fail(f"PIN2: delete+re-pin+re-stamp CLEARED the hold (rc={g.returncode}): {g.stdout}")
+if "contract_hash" not in g.stdout and "contract" not in g.stdout:
+    fail(f"PIN2: hold reason should be the moved frozen-contract hash: {g.stdout}")
 
 print("t_pinned_budget OK")
 PY

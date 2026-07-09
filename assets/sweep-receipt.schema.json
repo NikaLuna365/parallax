@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Parallax whole-feature sweep receipt (v0.38 D2)",
+  "title": "Parallax whole-feature sweep receipt (v0.37.5 D2)",
   "description": "Structured proof that scripts/feature-sweep.py actually EXECUTED against the integrated tree, written by the sweep itself (--receipt) at .parallax/<slug>/sweep-receipt.json and committed with the terminal bundle. Closes the RUN1 gap where the terminal event asserted 'feature-sweep clean' as prose with empty artifact_paths and nothing on disk: scripts/finalize-gate.py now refuses completion unless a committed receipt validates here, its verdict is clean, and its manifest_sha256 matches the committed invariants.json bytes (the sweep provably ran against THE manifest, not a different one).",
   "type": "object",
   "additionalProperties": false,

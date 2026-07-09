@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v0.38 5.3 / TRIAGE gates A4(+A5-receipt-side) — EXECUTES the post-green receipt-integrity
+# v0.37.5 5.3 / TRIAGE gates A4(+A5-receipt-side) — EXECUTES the post-green receipt-integrity
 # chain, replaying the RUN1 live failure: the S2 "pass" was hand-authored by the orchestrator
 # from a malformed GLM JSON envelope, and no post-green round persisted a raw response. Locks:
 #   A4a. merge-ledger REFUSES a round with no --raw-response (exit 2, names the receipt rule);

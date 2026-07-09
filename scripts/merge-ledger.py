@@ -243,13 +243,13 @@ def main(argv):
     ap.add_argument("--slug")
     ap.add_argument("--policy", help="trusted .parallax/codex.toml — records the [review] policy_hash this ledger was triaged under (epic-gate.py checks it == the committed policy).")
     ap.add_argument("--pinned-policy", dest="pinned_policy",
-                    help="v0.38 5.2 (gate A5): path to .parallax/<slug>/review-policy.frozen.json. "
+                    help="v0.37.5 5.2 (gate A5): path to .parallax/<slug>/review-policy.frozen.json. "
                          "When given, the round BUDGET is enforced HERE at ingestion — a round beyond "
                          "the effective pinned budget (snapshot + recorded BA-* amendments) is refused "
                          "(exit 5), and policy_hash is stamped from the EFFECTIVE pinned policy, never "
                          "the live codex.toml.")
     ap.add_argument("--raw-response", dest="raw_response",
-                    help="v0.38 5.3 (gate A4): path to the VERBATIM provider response for this round. "
+                    help="v0.37.5 5.3 (gate A4): path to the VERBATIM provider response for this round. "
                          "REQUIRED for a real merge: it must parse as JSON, equal the round content, "
                          "and it is persisted as <slice>.round<N>.raw.json next to the ledger before "
                          "the round is recorded — a verifier round with no re-readable raw receipt "
@@ -277,9 +277,9 @@ def main(argv):
     except Exception as exc:
         print(json.dumps({"error": f"provider-error: round is not parseable JSON ({exc}) — retry the "
                                    "provider or fall back; NEVER hand-extract a verdict from a "
-                                   "malformed envelope (v0.38 5.3)"}))
+                                   "malformed envelope (v0.37.5 5.3)"}))
         return 2
-    # v0.38 5.3 (gate A4) — the ledger ingests ONLY a schema-valid round backed by a persisted
+    # v0.37.5 5.3 (gate A4) — the ledger ingests ONLY a schema-valid round backed by a persisted
     # verbatim raw response. The RUN1 live failure: a GLM envelope crashed the parser and the
     # orchestrator hand-authored the "pass" that reached this script. Now: (1) the round must
     # validate against review-round.schema.json (a malformed/hand-extracted verdict is a
@@ -293,29 +293,29 @@ def main(argv):
         jsonschema.validate(rnd, json.load(open(_ROUND_SCHEMA)))
     except ImportError:
         print(json.dumps({"error": "jsonschema is required; refusing an unvalidated review round "
-                                   "(fail closed, v0.38 5.3)"}))
+                                   "(fail closed, v0.37.5 5.3)"}))
         return 2
     except Exception as exc:
         print(json.dumps({"error": f"provider-error: round is not schema-valid "
                                    f"({getattr(exc, 'message', exc)}) — retry the provider or fall "
-                                   "back; NEVER hand-author a verdict (v0.38 5.3)"}))
+                                   "back; NEVER hand-author a verdict (v0.37.5 5.3)"}))
         return 2
     if not a.raw_response:
         print(json.dumps({"error": "provider raw response required (--raw-response): a verifier round "
                                    "with no persisted verbatim receipt is not auditable and does not "
-                                   "count (v0.38 5.3, gate A4)"}))
+                                   "count (v0.37.5 5.3, gate A4)"}))
         return 2
     try:
         raw_bytes = open(a.raw_response, "rb").read()
         if json.loads(raw_bytes.decode("utf-8")) != rnd:
             print(json.dumps({"error": "provider-error: --raw-response content does not equal the "
                                        "round being merged — the raw receipt must be the verbatim "
-                                       "provider verdict, not a re-typed one (v0.38 5.3)"}))
+                                       "provider verdict, not a re-typed one (v0.37.5 5.3)"}))
             return 2
     except Exception as exc:
         print(json.dumps({"error": f"provider-error: cannot read/parse --raw-response ({exc}); a "
                                    "malformed envelope is a round FAILURE — retry or fall back "
-                                   "(v0.38 5.3)"}))
+                                   "(v0.37.5 5.3)"}))
         return 2
     if _CANON:
         # Re-derive every existing fingerprint under the SAME canonicalization (ids never
@@ -325,7 +325,7 @@ def main(argv):
         for f in ledger.get("findings", []):
             if f.get("fingerprint"):
                 f["fingerprint"] = fingerprint(f.get("kind"), f.get("spec_ref"), f.get("where"))
-    # v0.38 5.2 (gate A5) — the round BUDGET is enforced at ingestion against the PINNED
+    # v0.37.5 5.2 (gate A5) — the round BUDGET is enforced at ingestion against the PINNED
     # policy (+ its recorded BA-* amendment chain), never the live codex.toml. The RUN1 live
     # failure: an extra round was self-authorized by a bare assumption_recorded, and the
     # later HOLD was cleared by editing codex.toml. Now the round beyond the effective pinned
@@ -361,7 +361,7 @@ def main(argv):
                                         "requires a recorded review-budget amendment "
                                         "(contract-amend.py record-budget, human-repeated "
                                         "machine-minted token) — a codex.toml edit or an "
-                                        "assumption_recorded is not authority (v0.38 5.2, gate A5)"}))
+                                        "assumption_recorded is not authority (v0.37.5 5.2, gate A5)"}))
             return 5
         new_policy_hash = eff_hash
     elif a.policy:
@@ -375,7 +375,7 @@ def main(argv):
     for key, newval in (("policy_hash", new_policy_hash), ("contract_hash", a.contract_hash)):
         prior = ledger.get(key)
         if newval is not None and prior is not None and prior != newval:
-            # v0.38 5.2 — ONE sanctioned exception to the v0.25 mid-run freeze: a policy_hash
+            # v0.37.5 5.2 — ONE sanctioned exception to the v0.25 mid-run freeze: a policy_hash
             # transition whose PRIOR value sits on the recorded budget-amendment chain and whose
             # new value is the current effective hash. That is exactly a legitimate BA-* widening
             # taking effect mid-run; any other transition (incl. the RUN1 sed-edit) still PARKS.
@@ -392,7 +392,7 @@ def main(argv):
         out["policy_hash"] = new_policy_hash
     if a.contract_hash is not None:
         out["contract_hash"] = a.contract_hash
-    # v0.38 5.3 — persist the verbatim raw response at its canonical name BEFORE recording the
+    # v0.37.5 5.3 — persist the verbatim raw response at its canonical name BEFORE recording the
     # receipt (symmetric with pre_freeze.round<N>.raw.json), then bind it into the ledger.
     round_no = out["rounds_used"]
     raw_name = f"{a.slice_id}.round{round_no}.raw.json"
@@ -402,7 +402,7 @@ def main(argv):
         raw_dst = os.path.join(reviews_dir, raw_name)
         if os.path.exists(raw_dst) and open(raw_dst, "rb").read() != raw_bytes:
             print(json.dumps({"error": f"refusing to overwrite a DIFFERENT raw receipt {raw_name} "
-                                       "(append-only round history, v0.38 5.3)"}))
+                                       "(append-only round history, v0.37.5 5.3)"}))
             return 2
         with open(raw_dst, "wb") as handle:
             handle.write(raw_bytes)

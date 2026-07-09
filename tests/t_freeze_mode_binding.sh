@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v0.38 5.1 / TRIAGE gates A1+A2 — EXECUTES pre-freeze-budget.py freeze-check + mode binding.
+# v0.37.5 5.1 / TRIAGE gates A1+A2 — EXECUTES pre-freeze-budget.py freeze-check + mode binding.
 # Closes the RUN1 live finding: an `--autonomous --from-doc` run froze through the INTERACTIVE
 # human-OK branch with closure.status=open after 3x concerns. Locks:
 #   A1a. autonomous + closure=open  -> freeze-check REFUSES (exit 2) — a simulated human OK

@@ -30,7 +30,7 @@ def build(slices_lock=("S1","S2"), rs_slices=None, ledgers=None, status="complet
     open(R+"/.parallax/demo/slices.md","w").write("S1, S2\n")
     open(R+"/.parallax/demo/validation.md","w").write("full: npm test (strict)\n")
     json.dump({"slug":"demo","slices":list(slices_lock)}, open(R+"/.parallax/demo/slices.lock","w"))
-    # v0.38 5.2 — the budget authority is the freeze-time-frozen snapshot, committed with the contract
+    # v0.37.5 5.2 — the budget authority is the freeze-time-frozen snapshot, committed with the contract
     sh("python3", os.path.join(PLUGIN,"scripts/pre-freeze-budget.py"), "pin-policy",
        "--policy", R+"/.parallax/codex.toml", "--slug","demo",
        "--out", R+"/.parallax/demo/review-policy.frozen.json")
@@ -43,7 +43,7 @@ def build(slices_lock=("S1","S2"), rs_slices=None, ledgers=None, status="complet
     for sid,ov in led.items():
         if ov is None: continue                                                # None => ledger NOT created
         d={"slug":"demo","slice_id":sid,"rounds_used":1,"policy_hash":PHASH,"contract_hash":ch,"findings":[]}; d.update(ov)
-        # v0.38 5.3 — every consumed round needs a COMMITTED raw receipt (unless the case overrides)
+        # v0.37.5 5.3 — every consumed round needs a COMMITTED raw receipt (unless the case overrides)
         if "round_receipts" not in d:
             receipts=[]
             for r in range(1, int(d.get("rounds_used",0))+1):

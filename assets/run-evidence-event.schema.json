@@ -31,7 +31,7 @@
       "minLength": 1
     },
     "event_type": {
-      "description": "v0.37.3 F5 adds the build-phase types (arbiter_iteration_*, codex_round_*, slice_green, pr_opened, pr_merged, session_handoff, feature_merged) so the timeline no longer stops at spec_frozen for Phase 2-5; every pre-existing type is kept unchanged (backwards-compatible, additive only). v0.38 D2 adds feature_sweep (the receipted whole-feature sweep) \u2014 additive.",
+      "description": "v0.37.3 F5 adds the build-phase types (arbiter_iteration_*, codex_round_*, slice_green, pr_opened, pr_merged, session_handoff, feature_merged) so the timeline no longer stops at spec_frozen for Phase 2-5; every pre-existing type is kept unchanged (backwards-compatible, additive only). v0.37.5 D2 adds feature_sweep (the receipted whole-feature sweep) \u2014 additive.",
       "enum": [
         "intake_received",
         "intake_response",

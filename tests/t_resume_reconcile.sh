@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v0.38 6.1 / TRIAGE gate B1 — EXECUTES scripts/resume-reconcile.py against a REAL git repo,
+# v0.37.5 6.1 / TRIAGE gate B1 — EXECUTES scripts/resume-reconcile.py against a REAL git repo,
 # replaying the RUN2 live drift: run-state recorded S6 test_tip=ced5b80 while the live branch
 # had advanced 3 commits (2 arbiter RED rounds + a re-blindfold) that were never written back.
 # Locks:

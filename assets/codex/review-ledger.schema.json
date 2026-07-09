@@ -10,7 +10,7 @@
     "slice_id": { "type": "string", "description": "The slice this ledger belongs to (e.g. S1). One ledger file per slice." },
     "round_receipts": {
       "type": "array",
-      "description": "v0.38 5.3 (gate A4) — one receipt per verifier round, appended by merge-ledger.py AFTER it persisted the verbatim provider response as <slice_id>.round<N>.raw.json next to this ledger (symmetric with pre-freeze). A post-green verdict with no re-readable raw receipt does not exist: triage.py refuses a ledger whose receipts do not cover rounds_used, and epic-gate.py re-reads each committed raw file, sha256-matches it against the receipt, and schema-validates it as a review round — so a hand-authored 'pass' extracted from a malformed envelope (the RUN1 S2 live failure) can no longer reach a gate.",
+      "description": "v0.37.5 5.3 (gate A4) — one receipt per verifier round, appended by merge-ledger.py AFTER it persisted the verbatim provider response as <slice_id>.round<N>.raw.json next to this ledger (symmetric with pre-freeze). A post-green verdict with no re-readable raw receipt does not exist: triage.py refuses a ledger whose receipts do not cover rounds_used, and epic-gate.py re-reads each committed raw file, sha256-matches it against the receipt, and schema-validates it as a review round — so a hand-authored 'pass' extracted from a malformed envelope (the RUN1 S2 live failure) can no longer reach a gate.",
       "items": {
         "type": "object",
         "additionalProperties": false,

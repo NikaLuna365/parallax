@@ -143,12 +143,14 @@ def update_run(a: argparse.Namespace) -> int:
         if a.dirty_at_end is not None:
             repo["dirty_at_end"] = a.dirty_at_end == "true"
     if a.transcript_path is not None:
-        # v0.38 D3 — provenance accuracy: the transcript pointer must name the .jsonl itself,
+        # v0.37.5 D3 — provenance accuracy: the transcript pointer must name the .jsonl itself,
         # not the session container directory (the RUN2 defect). Auxiliary provenance only.
         if not a.transcript_path.endswith(".jsonl"):
             return _fail(f"--transcript-path must point at the session .jsonl itself, not a "
-                         f"directory ({a.transcript_path!r}) — v0.38 D3", 2)
-        doc.setdefault("provenance", {})["transcript_path"] = a.transcript_path
+                         f"directory ({a.transcript_path!r}) — v0.37.5 D3", 2)
+        if not isinstance(doc.get("provenance"), dict):   # Gap-4: provenance may be an explicit null
+            doc["provenance"] = {}
+        doc["provenance"]["transcript_path"] = a.transcript_path
     try:
         _validate(doc, RUN_SCHEMA)
     except EnvironmentError as exc:
@@ -199,7 +201,7 @@ def parser() -> argparse.ArgumentParser:
     p_u.add_argument("--feature-tip", default=None)
     p_u.add_argument("--dirty-at-end", default=None, choices=["true", "false"])
     p_u.add_argument("--transcript-path", dest="transcript_path", default=None,
-                     help="v0.38 D3: auxiliary provenance — must be the session .jsonl itself, "
+                     help="v0.37.5 D3: auxiliary provenance — must be the session .jsonl itself, "
                           "never a container directory")
     p_u.set_defaults(func=update_run)
     return root

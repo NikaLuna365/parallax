@@ -11,7 +11,7 @@ re-derives it from the round inventory on every read — so a hand-edited closur
 bolted-on `all_resolved: true`) fails the gate instead of certifying a freeze. A human
 grant-one authorizes exactly one more verifier round; it never closes anything itself.
 
-v0.38 F3 NEW-MODE (TZ 5.1) — freeze-gate MODE BINDING. A real v0.37.4 production run
+v0.37.5 F3 NEW-MODE (TZ 5.1) — freeze-gate MODE BINDING. A real v0.37.4 production run
 invoked `--autonomous --from-doc` froze through the INTERACTIVE human-OK branch with
 closure honestly `open` after 3x concerns: the closure state held (never forged), but
 nothing bound the gate *selection* to the run's mode. Now:
@@ -30,7 +30,7 @@ nothing bound the gate *selection* to the run's mode. Now:
     rejects any state where mode.autonomous is true yet grants[] is non-empty, so a
     hand-edited grant fails on the very next read.
 
-v0.38 TZ 5.2 — `pin-policy` writes the freeze-time-frozen review budget snapshot
+v0.37.5 TZ 5.2 — `pin-policy` writes the freeze-time-frozen review budget snapshot
 `.parallax/<slug>/review-policy.frozen.json` (schema
 assets/review-policy-frozen.schema.json): the [review] policy actually in force, pinned at
 freeze and committed with the contract. epic-gate/triage/merge-ledger evaluate rounds
@@ -122,7 +122,7 @@ def write_json_atomic(path: Path, doc: dict[str, Any]) -> None:
 def validate_state_semantics(state: dict[str, Any]) -> None:
     rounds = state["rounds"]
     grants = state["grants"]
-    # v0.38 5.1 — autonomous mode has no human-grant affordance at all: a grant present in
+    # v0.37.5 5.1 — autonomous mode has no human-grant affordance at all: a grant present in
     # an autonomous state (however it got there — hand-edit included) is invalid state,
     # never a usable authorization. Autonomous runs park at the cap; they never self-grant.
     if state["mode"]["autonomous"] and grants:
@@ -263,7 +263,7 @@ def load_or_init(path: Path, policy: Path, slug: str, autonomous: bool) -> dict[
         state = read_state(path)
         if state["slug"] != slug:
             raise GateError(f"state slug {state['slug']!r} does not match {slug!r}")
-        # v0.38 5.1 — the mode is pinned at init and every later call must match: an
+        # v0.37.5 5.1 — the mode is pinned at init and every later call must match: an
         # autonomous run cannot relabel itself interactive at the console (or vice versa)
         # to reach the other mode's freeze branch.
         if state["mode"]["autonomous"] != autonomous:
@@ -400,7 +400,7 @@ def record(args: argparse.Namespace) -> int:
 
 
 def grant_one(args: argparse.Namespace) -> int:
-    # v0.38 5.1 / TRIAGE A2 — a human round-grant is an INTERACTIVE affordance. In autonomous
+    # v0.37.5 5.1 / TRIAGE A2 — a human round-grant is an INTERACTIVE affordance. In autonomous
     # mode there is no human at the gate by definition, so grant-one refuses outright before
     # touching state: an autonomous run parks at the cap (escalation queue), it never
     # self-grants a "human" round. Checked from the CLI flag AND from the pinned state mode
@@ -429,7 +429,7 @@ def grant_one(args: argparse.Namespace) -> int:
 
 
 def freeze_check(args: argparse.Namespace) -> int:
-    """v0.38 5.1 / gate A1 — the mechanical freeze gate. /parallax:spec step 10 MUST run this
+    """v0.37.5 5.1 / gate A1 — the mechanical freeze gate. /parallax:spec step 10 MUST run this
     (and see exit 0) before freezing, in EITHER mode. The decision is derived from artifacts
     only — a human at the console is not an input:
 
@@ -449,7 +449,7 @@ def freeze_check(args: argparse.Namespace) -> int:
                          "reason": "autonomous freeze requires closure.status=independent-pass, "
                                    "but no pre-freeze state exists (the independent verifier never "
                                    "ran) — park to the escalation queue; on_missing=warn does not "
-                                   "license an autonomous freeze (v0.38 5.1)"}, 2)
+                                   "license an autonomous freeze (v0.37.5 5.1)"}, 2)
         return emit({"decision": "allow", "freeze_path": "interactive-human-ok",
                      "note": "no pre-freeze verifier state; the explicit human OK is the gate"})
     state = load_or_init(args.state, args.policy, args.slug, autonomous)
@@ -463,7 +463,7 @@ def freeze_check(args: argparse.Namespace) -> int:
                      "reason": "mode.autonomous=true and closure.status != independent-pass — the "
                                "interactive human-OK branch is unreachable in autonomous mode; a "
                                "human at the console does not change this. Park to the escalation "
-                               "queue (v0.38 5.1, closes the RUN1 interactive-freeze side door)"}, 2)
+                               "queue (v0.37.5 5.1, closes the RUN1 interactive-freeze side door)"}, 2)
     return emit({"decision": "allow", "freeze_path": "interactive-human-ok", "closure": closure,
                  "note": "interactive mode: collect the explicit human OK; this check only binds "
                          "the branch to the run's real mode"})
@@ -483,7 +483,7 @@ def _triage_policy_hash(policy: dict[str, Any]) -> str:
 
 
 def pin_policy(args: argparse.Namespace) -> int:
-    """v0.38 5.2 / gate A3 — pin the [review] budget in force at FREEZE into a frozen,
+    """v0.37.5 5.2 / gate A3 — pin the [review] budget in force at FREEZE into a frozen,
     committed snapshot. epic-gate/triage/merge-ledger evaluate rounds against THIS, never the
     live codex.toml, so a post-freeze `sed` of max_rounds can no longer clear a hold; widening
     is sanctioned only by a recorded review-budget amendment (contract-amend.py)."""
@@ -534,7 +534,7 @@ def parser() -> argparse.ArgumentParser:
     common.add_argument("--policy", type=Path, required=True)
     common.add_argument("--slug", required=True)
     common.add_argument("--mode", required=True, choices=["autonomous", "interactive"],
-                        help="v0.38 5.1: the run's invocation mode. Pinned into the state at init; "
+                        help="v0.37.5 5.1: the run's invocation mode. Pinned into the state at init; "
                              "every later call must match — a mode relabel is a GateError.")
 
     root = argparse.ArgumentParser(description=__doc__)
@@ -550,10 +550,10 @@ def parser() -> argparse.ArgumentParser:
     p_grant.add_argument("--token", required=True)
     p_grant.set_defaults(func=grant_one)
     p_freeze = subs.add_parser("freeze-check", parents=[common],
-                               help="v0.38 5.1: mechanical freeze gate — run before ANY freeze")
+                               help="v0.37.5 5.1: mechanical freeze gate — run before ANY freeze")
     p_freeze.set_defaults(func=freeze_check)
     p_pin = subs.add_parser("pin-policy",
-                            help="v0.38 5.2: pin the [review] budget in force at freeze")
+                            help="v0.37.5 5.2: pin the [review] budget in force at freeze")
     p_pin.add_argument("--policy", type=Path, required=True)
     p_pin.add_argument("--slug", required=True)
     p_pin.add_argument("--out", type=Path, default=None,

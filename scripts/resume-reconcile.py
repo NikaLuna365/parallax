@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Parallax resume reconciliation (v0.38 6.1 / F7 NEW-MODE, gate B1).
+"""Parallax resume reconciliation (v0.37.5 6.1 / F7 NEW-MODE, gate B1).
 
 The v0.37.4 live failure this closes: `run-state.json` recorded S6's `test_tip` at
 `ced5b80`, but across a session boundary the real branch advanced three commits
@@ -106,12 +106,12 @@ def reconcile(repo: str, run_state_path: Path, prefix: str, write_back: bool):
                              "re-commit the checkpoint BEFORE dispatching anything"}
     return 2, {"verdict": "drift", "slug": slug, "drift": drift,
                "error": "run-state tips != live git tips — a resume must NOT trust this "
-                        "checkpoint verbatim (v0.38 6.1 / F7). Re-run with --write-back to "
+                        "checkpoint verbatim (v0.37.5 6.1 / F7). Re-run with --write-back to "
                         "adopt the real tips, or reconcile by hand"}
 
 
 def main(argv):
-    ap = argparse.ArgumentParser(description="Parallax v0.38 resume reconciliation (git is the truth).")
+    ap = argparse.ArgumentParser(description="Parallax v0.37.5 resume reconciliation (git is the truth).")
     ap.add_argument("--repo", default=".")
     ap.add_argument("--slug", required=True)
     ap.add_argument("--run-state", default=None, help="default: <repo>/.parallax/<slug>/run-state.json")

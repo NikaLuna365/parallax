@@ -116,7 +116,7 @@ def validate_ledger(ledger, schema_path, require=True):
 
 
 def receipts_cover_rounds(ledger):
-    """v0.38 5.3 (gate A4) — every consumed round must carry a raw receipt. Returns an error
+    """v0.37.5 5.3 (gate A4) — every consumed round must carry a raw receipt. Returns an error
     string (=> escalate) or None. merge-ledger.py is the only writer of receipts and persists
     the verbatim raw response before recording one, so a rounds_used with no matching receipt
     means the round history was hand-assembled — exactly the hand-authored-pass path this
@@ -125,7 +125,14 @@ def receipts_cover_rounds(ledger):
     got = sorted(int(r.get("round", 0)) for r in ledger.get("round_receipts", []))
     if got != list(range(1, rounds_used + 1)):
         return (f"round-receipts-incomplete: rounds_used={rounds_used} but receipted rounds are "
-                f"{got} — a verifier round with no persisted raw receipt does not count (v0.38 5.3)")
+                f"{got} — a verifier round with no persisted raw receipt does not count (v0.37.5 5.3)")
+    # Gap-3 remediation: a receipt must point at ITS OWN round's canonical raw — round 2 citing
+    # round 1's file would let one raw stand in for two rounds.
+    for r in ledger.get("round_receipts", []):
+        want_suffix = f".round{int(r.get('round', 0))}.raw.json"
+        if not str(r.get("raw_artifact", "")).endswith(want_suffix):
+            return (f"round-receipt-misbound: round {r.get('round')} cites {r.get('raw_artifact')!r} "
+                    f"(must end with {want_suffix!r}) — one raw cannot receipt another round (v0.37.5 5.3)")
     return None
 
 
@@ -151,7 +158,7 @@ def triage(ledger, policy, current_diff):
 
 
 def load_pinned_policy(pinned_path, slug=None):
-    """v0.38 5.2 (gate A3) — policy from the freeze-time-frozen snapshot
+    """v0.37.5 5.2 (gate A3) — policy from the freeze-time-frozen snapshot
     (.parallax/<slug>/review-policy.frozen.json, written by pre-freeze-budget.py pin-policy),
     optionally advanced by its recorded review-budget amendment chain (BA-*.json in the
     sibling amendments/ dir). Fail closed: an unreadable/tampered snapshot or an invalid
@@ -182,7 +189,7 @@ def main(argv):
     ap.add_argument("ledger")
     ap.add_argument("--policy", help="path to the TRUSTED .parallax/codex.toml")
     ap.add_argument("--pinned-policy", dest="pinned_policy",
-                    help="v0.38 5.2: path to .parallax/<slug>/review-policy.frozen.json — the "
+                    help="v0.37.5 5.2: path to .parallax/<slug>/review-policy.frozen.json — the "
                          "freeze-time-frozen budget authority (+ BA-* amendment chain). When given "
                          "it OVERRIDES --policy for disposition; unreadable/invalid => escalate, "
                          "never a silent codex.toml fallback.")

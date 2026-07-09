@@ -55,7 +55,7 @@
     },
     "required_consumers": {
       "type": "array",
-      "description": "A new/changed shared field must have a LIVE consumer \u2014 it is not 'covered' merely because a producer or a unit test mentions it. If `field` appears in `producer_paths` but nowhere in `consumer_paths`, it is a dead field/seam. v0.38 6.2 (gate C1): by default the consumer match must come from a PRODUCTION file \u2014 a hit found only in test files is a test-authored duplicate, not a live consumer (the RUN2 media-gate case). Set production_only:false to deliberately accept a test-side consumer, recorded in the manifest.",
+      "description": "A new/changed shared field must have a LIVE consumer \u2014 it is not 'covered' merely because a producer or a unit test mentions it. If `field` appears in `producer_paths` but nowhere in `consumer_paths`, it is a dead field/seam. v0.37.5 6.2 (gate C1): by default the consumer match must come from a PRODUCTION file \u2014 a hit found only in test files is a test-authored duplicate, not a live consumer (the RUN2 media-gate case). Set production_only:false to deliberately accept a test-side consumer, recorded in the manifest.",
       "items": {
         "type": "object",
         "additionalProperties": true,

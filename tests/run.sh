@@ -47,7 +47,7 @@ else
   for n in 1 2 3; do
     printf '%s\n' '{"verdict":"concerns","findings":[{"severity":"high","kind":"spec-gap","where":"B1","detail":"observable divergence"}]}' > "$PFT/r$n.json"
   done
-  pf(){ python3 scripts/pre-freeze-budget.py "$@" --mode interactive; }   # v0.38 5.1: this section exercises the INTERACTIVE budget path (grants are interactive-only)
+  pf(){ python3 scripts/pre-freeze-budget.py "$@" --mode interactive; }   # v0.37.5 5.1: this section exercises the INTERACTIVE budget path (grants are interactive-only)
   PF_BAD=0
   pf check "$PFS" --policy "$PFP" --slug demo >/tmp/parallax_pf1 || PF_BAD=1
   pf record "$PFS" "$PFT/r1.json" --policy "$PFP" --slug demo --provider codex "${PF_CONTRACT[@]}" >/tmp/parallax_pf2 || PF_BAD=1
@@ -285,7 +285,7 @@ l_nospec=copy.deepcopy(gl); del l_nospec["findings"][0]["spec_ref"]
 l_noslice=copy.deepcopy(gl); del l_noslice["slice_id"]
 l_fixed_noproof=copy.deepcopy(gl); l_fixed_noproof["findings"][0]["status"]="fixed"          # P0#2 at schema layer
 l_policy=copy.deepcopy(gl); l_policy["policy"]={"always_block_kinds":[]}                       # P0#1 at schema layer
-l_noreceipts=copy.deepcopy(gl); del l_noreceipts["round_receipts"]                             # v0.38 5.3 at schema layer
+l_noreceipts=copy.deepcopy(gl); del l_noreceipts["round_receipts"]                             # v0.37.5 5.3 at schema layer
 l_badreceipt=copy.deepcopy(gl); l_badreceipt["round_receipts"]=[{"round":1,"raw_artifact":"nope.json","raw_sha256":"0"*64}]
 gr={"verdict":"concerns","findings":[{"severity":"high","kind":"safety","spec_ref":"s#x","where":"src/x:1","claim":"c","evidence":"e"}]}
 jsonschema.validate(gr,RS); jsonschema.validate({"verdict":"pass","findings":[]},RS)
@@ -303,7 +303,7 @@ elif [ "$R" = OK ]; then ok "schemas reject: fixed-without-codex-proof, a policy
 
 echo "[review_contracts]  (presence — producer-proof wiring is documented)"
 { grep -qi "no anchoring" skills/role-codex-judge/SKILL.md && grep -q "review-round" skills/role-codex-judge/SKILL.md && grep -q "merge-ledger.py" skills/role-codex-judge/SKILL.md && grep -q "reviews/<slice_id>.json" skills/role-codex-judge/SKILL.md; } && ok "role-codex-judge: fresh per-slice review, emits a review-round, mechanical merge" || no "role-codex-judge missing v0.21 producer-proof protocol"
-{ grep -q "scripts/merge-ledger.py" commands/run.md && grep -qF "scripts/triage.py \"\$LEDGER\" --pinned-policy" commands/run.md && grep -q "reviews/\$SID.json" commands/run.md && grep -qF 'LEDGER="$ASSEMBLED/$REL_LEDGER"' commands/run.md; } && ok "run.md wires merge-ledger + triage(--pinned-policy: the freeze-time-frozen budget authority, v0.38 5.2) + per-slice ledger bound to the assembly worktree" || no "run.md missing producer-proof pipeline"
+{ grep -q "scripts/merge-ledger.py" commands/run.md && grep -qF "scripts/triage.py \"\$LEDGER\" --pinned-policy" commands/run.md && grep -q "reviews/\$SID.json" commands/run.md && grep -qF 'LEDGER="$ASSEMBLED/$REL_LEDGER"' commands/run.md; } && ok "run.md wires merge-ledger + triage(--pinned-policy: the freeze-time-frozen budget authority, v0.37.5 5.2) + per-slice ledger bound to the assembly worktree" || no "run.md missing producer-proof pipeline"
 grep -q "never checked out in parallel" commands/run.md && ok "run.md: feature branch not checked out in parallel (no stale worktree on CAS)" || no "run.md missing no-checkout-in-parallel"
 
 echo "[reviewed_commit]  (v0.23 P0#1 + P1#5 — EXECUTES: commit == reviewed tree + receipt; scoped guard ignores the ledger)"
@@ -327,7 +327,7 @@ T=tempfile.mkdtemp(); L=os.path.join(T,"S1.json"); D="a"*40
 def merge(d): p=os.path.join(T,"r.json"); json.dump(d,open(p,"w")); subprocess.run(["python3","scripts/merge-ledger.py",L,p,"--slice","S1","--current-diff",D,"--slug","demo","--raw-response",p],capture_output=True,text=True,check=True)
 merge({"verdict":"concerns","findings":[{"severity":"high","kind":"safety","spec_ref":"spec#auth","where":"src/auth.ts:7","claim":"hole","evidence":"e"}],"resolved":[]})
 # resolve citing N1's id but UNRELATED metadata -> must be ignored; the safety finding stays open
-merge({"verdict":"pass","findings":[],"resolved":[{"id":"S1-N1","kind":"missing-edge","spec_ref":"spec#OTHER","where":"src/other.ts:99","note":"bad"}]})   # pass: schema-valid resolve-only round (v0.38 5.3 validates rounds)
+merge({"verdict":"pass","findings":[],"resolved":[{"id":"S1-N1","kind":"missing-edge","spec_ref":"spec#OTHER","where":"src/other.ts:99","note":"bad"}]})   # pass: schema-valid resolve-only round (v0.37.5 5.3 validates rounds)
 bad = (json.load(open(L))["findings"][0]["status"] != "open")
 # correct id + matching metadata DOES close it
 merge({"verdict":"pass","findings":[],"resolved":[{"id":"S1-N1","kind":"safety","spec_ref":"spec#auth","where":"src/auth.ts:7","note":"real"}]})
@@ -372,7 +372,7 @@ print("OK" if (r1==0 and r2!=0 and h1==h2 and r3==0) else f"BAD r1={r1} r2={r2} 
 PY
 R=$(cat /tmp/parallax_pf)
 [ "$R" = OK ] && ok "merge-ledger freezes policy_hash: a mid-run policy change PARKS (exit!=0) and never re-stamps; the frozen policy proceeds" || { no "policy not frozen per run"; echo "      $R"; }
-grep -qF 'PARK: round refused' commands/run.md && ok "run.md parks on a refused round (malformed/receiptless, budget-exhausted-without-amendment, or mid-run policy/contract drift — merge-ledger non-zero, v0.38)" || no "run.md does not park on policy/contract drift"
+grep -qF 'PARK: round refused' commands/run.md && ok "run.md parks on a refused round (malformed/receiptless, budget-exhausted-without-amendment, or mid-run policy/contract drift — merge-ledger non-zero, v0.37.5)" || no "run.md does not park on policy/contract drift"
 
 echo "[contract_freeze]  (v0.27 P0 — EXECUTES: the frozen spec contract is bound; mid-run change PARKS, gate recomputes contract_hash)"
 python3 - <<'PY' >/tmp/parallax_cf 2>&1
@@ -768,7 +768,7 @@ grep -qiF 'user-reachable' commands/run.md && ok "run.md arbiter dispatch carrie
 echo "[provider_transport]  (v0.37.3 F6/P1 — EXECUTES strip-openai-schema.py; canonical codex exec is hang-proof; timeout != rate limit)"
 STMP=$(mktemp -d)
 python3 scripts/strip-openai-schema.py assets/codex/review-round.schema.json "$STMP/rr.openai.json" >/tmp/parallax_strip 2>&1 \
-  && python3 - "$STMP/rr.openai.json" <<'PY' && ok "OpenAI-STRICT provider copy (v0.38 E1): no allOf at ANY level, required enumerates every property on every object, additionalProperties:false, optionals nullable — one call, zero hand-tuning; a strict-shaped null-optional response normalizes and passes the FULL schema; a verdict/findings-inconsistent response still FAILS the full bar (normalize exit 2)" || no "strip-openai-schema.py behavior wrong (F6)"
+  && python3 - "$STMP/rr.openai.json" <<'PY' && ok "OpenAI-STRICT provider copy (v0.37.5 E1): no allOf at ANY level, required enumerates every property on every object, additionalProperties:false, optionals nullable — one call, zero hand-tuning; a strict-shaped null-optional response normalizes and passes the FULL schema; a verdict/findings-inconsistent response still FAILS the full bar (normalize exit 2)" || no "strip-openai-schema.py behavior wrong (F6)"
 import json, subprocess, sys, tempfile, os, jsonschema
 strict = json.load(open(sys.argv[1]))
 full = json.load(open('assets/codex/review-round.schema.json'))
@@ -830,7 +830,7 @@ else
   ok "secret-leak guard: no literal z.ai-style key committed anywhere in the tree (env / untracked .parallax/zai.env only)"
 fi
 
-echo "[freeze_mode_binding]  (v0.38 5.1, gates A1+A2 — EXECUTES freeze-check: an autonomous run cannot take the interactive human-OK branch)"
+echo "[freeze_mode_binding]  (v0.37.5 5.1, gates A1+A2 — EXECUTES freeze-check: an autonomous run cannot take the interactive human-OK branch)"
 bash tests/t_freeze_mode_binding.sh >/tmp/parallax_fmb 2>&1; fmbrc=$?
 if [ "$fmbrc" = 2 ] && grep -q SKIP /tmp/parallax_fmb; then echo "  · jsonschema not installed — mode-binding execution test skipped (the gate itself fails closed)";
 elif [ "$fmbrc" = 0 ]; then ok "freeze-check: autonomous+open REFUSED (a human at the console changes nothing); autonomous+independent-pass allowed; interactive human-OK unchanged; no-state autonomous refused (warn is not a licence); grant-one refuses under autonomous + a hand-edited grant fails on read; mode pinned at init (relabel = GateError); mode-less legacy state schema-rejected"; else no "freeze mode binding (5.1)"; sed 's/^/      /' /tmp/parallax_fmb; fi
@@ -842,14 +842,14 @@ assert "mode" in s["required"]
 assert s["properties"]["mode"]["required"] == ["autonomous"]
 PY
 
-echo "[pinned_budget]  (v0.38 5.2, gates A3+A5 — EXECUTES the pinned budget: the RUN1 sed-edit bypass is dead)"
+echo "[pinned_budget]  (v0.37.5 5.2, gates A3+A5 — EXECUTES the pinned budget: the RUN1 sed-edit bypass is dead)"
 bash tests/t_pinned_budget.sh >/tmp/parallax_pb 2>&1; pbrc=$?
 if [ "$pbrc" = 2 ] && grep -q SKIP /tmp/parallax_pb; then echo "  · jsonschema not installed — pinned-budget execution test skipped (the gates fail closed)";
 elif [ "$pbrc" = 0 ]; then ok "rounds_used=3 vs pinned 2 HOLDs naming the PINNED budget; the RUN1 replay (sed codex.toml + re-stamp ledgers + commit) STILL HOLDs; toml-edit-alone HOLDs on live/pinned mismatch; a recorded BA-1 (human-repeated machine-minted token) clears it; a forged token/record never does; merge-ledger refuses round pinned_max+1 without an amendment (exit 5) and stamps the AMENDED hash with one; pin-policy refuses to overwrite a different snapshot; triage.policy_hash == budget_chain.policy_hash (locked)"; else no "pinned budget (5.2)"; sed 's/^/      /' /tmp/parallax_pb; fi
 { [ -f assets/review-policy-frozen.schema.json ] && [ -f assets/review-budget-amendment.schema.json ] && [ -f scripts/budget_chain.py ]; } && ok "pinned-policy + budget-amendment schemas and the shared budget_chain module present" || no "budget authority assets missing (5.2)"
 grep -qF 'record-budget' scripts/contract-amend.py && ok "contract-amend.py gains record-budget/verify-budget (the ONLY sanctioned widening path); contract chain ignores BA records (P0.4 boundary intact)" || no "contract-amend budget path missing (5.2)"
 
-echo "[postgreen_receipts]  (v0.38 5.3, gate A4 — EXECUTES receipt integrity: no hand-authored pass survives)"
+echo "[postgreen_receipts]  (v0.37.5 5.3, gate A4 — EXECUTES receipt integrity: no hand-authored pass survives)"
 bash tests/t_postgreen_receipts.sh >/tmp/parallax_pgr 2>&1; pgrrc=$?
 if [ "$pgrrc" = 2 ] && grep -q SKIP /tmp/parallax_pgr; then echo "  · jsonschema not installed — receipt execution test skipped (every layer fails closed)";
 elif [ "$pgrrc" = 0 ]; then ok "merge-ledger refuses: no --raw-response, a schema-invalid round (provider-error), a non-JSON envelope, and the RUN1 shape (hand-typed pass over a malformed envelope: raw != round); a valid round persists <slice>.round<N>.raw.json + a sha256 receipt; triage refuses receipts that do not cover rounds_used; epic-gate re-reads committed raws (missing/tampered/schema-invalid each HOLD); a different raw under an existing canonical name is refused"; else no "post-green receipts (5.3)"; sed 's/^/      /' /tmp/parallax_pgr; fi
@@ -857,16 +857,16 @@ elif [ "$pgrrc" = 0 ]; then ok "merge-ledger refuses: no --raw-response, a schem
 { grep -qF 'RAW_VERDICT' commands/run.md && grep -qF -- '--raw-response "$RAW_VERDICT"' commands/run.md && grep -qF -- '--pinned-policy "$ASSEMBLED/$PINNED"' commands/run.md; } && ok "run.md 2c: raw persisted before merge; merge-ledger + triage run under the PINNED policy" || no "run.md receipt/pinned wiring missing (5.3/5.2)"
 { grep -qF 'never AUTHOR the verdict' skills/role-codex-judge/SKILL.md && grep -qF 'round<N>.raw.json' skills/role-codex-judge/SKILL.md; } && ok "role-codex-judge: persist the verbatim verdict per post-green round; a malformed envelope is a round FAILURE, never extraction material" || no "role-codex-judge receipt contract missing (5.3)"
 
-echo "[resume_reconcile]  (v0.38 6.1 / F7, gate B1 — EXECUTES: run-state is a checkpoint, git is the truth)"
+echo "[resume_reconcile]  (v0.37.5 6.1 / F7, gate B1 — EXECUTES: run-state is a checkpoint, git is the truth)"
 bash tests/t_resume_reconcile.sh >/tmp/parallax_rrc 2>&1 && ok "consistent tips proceed; the RUN2 replay (branch +3 commits past the recorded tip) is REFUSED without --write-back; write-back adopts the REAL git tips + demands session_handoff + re-commit; integrated slices ignored; a missing track branch is drift that cannot be silently written back" || { no "resume reconcile (B1)"; sed 's/^/      /' /tmp/parallax_rrc; }
 { grep -qF 'resume-reconcile.py' commands/run.md && grep -qF 'git is the truth' commands/run.md; } && ok "run.md resume path runs resume-reconcile before trusting any recorded tip; write-back path emits session_handoff and re-commits" || no "run.md resume-reconcile wiring missing (B1)"
-grep -qF 'Checkpoint write-back (v0.38 6.1' commands/run.md && ok "run.md 2b: run-state tips re-persisted after EVERY arbiter round (git rev-parse, never a remembered value)" || no "run.md per-round write-back missing (B1)"
+grep -qF 'Checkpoint write-back (v0.37.5 6.1' commands/run.md && ok "run.md 2b: run-state tips re-persisted after EVERY arbiter round (git rev-parse, never a remembered value)" || no "run.md per-round write-back missing (B1)"
 
-echo "[production_seam]  (v0.38 6.2, gate C1 — EXECUTES: a test-authored duplicate is not a consumer)"
+echo "[production_seam]  (v0.37.5 6.2, gate C1 — EXECUTES: a test-authored duplicate is not a consumer)"
 bash tests/t_production_seam.sh >/tmp/parallax_psm 2>&1 && ok "feature-sweep: a required_consumer matched ONLY in test files violates (test-only hits named); a real production consumer is clean; production_only:false is a recorded opt-out; no-consumer-at-all still violates" || { no "production seam (C1)"; sed 's/^/      /' /tmp/parallax_psm; }
 { grep -qF 'test-authored duplicate proves nothing' skills/role-arbiter/SKILL.md && grep -qiF 'production symbol' skills/role-arbiter/SKILL.md; } && ok "role-arbiter: seam proof must import+invoke the production symbol through the real consumer — a local re-implementation is test-fault" || no "role-arbiter production-path rule missing (C1)"
 
-echo "[sweep_receipt_telemetry]  (v0.38 D1+D2+D3 — receipted sweep; iteration self-audit; honest lease/provenance)"
+echo "[sweep_receipt_telemetry]  (v0.37.5 D1+D2+D3 — receipted sweep; iteration self-audit; honest lease/provenance)"
 python3 - <<'PY' && ok "feature-sweep --receipt writes a schema-valid receipt binding manifest_sha256; finalize-gate holds without it (t_finalize_gate no-sweep-receipt case) and self-audits iteration undercount (warning, non-blocking)" || no "sweep receipt / self-audit wrong (D1/D2)"
 import json, os, subprocess, tempfile, hashlib
 import jsonschema
@@ -883,11 +883,11 @@ assert "telemetry_warning" in src and "arbiter_iteration_started" in src        
 assert "sweep-receipt.json" in src and "manifest_sha256" in src                 # D2 refusal
 PY
 { grep -qF -- '--receipt' commands/run.md && grep -qF 'feature_sweep' assets/run-evidence-event.schema.json; } && ok "run.md wires the receipted sweep + feature_sweep event (additive enum)" || no "sweep wiring missing (D2)"
-{ grep -qF 'Lease discipline (v0.38 D3' commands/run.md && grep -qF -- '--transcript-path' commands/run.md; } && ok "lease is real-or-dropped (holder=run_id, renewed, cleared at completion); transcript_path must be the .jsonl itself" || no "lease/provenance directives missing (D3)"
+{ grep -qF 'Lease discipline (v0.37.5 D3' commands/run.md && grep -qF -- '--transcript-path' commands/run.md; } && ok "lease is real-or-dropped (holder=run_id, renewed, cleared at completion); transcript_path must be the .jsonl itself" || no "lease/provenance directives missing (D3)"
 python3 - <<'PY' && ok "evidence-event update-run --transcript-path refuses a directory (the RUN2 defect)" || no "transcript-path guard wrong (D3)"
 import json, os, subprocess, tempfile
 D=tempfile.mkdtemp(); os.makedirs(D+"/evidence")
-json.dump({"schema_version":"parallax-run-evidence-v1","plugin":{"name":"parallax","version":"0.38.0"},
+json.dump({"schema_version":"parallax-run-evidence-v1","plugin":{"name":"parallax","version":"0.37.5"},
  "run":{"run_id":"r","slug":"d","command_entry":"run","started_at":"t","updated_at":"t","status":"running"},
  "repo":{"root":None,"branch":None,"base_tip":None,"feature_tip":None,"dirty_at_start":None,"dirty_at_end":None},
  "artifacts":{"spec":None,"slices":None,"validation":None,"slices_lock":None,"run_state":None},
@@ -934,9 +934,9 @@ echo "[cloud_setup]  (real install attempts, not commented-out — locks #6)"
 grep -qE '^\s*command -v codex .*\|\| npm i -g' scripts/cloud-setup.sh && ok "cloud-setup.sh actually ATTEMPTS the CLI installs (uncommented)" || no "cloud-setup.sh installs are still commented out"
 grep -qiE 'best-effort|adjust the package names' README.md && ok "README is honest about best-effort installs" || no "README overclaims that setup installs"
 
-echo "[release_coherence]  (v0.38.0 — manifest/changelog/docs agree on the release; v0.31-v0.37.4 kept)"
-{ grep -q '"version": "0.38.0"' .claude-plugin/plugin.json \
-  && grep -q '^## 0.38.0' CHANGELOG.md \
+echo "[release_coherence]  (v0.37.5 — manifest/changelog/docs agree on the release; v0.31-v0.37.4 kept)"
+{ grep -q '"version": "0.37.5"' .claude-plugin/plugin.json \
+  && grep -q '^## 0.37.5' CHANGELOG.md \
   && grep -qiF 'self-attestation' README.md \
   && grep -qiF 'pinned' README.md \
   && [ -f scripts/budget_chain.py ] && [ -f scripts/resume-reconcile.py ] \
@@ -965,8 +965,8 @@ echo "[release_coherence]  (v0.38.0 — manifest/changelog/docs agree on the rel
   && [ -f scripts/feature-sweep.py ] && [ -f scripts/contract-amend.py ] \
   && [ -f scripts/evidence-event.py ] && [ -f scripts/strip-openai-schema.py ] \
   && [ -f assets/blindfold-scope.schema.json ]; } \
-  && ok "version 0.38.0 in plugin.json; CHANGELOG has 0.38.0 (0.37.4/0.37.3/0.37.2/0.37.1/0.37.0/0.36.1/0.31.0 kept); README covers governance self-attestation hardening (mode binding, pinned budget, receipts) + z.ai fallback + prior boundaries; new v0.38 scripts/schemas present" \
-  || no "release coherence: version/changelog/docs not aligned for 0.38.0"
+  && ok "version 0.37.5 in plugin.json; CHANGELOG has 0.37.5 (0.37.4/0.37.3/0.37.2/0.37.1/0.37.0/0.36.1/0.31.0 kept); README covers governance self-attestation hardening (mode binding, pinned budget, receipts) + z.ai fallback + prior boundaries; new v0.37.5 scripts/schemas present" \
+  || no "release coherence: version/changelog/docs not aligned for 0.37.5"
 
 echo ""
 echo "== $PASS passed, $FAIL failed =="

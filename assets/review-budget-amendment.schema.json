@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Parallax sanctioned review-budget amendment (v0.38 5.2, gates A3/A5)",
+  "title": "Parallax sanctioned review-budget amendment (v0.37.5 5.2, gates A3/A5)",
   "description": "One record per human-approved widening of the freeze-time-frozen [review] budget, committed at .parallax/<slug>/amendments/BA-<n>.json and written only by `scripts/contract-amend.py record-budget`. This is the ONLY sanctioned way the round budget in force may change after freeze: the chain starts at review-policy.frozen.json's policy_hash and each link is prev_policy_hash -> new_policy_hash with a machine-minted grant_token the human explicitly repeated. A post-freeze `codex.toml` edit is NOT a link and changes no gate verdict (the RUN1 sed-edit that cleared a rounds-exceeded HOLD is exactly what this unrepresents). Distinct from contract amendments (parallax-contract-amendment-v1): this chain rides over policy_hash, never over contract bytes, so the v0.37 P0.4 'only mechanical-tightening touches the contract' boundary is untouched.",
   "type": "object",
   "additionalProperties": false,

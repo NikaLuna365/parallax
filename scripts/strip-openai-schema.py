@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Parallax provider-schema shim (v0.37.3 F6; extended v0.38 E1) — OpenAI-strict schema copy.
+"""Parallax provider-schema shim (v0.37.3 F6; extended v0.37.5 E1) — OpenAI-strict schema copy.
 
 OpenAI-family structured output rejects more than the top-level `allOf` the v0.37.3 shim
 stripped: RUN2 hit "invalid_json_schema: `required` is required to be supplied" and the
-judge burned 3-4 model calls hand-tuning schema variants per slice. From v0.38 the shim
+judge burned 3-4 model calls hand-tuning schema variants per slice. From v0.37.5 the shim
 produces a FULLY OpenAI-strict copy in one deterministic pass — zero hand-tuning:
 
   strict transform (recursive, whole tree):
@@ -108,7 +108,7 @@ def main(argv):
         except Exception as exc:
             print(json.dumps({"error": "provider-error: normalized response fails the FULL schema "
                                        f"({getattr(exc, 'message', exc)}) — retry/fallback, never "
-                                       "hand-author (v0.38 E1)"}))
+                                       "hand-author (v0.37.5 E1)"}))
             return 2
         print(json.dumps(norm, ensure_ascii=True))
         return 0

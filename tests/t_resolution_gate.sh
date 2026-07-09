@@ -99,14 +99,14 @@ def build(fs_status="complete", rs_gen=1, fs_gen=1, run_id="RUN1", active_run="R
     open(R + "/.parallax/demo/spec.md", "w").write("spec\n"); open(R + "/.parallax/demo/slices.md", "w").write("S1\n")
     open(R + "/.parallax/demo/validation.md", "w").write("full: t\n")
     json.dump({"slug": "demo", "slices": ["S1"]}, open(R + "/.parallax/demo/slices.lock", "w"))
-    # v0.38 5.2 — pinned budget authority, committed with the contract
+    # v0.37.5 5.2 — pinned budget authority, committed with the contract
     sh("python3", os.path.join(PLUGIN, "scripts/pre-freeze-budget.py"), "pin-policy",
        "--policy", R + "/.parallax/codex.toml", "--slug", "demo",
        "--out", R + "/.parallax/demo/review-policy.frozen.json")
     sh("git", "-C", R, "add", "-A"); sh("git", "-C", R, "commit", "-q", "-m", "c")
     vt = sh("bash", TH, "HEAD", R).stdout.strip(); ch = sh("bash", CH, "HEAD", "demo", R).stdout.strip()
     import hashlib as _h
-    _raw = json.dumps({"verdict": "pass", "findings": []}).encode()             # v0.38 5.3 raw receipt
+    _raw = json.dumps({"verdict": "pass", "findings": []}).encode()             # v0.37.5 5.3 raw receipt
     open(R + "/.parallax/demo/reviews/S1.round1.raw.json", "wb").write(_raw)
     json.dump({"slug": "demo", "slice_id": "S1", "rounds_used": 1, "policy_hash": PH, "contract_hash": ch,
                "round_receipts": [{"round": 1, "raw_artifact": "S1.round1.raw.json",

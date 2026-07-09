@@ -183,7 +183,7 @@ def gate(repo, ref, slug):
             iter_events += 1
     if not saw_terminal:
         return 1, {"events": f"no run_completed event with run_id={rid!r} slug={slug!r}"}
-    # (14b, v0.38 D1) iteration self-audit — the RUN1 timeline logged 5 arbiter_iteration_started
+    # (14b, v0.37.5 D1) iteration self-audit — the RUN1 timeline logged 5 arbiter_iteration_started
     # for 14 actual iterations. FLAG (never hold) when run-state's own counters exceed the logged
     # events, so an auditor trusting events.jsonl alone learns it under-counts.
     iter_claimed = sum(int(s.get("iterations") or 0) for s in rs.get("slices", []))
@@ -191,7 +191,7 @@ def gate(repo, ref, slug):
     if iter_claimed > iter_events:
         telemetry_warning = (f"run-state claims {iter_claimed} arbiter iterations but events.jsonl "
                              f"logs only {iter_events} arbiter_iteration_started — per-iteration "
-                             "event emission was incomplete (v0.38 D1 self-audit; non-blocking)")
+                             "event emission was incomplete (v0.37.5 D1 self-audit; non-blocking)")
 
     # (15) committed evidence byte hashes == completion.*_sha256
     rev_sha = hashlib.sha256(ev_bytes).hexdigest()
@@ -232,14 +232,14 @@ def gate(repo, ref, slug):
     if bad:
         return 1, {"arbiter_receipts": bad}
 
-    # (18, v0.38 D2) the whole-feature sweep must be RECEIPTED, not prose. The RUN1 terminal
+    # (18, v0.37.5 D2) the whole-feature sweep must be RECEIPTED, not prose. The RUN1 terminal
     # event said "feature-sweep clean" with empty artifact_paths and nothing on disk — from
-    # v0.38 completion requires a committed, schema-valid sweep receipt whose verdict is clean
+    # v0.37.5 completion requires a committed, schema-valid sweep receipt whose verdict is clean
     # and whose manifest_sha256 matches the committed invariants.json bytes.
     sw_raw = _git_show(repo, ref, f".parallax/{slug}/sweep-receipt.json")
     if sw_raw is None:
         return 1, {"sweep": f"no committed .parallax/{slug}/sweep-receipt.json — 'feature-sweep "
-                            "clean' as prose is not a receipt (v0.38 D2)"}
+                            "clean' as prose is not a receipt (v0.37.5 D2)"}
     try:
         sw = json.loads(sw_raw)
     except Exception as e:

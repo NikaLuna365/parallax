@@ -10,7 +10,7 @@
     "mode": {
       "type": "object",
       "additionalProperties": false,
-      "description": "v0.38 F3 NEW-MODE (5.1): the invocation mode this pre-freeze review belongs to, pinned at state init from the run's own flags and immutable for the life of the state. This makes the freeze-gate MODE BINDING checkable from the artifact: an --autonomous run can no longer freeze through the interactive human-OK branch by being relabeled at the console — freeze-check reads mode.autonomous from HERE (cross-checked against the caller's --mode on every command) and fails closed unless closure.status is independent-pass. In autonomous mode `grants` must stay empty (a human round-grant is an interactive affordance; autonomous parks instead) — validate_state_semantics enforces it.",
+      "description": "v0.37.5 F3 NEW-MODE (5.1): the invocation mode this pre-freeze review belongs to, pinned at state init from the run's own flags and immutable for the life of the state. This makes the freeze-gate MODE BINDING checkable from the artifact: an --autonomous run can no longer freeze through the interactive human-OK branch by being relabeled at the console — freeze-check reads mode.autonomous from HERE (cross-checked against the caller's --mode on every command) and fails closed unless closure.status is independent-pass. In autonomous mode `grants` must stay empty (a human round-grant is an interactive affordance; autonomous parks instead) — validate_state_semantics enforces it.",
       "required": ["autonomous"],
       "properties": {
         "autonomous": { "type": "boolean" }

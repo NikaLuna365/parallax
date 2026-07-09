@@ -124,7 +124,7 @@ def verify(repo, ref, slug, frozen_hash):
     for name, a in recs:
         if "__bad__" in a:
             return 2, {"verdict": "rejected", "reason": f"bad amendment {name}: {a['__bad__']}"}
-        # v0.38 5.2 — review-BUDGET amendments (parallax-review-budget-amendment-v1) live in the
+        # v0.37.5 5.2 — review-BUDGET amendments (parallax-review-budget-amendment-v1) live in the
         # same amendments/ directory but belong to the POLICY chain (scripts/budget_chain.py),
         # never to the contract-bytes chain: skip them here, exactly as budget_chain skips
         # contract tightenings. The v0.37 P0.4 rule is untouched — only mechanical-tightening
@@ -182,7 +182,7 @@ def record(args):
 
 
 def record_budget(args):
-    """v0.38 5.2 (gates A3/A5) — record a sanctioned REVIEW-BUDGET amendment. The only way a
+    """v0.37.5 5.2 (gates A3/A5) — record a sanctioned REVIEW-BUDGET amendment. The only way a
     frozen round budget may widen: a human repeats the machine-minted grant token for exactly
     this prev->new policy transition. A codex.toml edit is never authority."""
     import importlib.util
@@ -254,7 +254,7 @@ def verify_budget(args):
 
 
 def main(argv):
-    ap = argparse.ArgumentParser(description="Parallax v0.37 frozen-contract tightening guard (+ v0.38 review-budget amendments).")
+    ap = argparse.ArgumentParser(description="Parallax v0.37 frozen-contract tightening guard (+ v0.37.5 review-budget amendments).")
     sub = ap.add_subparsers(dest="cmd", required=True)
     v = sub.add_parser("verify")
     v.add_argument("--repo", default=".")
@@ -273,7 +273,7 @@ def main(argv):
     r.add_argument("--prefreeze-notes", default=None)
     r.add_argument("--prefreeze-artifact", default=None)
     rb = sub.add_parser("record-budget",
-                        help="v0.38 5.2: record a sanctioned review-budget widening (BA-<n>)")
+                        help="v0.37.5 5.2: record a sanctioned review-budget widening (BA-<n>)")
     rb.add_argument("--repo", default=".")
     rb.add_argument("--slug", required=True)
     rb.add_argument("--amendment-id", required=True, help="BA-<n>")
@@ -286,7 +286,7 @@ def main(argv):
     rb.add_argument("--grant-token", required=True,
                     help="the machine-minted token the HUMAN explicitly repeated (budget_chain.expected_token)")
     vb = sub.add_parser("verify-budget",
-                        help="v0.38 5.2: resolve the effective policy from pinned snapshot + BA-chain")
+                        help="v0.37.5 5.2: resolve the effective policy from pinned snapshot + BA-chain")
     vb.add_argument("--repo", default=".")
     vb.add_argument("--slug", required=True)
     vb.add_argument("--pinned", default=None, help="override path to review-policy.frozen.json")

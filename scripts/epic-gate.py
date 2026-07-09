@@ -21,7 +21,7 @@ For ref R = --feature-ref, the feature is VERIFIED iff ALL hold:
      (spec/slices/validation/slices.lock — so neither the policy nor the spec was swapped after review),
      rounds_used >= 1 (a verifier actually ran), and triages GREEN against the diff its fixes were proven at.
 
-v0.38 5.2 (gates A3/A5): the review policy/budget AUTHORITY is the committed freeze-time snapshot
+v0.37.5 5.2 (gates A3/A5): the review policy/budget AUTHORITY is the committed freeze-time snapshot
 `.parallax/<slug>/review-policy.frozen.json` plus its recorded review-budget-amendment chain
 (BA-*.json) — never the live OR committed codex.toml. The committed codex.toml must hash-MATCH the
 effective pinned policy or the gate HOLDS: a post-freeze `sed` of max_rounds (the RUN1 live bypass)
@@ -147,7 +147,7 @@ def gate(repo, ref, slug):
         if rs.get("feature_id") is not None and rs.get("feature_id") != fs.get("feature_id"):
             return False, {"feature_state": "run-state feature_id != feature-state feature_id"}
 
-    # v0.38 5.2 (gates A3/A5) — the review budget/policy AUTHORITY is the freeze-time-frozen
+    # v0.37.5 5.2 (gates A3/A5) — the review budget/policy AUTHORITY is the freeze-time-frozen
     # snapshot + its recorded budget-amendment chain, both read COMMITTED at the ref. The
     # committed codex.toml is no longer authority — it must merely hash-MATCH the effective
     # pinned policy, so the RUN1 bypass (sed-edit max_rounds 2->3 post-hoc, re-stamp the
@@ -156,7 +156,7 @@ def gate(repo, ref, slug):
     pin_raw = _git_show(repo, ref, f".parallax/{slug}/review-policy.frozen.json")
     if pin_raw is None:
         return False, {"pinned_policy": f"no committed .parallax/{slug}/review-policy.frozen.json — "
-                                        "the round budget must be pinned at freeze (v0.38 5.2); "
+                                        "the round budget must be pinned at freeze (v0.37.5 5.2); "
                                         "a run without a pinned budget cannot be gated"}
     try:
         frozen = json.loads(pin_raw)
@@ -185,7 +185,7 @@ def gate(repo, ref, slug):
     if live_hash != phash:
         return False, {"pinned_policy": f"committed codex.toml policy hash {live_hash!r} != effective "
                                         f"pinned policy {phash!r} (chain {ba_chain or ['<none>']}) — "
-                                        "editing codex.toml is not a budget amendment (v0.38 5.2)"}
+                                        "editing codex.toml is not a budget amendment (v0.37.5 5.2)"}
     # frozen normative contract (spec/slices/validation/slices.lock) recomputed from the committed commit
     # (v0.26 P0) — each ledger's contract_hash must equal this, so the spec can't be rewritten after review.
     chash = _contract_hash(repo, ref, slug)
@@ -237,15 +237,15 @@ def gate(repo, ref, slug):
             results[sid] = f"ledger slug={ledger.get('slug')!r} != {slug!r}"; verified = False; continue
         if ledger.get("slice_id") != sid:
             results[sid] = f"identity mismatch: ledger slice_id={ledger.get('slice_id')!r} != {sid!r}"; verified = False; continue
-        if ledger.get("policy_hash") not in chain_hashes:           # P0#1 + v0.38 5.2: must sit ON the sanctioned chain
+        if ledger.get("policy_hash") not in chain_hashes:           # P0#1 + v0.37.5 5.2: must sit ON the sanctioned chain
             results[sid] = (f"policy_hash {ledger.get('policy_hash')!r} is not on the sanctioned "
                             f"budget chain (pinned {frozen['policy_hash']!r} -> effective {phash!r}) — "
-                            "a re-stamp not backed by a recorded amendment fails closed (v0.38 5.2)"); verified = False; continue
+                            "a re-stamp not backed by a recorded amendment fails closed (v0.37.5 5.2)"); verified = False; continue
         if ledger.get("contract_hash") != chash:                    # v0.26 P0 — same spec/validation as committed
             results[sid] = f"contract_hash {ledger.get('contract_hash')!r} != committed-contract {chash!r}"; verified = False; continue
         if int(ledger.get("rounds_used", 0)) < 1:
             results[sid] = "rounds_used<1 (no verifier round ran)"; verified = False; continue
-        # v0.38 5.3 (gate A4) — every round must be backed by a COMMITTED, sha256-matching,
+        # v0.37.5 5.3 (gate A4) — every round must be backed by a COMMITTED, sha256-matching,
         # schema-valid raw provider response. The receipts in the ledger alone are not proof:
         # re-read each raw file at the ref and re-derive both properties, so a hand-authored
         # verdict (the RUN1 S2 malformed-envelope extraction) cannot survive to the gate.
@@ -273,7 +273,7 @@ def gate(repo, ref, slug):
         if int(ledger.get("rounds_used", 0)) > policy["max_rounds"]:
             results[sid] = (f"rounds-exceeded (used {ledger.get('rounds_used')}, PINNED budget "
                             f"{policy['max_rounds']} — widening requires a recorded review-budget "
-                            "amendment, never a codex.toml edit; v0.38 5.2)"); verified = False; continue
+                            "amendment, never a codex.toml edit; v0.37.5 5.2)"); verified = False; continue
         diff, derr = _verified_diff(ledger)
         if derr:
             results[sid] = derr; verified = False; continue

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v0.38 6.2 / TRIAGE gate C1 — EXECUTES feature-sweep.py's production-path consumer rule,
+# v0.37.5 6.2 / TRIAGE gate C1 — EXECUTES feature-sweep.py's production-path consumer rule,
 # replaying the RUN2 latent case: a 19MB media-safety seam was "proven" only by a
 # test-file-local re-implementation of the production normalizer (tests/test_integration.py
 # _normalize_channel_post), never by the real consumer. Locks:

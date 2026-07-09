@@ -113,10 +113,10 @@ under-fire on a real repo. v0.37.3 hardens them without weakening any boundary:
   `scripts/strip-openai-schema.py` for top-level-`allOf` schemas (full schema stays the
   acceptance bar); a silent timeout is a hang, never a rate limit. Harness: `[provider_transport]`.
 
-## v0.38 — governance self-attestation hardening (the F3-family's second halves)
-Two real v0.37.4 production runs (`ANALYSIS_v0.37.4_live_production_runs.md`, `TRIAGE_v0.37.4_live_runs_to_v0.38.md`
+## v0.37.5 — governance self-attestation hardening (the F3-family's second halves)
+Two real v0.37.4 production runs (`ANALYSIS_v0.37.4_live_production_runs.md`, `TRIAGE_v0.37.4_live_runs_to_v0.37.5.md`
 — findings, never a benchmark) proved the v0.37.3 P0s held, and surfaced the same self-attestation
-threat model at three boundaries the mechanics did not yet cover. v0.38 mechanizes each, fail-closed:
+threat model at three boundaries the mechanics did not yet cover. v0.37.5 mechanizes each, fail-closed:
 
 - **Freeze-gate mode binding (mechanical; gates A1+A2).** `pre-freeze-state.json` pins a required
   `mode.autonomous` at init; every `pre-freeze-budget.py` call must match it (a console relabel is a
@@ -158,7 +158,7 @@ threat model at three boundaries the mechanics did not yet cover. v0.38 mechaniz
   unweakened.
 
 **Still owed (measurement, not code — gate F1g):** the true cross-package monorepo blindfold case and a
-real autonomous freeze-gate exercise belong to the v0.38 production soak (≥1 multi-package run, ≥1
+real autonomous freeze-gate exercise belong to the v0.37.5 production soak (≥1 multi-package run, ≥1
 autonomous `--from-doc` run reaching the freeze gate).
 
 ## What v0.37 is not
