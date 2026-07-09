@@ -4,10 +4,24 @@
   "description": "Per-SLICE memory of the cross-model verifier's findings across review rounds. Lives at .parallax/<slug>/reviews/<slice_id>.json (one file per slice, so a slice cannot spend another's review budget). It is written ONLY by scripts/merge-ledger.py from the verifier's review-round output — never hand-edited by the orchestrating Claude (the producer must not author its own certification). It carries NO trusted policy: scripts/triage.py reads the [review] policy from .parallax/codex.toml, never from here. See commands/run.md -> 'Review memory, rounds & disposition'.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["slug", "slice_id", "rounds_used", "findings"],
+  "required": ["slug", "slice_id", "rounds_used", "findings", "round_receipts"],
   "properties": {
     "slug": { "type": "string" },
     "slice_id": { "type": "string", "description": "The slice this ledger belongs to (e.g. S1). One ledger file per slice." },
+    "round_receipts": {
+      "type": "array",
+      "description": "v0.38 5.3 (gate A4) — one receipt per verifier round, appended by merge-ledger.py AFTER it persisted the verbatim provider response as <slice_id>.round<N>.raw.json next to this ledger (symmetric with pre-freeze). A post-green verdict with no re-readable raw receipt does not exist: triage.py refuses a ledger whose receipts do not cover rounds_used, and epic-gate.py re-reads each committed raw file, sha256-matches it against the receipt, and schema-validates it as a review round — so a hand-authored 'pass' extracted from a malformed envelope (the RUN1 S2 live failure) can no longer reach a gate.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["round", "raw_artifact", "raw_sha256"],
+        "properties": {
+          "round": { "type": "integer", "minimum": 1 },
+          "raw_artifact": { "type": "string", "pattern": "^.+\\.round[1-9][0-9]*\\.raw\\.json$" },
+          "raw_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      }
+    },
     "rounds_used": { "type": "integer", "minimum": 0, "description": "Verifier review rounds consumed for THIS slice (one per merge-ledger.py call; the initial post-green review is round 1). [review].max_rounds caps it; at the cap, live blockers PARK. This is the single source of truth for the round budget — run-state only points at this file, it does not keep a second counter." },
     "policy_hash": { "type": ["string", "null"], "description": "OPTIONAL audit-only sha of the [review] table this ledger was triaged under. Advisory; triage NEVER reads policy from the ledger. (There is deliberately no `policy` object here — a policy-bearing ledger is rejected, fail-closed.) Recorded by merge-ledger --policy, FROZEN per run, checked by epic-gate.py against the committed policy." },
     "contract_hash": { "type": ["string", "null"], "description": "OPTIONAL frozen hash of the normative spec contract (.parallax/<slug>/{spec.md,slices.md,validation.md,slices.lock}) this slice was verified AGAINST (scripts/contract-hash.sh). Recorded by merge-ledger --contract-hash, FROZEN per run, and recomputed+checked by epic-gate.py from the pinned feature commit — so the spec/validation can't be rewritten after review (v0.26 P0)." },

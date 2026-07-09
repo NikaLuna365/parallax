@@ -113,6 +113,54 @@ under-fire on a real repo. v0.37.3 hardens them without weakening any boundary:
   `scripts/strip-openai-schema.py` for top-level-`allOf` schemas (full schema stays the
   acceptance bar); a silent timeout is a hang, never a rate limit. Harness: `[provider_transport]`.
 
+## v0.38 — governance self-attestation hardening (the F3-family's second halves)
+Two real v0.37.4 production runs (`ANALYSIS_v0.37.4_live_production_runs.md`, `TRIAGE_v0.37.4_live_runs_to_v0.38.md`
+— findings, never a benchmark) proved the v0.37.3 P0s held, and surfaced the same self-attestation
+threat model at three boundaries the mechanics did not yet cover. v0.38 mechanizes each, fail-closed:
+
+- **Freeze-gate mode binding (mechanical; gates A1+A2).** `pre-freeze-state.json` pins a required
+  `mode.autonomous` at init; every `pre-freeze-budget.py` call must match it (a console relabel is a
+  GateError); the new `freeze-check` subcommand is the freeze gate both modes must pass — autonomous
+  allows ONLY `closure.status=independent-pass` (a human at the console, a missing state, or
+  `on_missing=warn` changes nothing; park/escalate instead), `grant-one` refuses under autonomous, and
+  a hand-edited grant invalidates the state on the next read. Harness: `tests/t_freeze_mode_binding.sh`.
+- **Immutable round budget (mechanical; gates A3+A5).** `pin-policy` freezes the `[review]` policy +
+  its triage-canonical hash into `.parallax/<slug>/review-policy.frozen.json` at spec-freeze,
+  committed with the contract and immutable. `merge-ledger.py --pinned-policy` refuses a round beyond
+  the effective budget at ingestion; `triage.py --pinned-policy` disposes under the pin; `epic-gate.py`
+  derives the authority from the COMMITTED pin + recorded `BA-*` review-budget amendments
+  (`contract-amend.py record-budget`, human-repeated machine-minted token, hash-chained via
+  `scripts/budget_chain.py`), requires the committed codex.toml to hash-match it, and accepts ledger
+  hashes only ON that chain. The audited live bypass — sed `max_rounds 2→3` + re-stamp all ledgers +
+  commit — is a harness case and still HOLDs. The v0.37 P0.4 contract chain remains
+  mechanical-tightening-only. Harness: `tests/t_pinned_budget.sh`.
+- **Post-green receipt integrity (mechanical; gate A4).** Every verifier round persists the verbatim
+  provider verdict as `reviews/<slice>.round<r>.raw.json` (symmetric with pre-freeze); `merge-ledger.py`
+  ingests only a schema-valid round whose `--raw-response` equals it, and records
+  `{round, raw_artifact, raw_sha256}` receipts the ledger schema now requires; `triage.py` escalates on
+  uncovered rounds; `epic-gate.py` re-reads every committed raw (sha256 + round-schema). A malformed
+  envelope is a provider error — retry/fallback — never material for an orchestrator-authored pass.
+  Harness: `tests/t_postgreen_receipts.sh`.
+- **Resume integrity (mechanical; gate B1).** `scripts/resume-reconcile.py`: run-state is a checkpoint,
+  git is the truth — drift refuses (exit 2) or writes back the real tips with a mandatory
+  `session_handoff` seam; run.md re-persists tips after every arbiter round. Harness:
+  `tests/t_resume_reconcile.sh`.
+- **Production-path seam proof (mechanical + directive; gate C1).** `feature-sweep.py` rejects a
+  `required_consumers` match found only in test files (a test-authored duplicate is not a consumer;
+  `production_only:false` is a recorded opt-out); `role-arbiter` verifies the cited test drives the
+  real production symbol. Harness: `tests/t_production_seam.sh`.
+- **Receipted sweep + honest telemetry (D1–D3).** `feature-sweep.py --receipt` writes
+  `sweep-receipt.json` (manifest-sha-bound) and `finalize-gate.py` refuses prose-only "clean";
+  finalize self-audits iteration undercount (non-blocking warning); the lease is real-or-dropped;
+  `--transcript-path` must name the session `.jsonl` itself.
+- **OpenAI-strict shim (E1).** `strip-openai-schema.py` emits a fully strict call copy in one pass and
+  `normalize` re-validates responses against the FULL schema — zero hand-tuned retries, acceptance bar
+  unweakened.
+
+**Still owed (measurement, not code — gate F1g):** the true cross-package monorepo blindfold case and a
+real autonomous freeze-gate exercise belong to the v0.38 production soak (≥1 multi-package run, ≥1
+autonomous `--from-doc` run reaching the freeze gate).
+
 ## What v0.37 is not
 Not a benchmark or quality claim, not a new product surface, and not a weakening of the Codex
 cross-model verifier (the live runs showed it catches real defects; the fix is controlled

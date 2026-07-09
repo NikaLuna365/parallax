@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Parallax sanctioned review-budget amendment (v0.38 5.2, gates A3/A5)",
+  "description": "One record per human-approved widening of the freeze-time-frozen [review] budget, committed at .parallax/<slug>/amendments/BA-<n>.json and written only by `scripts/contract-amend.py record-budget`. This is the ONLY sanctioned way the round budget in force may change after freeze: the chain starts at review-policy.frozen.json's policy_hash and each link is prev_policy_hash -> new_policy_hash with a machine-minted grant_token the human explicitly repeated. A post-freeze `codex.toml` edit is NOT a link and changes no gate verdict (the RUN1 sed-edit that cleared a rounds-exceeded HOLD is exactly what this unrepresents). Distinct from contract amendments (parallax-contract-amendment-v1): this chain rides over policy_hash, never over contract bytes, so the v0.37 P0.4 'only mechanical-tightening touches the contract' boundary is untouched.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "slug", "amendment_id", "kind", "rationale", "evidence",
+               "prev_policy_hash", "new_policy_hash", "new_policy", "grant_token", "approved_by", "approved_at"],
+  "properties": {
+    "schema_version": { "const": "parallax-review-budget-amendment-v1" },
+    "slug": { "type": "string", "minLength": 1 },
+    "amendment_id": { "type": "string", "pattern": "^BA-[0-9]+$", "description": "e.g. BA-1, BA-2 (chain order)." },
+    "kind": { "const": "review-budget-amendment", "description": "The only kind this schema sanctions. Contract changes go through the mechanical-tightening chain; product forks through /parallax:resolve." },
+    "rationale": { "type": "string", "minLength": 1, "description": "Why the extra round(s) are legitimate — e.g. a real safety finding needed a genuine additional verifier round (the RUN1 S3 MEDIA_ROOT case), not churn." },
+    "evidence": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 }, "description": "Citations proving the widening is for real work: finding ids, verifier round artifacts, commits." },
+    "prev_policy_hash": { "type": "string", "pattern": "^[0-9a-f]{16}$", "description": "The triage-canonical policy_hash the amendment widens FROM (pinned snapshot, or the previous amendment's new_policy_hash)." },
+    "new_policy_hash": { "type": "string", "pattern": "^[0-9a-f]{16}$", "description": "The triage-canonical hash of new_policy — recomputed and cross-checked by every consumer, so it cannot be stated falsely." },
+    "new_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_rounds", "block_severities", "advisory_severities", "always_block_kinds"],
+      "properties": {
+        "max_rounds": { "type": "integer", "minimum": 1 },
+        "block_severities": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "advisory_severities": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "always_block_kinds": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "grant_token": { "type": "string", "pattern": "^PARALLAX-BUDGET-GRANT:.+:BA-[0-9]+:[0-9a-f]{16}:[0-9a-f]{16}$", "description": "Machine-minted (budget_chain.expected_token) and fully derivable from this record's own slug/id/prev/new — the human authorizes by repeating it exactly; a token that doesn't match its record fails closed." },
+    "approved_by": { "const": "human" },
+    "approved_at": { "type": "string", "minLength": 1 }
+  }
+}

@@ -200,3 +200,39 @@ Full narrative report (audience: plugin owner, not an implementing agent) built 
 dossier→adversarial-critique→synthesis workflow over the same `.parallax/` artifacts and raw
 session/subagent transcripts cited above. Not checked into this repo; ask the owner if you need
 the long-form version for additional narrative context beyond what's actionable here.
+
+
+---
+
+# Appendix — v0.37.4 live-run findings (2026-07-09): the F3-family NEW-MODEs + F7 NEW-MODE
+
+Source: `ANALYSIS_v0.37.4_live_production_runs.md` + `TRIAGE_v0.37.4_live_runs_to_v0.38.md` (two real
+runs: RUN1 `creatives-core` COMPLETE `--autonomous --from-doc` with a zai/GLM-5.2 verifier; RUN2
+`linkedin-selfservice-bot` RUNNING, interactive, real Codex gpt-5.5). The v0.37.3 F1–F8 remediation
+**held where exercised** (no false-green, no unsafe completion; F5 decisively fixed; the cross-model
+verifier caught MEDIA_ROOT-deletion and bool('false')-would-PUBLISH safety bugs the whole blind chain
+passed). These entries extend the F-series with the shapes v0.37.3 did not cover — remediated in v0.38:
+
+- **F3 NEW-MODE — freeze-gate mode binding (RUN1).** An `--autonomous` run froze via the interactive
+  human-OK branch with `closure.status="open"` after 3× concerns; the closure state was honest, the
+  branch selection was bypassable by a human being present. → v0.38 5.1 (`freeze-check`, pinned
+  `mode`, autonomous grant refusal).
+- **F3-family — post-green budget authority (RUN1).** A rounds-exceeded epic-gate HOLD was cleared by
+  sed-editing `codex.toml max_rounds 2→3` and re-stamping all five ledgers; the extra round itself was
+  authorized by a bare `assumption_recorded`. → v0.38 5.2 (pinned budget + review-budget amendments).
+- **F3-family / F4-F6-adjacent — post-green receipt integrity (both runs).** No post-green raw
+  responses persisted anywhere; RUN1's S2 `verifier_pass` was hand-authored from a malformed GLM
+  envelope after the parser crashed. → v0.38 5.3 (mandatory raw receipts, schema-valid rounds only).
+- **F7 NEW-MODE — resume-state drift (RUN2).** `run-state.json`/`RUN-HANDOFF.md` recorded S6-test at
+  `ced5b80` while the live branch had advanced 3 commits (2 arbiter RED rounds + a re-blindfold) with
+  no write-back and no `session_handoff` event. → v0.38 6.1 (`resume-reconcile.py`, per-round
+  write-back).
+- **F2-adjacent (LATENT, RUN2).** The S5↔S6 19MB media-gate was "proven" by a test-authored duplicate
+  normalizer, not the production path; `invariants.json` had no normalize→gate consumer. → v0.38 6.2
+  (production-path consumers, arbiter rule).
+- **F5 HELD-PARTIAL / telemetry (both).** Uneven per-slice iteration events, no sweep receipt,
+  zero-width/inert leases, stale spec-phase run-evidence, transcript_path → directory. → v0.38 D1–D3.
+- **F6 NEW-MODE (RUN2).** OpenAI strict mode also demands full `required` enumeration; the judge
+  hand-tuned schemas across 3–4 calls per slice. → v0.38 E1 (fully strict shim + normalize).
+- **F1 — still NOT-fully-EXERCISED.** Both runs single-package; the cross-package sibling case remains
+  fixture-proven only. → v0.38 soak requirement (gate F1g), not a code change.

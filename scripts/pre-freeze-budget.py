@@ -10,6 +10,32 @@ record() writes closure, only a `pass` round flips it, and validate_state_semant
 re-derives it from the round inventory on every read — so a hand-edited closure (or a
 bolted-on `all_resolved: true`) fails the gate instead of certifying a freeze. A human
 grant-one authorizes exactly one more verifier round; it never closes anything itself.
+
+v0.38 F3 NEW-MODE (TZ 5.1) — freeze-gate MODE BINDING. A real v0.37.4 production run
+invoked `--autonomous --from-doc` froze through the INTERACTIVE human-OK branch with
+closure honestly `open` after 3x concerns: the closure state held (never forged), but
+nothing bound the gate *selection* to the run's mode. Now:
+
+  * every subcommand requires `--mode {autonomous,interactive}`; the state pins it at init
+    (`mode.autonomous`, schema-required) and every later call must match — an autonomous
+    run cannot relabel itself interactive at the console (GateError, exit 2);
+  * `freeze-check` is the mechanical gate `/parallax:spec` step 10 MUST pass before any
+    freeze: interactive -> allow (the explicit human OK remains the gate); autonomous ->
+    allow ONLY when closure.status == "independent-pass" — a human present at the console,
+    an `on_missing = warn` config, or a missing/never-initialized state file changes
+    nothing (fail closed, exit 2, park/escalate; there is deliberately NO interactive
+    escape hatch for an autonomous run);
+  * `grant-one` refuses outright in autonomous mode (a human round-grant is an interactive
+    affordance; autonomous parks instead — TRIAGE gate A2), and validate_state_semantics
+    rejects any state where mode.autonomous is true yet grants[] is non-empty, so a
+    hand-edited grant fails on the very next read.
+
+v0.38 TZ 5.2 — `pin-policy` writes the freeze-time-frozen review budget snapshot
+`.parallax/<slug>/review-policy.frozen.json` (schema
+assets/review-policy-frozen.schema.json): the [review] policy actually in force, pinned at
+freeze and committed with the contract. epic-gate/triage/merge-ledger evaluate rounds
+against the PINNED budget, so a post-freeze `codex.toml` edit can never clear a
+rounds-exceeded hold; widening is sanctioned only by a recorded review-budget amendment.
 """
 
 from __future__ import annotations
@@ -96,6 +122,12 @@ def write_json_atomic(path: Path, doc: dict[str, Any]) -> None:
 def validate_state_semantics(state: dict[str, Any]) -> None:
     rounds = state["rounds"]
     grants = state["grants"]
+    # v0.38 5.1 — autonomous mode has no human-grant affordance at all: a grant present in
+    # an autonomous state (however it got there — hand-edit included) is invalid state,
+    # never a usable authorization. Autonomous runs park at the cap; they never self-grant.
+    if state["mode"]["autonomous"] and grants:
+        raise GateError("autonomous pre-freeze state carries a human grant; autonomous can never "
+                        "consume a human round-grant — park to the escalation queue instead")
     if state["rounds_used"] != len(rounds):
         raise GateError("rounds_used does not equal the machine-written round inventory")
     if [item["round"] for item in rounds] != list(range(1, len(rounds) + 1)):
@@ -221,17 +253,31 @@ def expected_token(slug: str, round_number: int) -> str:
     return f"PARALLAX-GRANT:{slug}:pre-freeze-round-{round_number}"
 
 
-def load_or_init(path: Path, policy: Path, slug: str) -> dict[str, Any]:
+def _mode_autonomous(args: argparse.Namespace) -> bool:
+    return args.mode == "autonomous"
+
+
+def load_or_init(path: Path, policy: Path, slug: str, autonomous: bool) -> dict[str, Any]:
     digest, limit = policy_data(policy)
     if path.exists():
         state = read_state(path)
         if state["slug"] != slug:
             raise GateError(f"state slug {state['slug']!r} does not match {slug!r}")
+        # v0.38 5.1 — the mode is pinned at init and every later call must match: an
+        # autonomous run cannot relabel itself interactive at the console (or vice versa)
+        # to reach the other mode's freeze branch.
+        if state["mode"]["autonomous"] != autonomous:
+            raise GateError(
+                f"pre-freeze state was initialized with mode."
+                f"{'autonomous' if state['mode']['autonomous'] else 'interactive'} but this call "
+                f"claims --mode {'autonomous' if autonomous else 'interactive'}; the run's mode is "
+                "pinned at init and cannot be relabeled mid-run")
         if state["policy_hash"] != digest or state["base_limit"] != limit:
             raise GateError("review policy changed after pre-freeze started; human escalation required")
         return state
     state = {
         "slug": slug,
+        "mode": {"autonomous": autonomous},
         "policy_hash": digest,
         "base_limit": limit,
         "rounds_used": 0,
@@ -256,7 +302,7 @@ def decision(state: dict[str, Any]) -> tuple[str, int]:
 
 
 def check(args: argparse.Namespace) -> int:
-    state = load_or_init(args.state, args.policy, args.slug)
+    state = load_or_init(args.state, args.policy, args.slug, _mode_autonomous(args))
     action, code = decision(state)
     next_round = state["rounds_used"] + 1
     payload = {
@@ -273,7 +319,7 @@ def check(args: argparse.Namespace) -> int:
 
 
 def record(args: argparse.Namespace) -> int:
-    state = load_or_init(args.state, args.policy, args.slug)
+    state = load_or_init(args.state, args.policy, args.slug, _mode_autonomous(args))
     action, _ = decision(state)
     if action != "run":
         raise GateError("pre-freeze round was not authorized; checkpoint before invoking verifier")
@@ -354,7 +400,15 @@ def record(args: argparse.Namespace) -> int:
 
 
 def grant_one(args: argparse.Namespace) -> int:
-    state = load_or_init(args.state, args.policy, args.slug)
+    # v0.38 5.1 / TRIAGE A2 — a human round-grant is an INTERACTIVE affordance. In autonomous
+    # mode there is no human at the gate by definition, so grant-one refuses outright before
+    # touching state: an autonomous run parks at the cap (escalation queue), it never
+    # self-grants a "human" round. Checked from the CLI flag AND from the pinned state mode
+    # (load_or_init cross-checks them), so neither side can be spoofed alone.
+    if _mode_autonomous(args):
+        raise GateError("grant-one is an interactive affordance; an autonomous run can never "
+                        "consume a human round-grant — park to the escalation queue instead")
+    state = load_or_init(args.state, args.policy, args.slug, _mode_autonomous(args))
     if state["rounds_used"] < authorized_limit(state):
         raise GateError("an authorized pre-freeze round is still unused; cannot pre-authorize another")
     next_round = state["rounds_used"] + 1
@@ -374,11 +428,114 @@ def grant_one(args: argparse.Namespace) -> int:
     return emit({"decision": "granted", "round": next_round, "authorized_limit": authorized_limit(state)})
 
 
+def freeze_check(args: argparse.Namespace) -> int:
+    """v0.38 5.1 / gate A1 — the mechanical freeze gate. /parallax:spec step 10 MUST run this
+    (and see exit 0) before freezing, in EITHER mode. The decision is derived from artifacts
+    only — a human at the console is not an input:
+
+      interactive -> allow (path interactive-human-ok; the explicit human OK remains the gate
+                     the orchestrator must still collect — this check only proves the run is
+                     genuinely entitled to that branch).
+      autonomous  -> allow ONLY when the pinned state exists and closure.status ==
+                     "independent-pass" (path autonomous-independent-pass). A missing state
+                     (verifier never ran / on_missing=warn) or an open/concerns closure is a
+                     hard refuse (exit 2): park to the escalation queue. There is NO
+                     interactive escape hatch for an autonomous run.
+    """
+    autonomous = _mode_autonomous(args)
+    if not args.state.exists():
+        if autonomous:
+            return emit({"decision": "refuse",
+                         "reason": "autonomous freeze requires closure.status=independent-pass, "
+                                   "but no pre-freeze state exists (the independent verifier never "
+                                   "ran) — park to the escalation queue; on_missing=warn does not "
+                                   "license an autonomous freeze (v0.38 5.1)"}, 2)
+        return emit({"decision": "allow", "freeze_path": "interactive-human-ok",
+                     "note": "no pre-freeze verifier state; the explicit human OK is the gate"})
+    state = load_or_init(args.state, args.policy, args.slug, autonomous)
+    closure = state["closure"]["status"]
+    if autonomous:
+        if closure == "independent-pass":
+            return emit({"decision": "allow", "freeze_path": "autonomous-independent-pass",
+                         "closure": closure, "rounds_used": state["rounds_used"]})
+        return emit({"decision": "refuse", "closure": closure,
+                     "rounds_used": state["rounds_used"],
+                     "reason": "mode.autonomous=true and closure.status != independent-pass — the "
+                               "interactive human-OK branch is unreachable in autonomous mode; a "
+                               "human at the console does not change this. Park to the escalation "
+                               "queue (v0.38 5.1, closes the RUN1 interactive-freeze side door)"}, 2)
+    return emit({"decision": "allow", "freeze_path": "interactive-human-ok", "closure": closure,
+                 "note": "interactive mode: collect the explicit human OK; this check only binds "
+                         "the branch to the run's real mode"})
+
+
+_FROZEN_POLICY_SCHEMA = ROOT / "assets" / "review-policy-frozen.schema.json"
+_TRIAGE_POLICY_KEYS = ("max_rounds", "block_severities", "advisory_severities", "always_block_kinds")
+
+
+def _triage_policy_hash(policy: dict[str, Any]) -> str:
+    """Identical canonicalization to scripts/triage.py policy_hash() — duplicated here (14 lines
+    vs an import of a dash-named module) and LOCKED to it by the harness, which computes both
+    and asserts equality."""
+    canon = {k: (sorted(policy[k]) if isinstance(policy.get(k), list) else policy.get(k))
+             for k in _TRIAGE_POLICY_KEYS}
+    return hashlib.sha256(json.dumps(canon, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def pin_policy(args: argparse.Namespace) -> int:
+    """v0.38 5.2 / gate A3 — pin the [review] budget in force at FREEZE into a frozen,
+    committed snapshot. epic-gate/triage/merge-ledger evaluate rounds against THIS, never the
+    live codex.toml, so a post-freeze `sed` of max_rounds can no longer clear a hold; widening
+    is sanctioned only by a recorded review-budget amendment (contract-amend.py)."""
+    try:
+        raw = args.policy.read_bytes()
+        doc = tomllib.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        raise GateError(f"cannot read trusted review policy {args.policy}: {exc}") from exc
+    review = doc.get("review", {})
+    policy = {
+        "max_rounds": review.get("max_rounds", 2),
+        "block_severities": review.get("block_severities", ["medium", "high"]),
+        "advisory_severities": review.get("advisory_severities", ["low"]),
+        "always_block_kinds": review.get("always_block_kinds", ["safety", "anti-cheat", "spec-gap"]),
+    }
+    if isinstance(policy["max_rounds"], bool) or not isinstance(policy["max_rounds"], int) \
+            or policy["max_rounds"] < 1:
+        raise GateError("[review].max_rounds must be an integer >= 1")
+    pre_freeze_limit = review.get("pre_freeze_max_rounds", policy["max_rounds"])
+    snapshot = {
+        "schema_version": "parallax-review-policy-frozen-v1",
+        "slug": args.slug,
+        "pinned_at": now(),
+        "source_policy_sha256": hashlib.sha256(raw).hexdigest(),
+        "policy": policy,
+        "pre_freeze_max_rounds": pre_freeze_limit,
+        "policy_hash": _triage_policy_hash(policy),
+    }
+    validate(snapshot, _FROZEN_POLICY_SCHEMA)
+    out = args.out or (args.policy.parent / "review-policy.frozen.json")
+    if out.exists():
+        existing = json.loads(out.read_text(encoding="utf-8"))
+        stable = {k: existing.get(k) for k in ("slug", "policy", "policy_hash", "pre_freeze_max_rounds")}
+        wanted = {k: snapshot.get(k) for k in ("slug", "policy", "policy_hash", "pre_freeze_max_rounds")}
+        if stable != wanted:
+            raise GateError(f"refusing to overwrite a DIFFERENT pinned policy at {out} — the frozen "
+                            "budget is immutable; widen it only via a recorded review-budget amendment")
+        return emit({"decision": "pinned", "out": str(out), "policy_hash": snapshot["policy_hash"],
+                     "note": "identical snapshot already pinned"})
+    write_json_atomic(out, snapshot)
+    return emit({"decision": "pinned", "out": str(out), "policy_hash": snapshot["policy_hash"],
+                 "max_rounds": policy["max_rounds"]})
+
+
 def parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("state", type=Path)
     common.add_argument("--policy", type=Path, required=True)
     common.add_argument("--slug", required=True)
+    common.add_argument("--mode", required=True, choices=["autonomous", "interactive"],
+                        help="v0.38 5.1: the run's invocation mode. Pinned into the state at init; "
+                             "every later call must match — a mode relabel is a GateError.")
 
     root = argparse.ArgumentParser(description=__doc__)
     subs = root.add_subparsers(dest="command", required=True)
@@ -392,6 +549,16 @@ def parser() -> argparse.ArgumentParser:
     p_grant = subs.add_parser("grant-one", parents=[common])
     p_grant.add_argument("--token", required=True)
     p_grant.set_defaults(func=grant_one)
+    p_freeze = subs.add_parser("freeze-check", parents=[common],
+                               help="v0.38 5.1: mechanical freeze gate — run before ANY freeze")
+    p_freeze.set_defaults(func=freeze_check)
+    p_pin = subs.add_parser("pin-policy",
+                            help="v0.38 5.2: pin the [review] budget in force at freeze")
+    p_pin.add_argument("--policy", type=Path, required=True)
+    p_pin.add_argument("--slug", required=True)
+    p_pin.add_argument("--out", type=Path, default=None,
+                       help="output path (default: review-policy.frozen.json next to the policy)")
+    p_pin.set_defaults(func=pin_policy)
     return root
 
 

@@ -89,18 +89,34 @@ def sweep(repo, slug, manifest_path=None):
                 violations.append({"class": "forbidden_pattern", "id": fp["id"],
                                    "path": rel, "reason": fp["reason"]})
 
-    # 2) required consumers (a shared field with no live consumer is dead)
+    # 2) required consumers (a shared field with no live consumer is dead).
+    # v0.38 6.2 (gate C1) — a consumer match found ONLY in test files is a TEST-AUTHORED
+    # DUPLICATE, not a live consumer: the RUN2 audit caught a 19MB media-safety seam "proven"
+    # by a test-file-local re-implementation of the production normalizer while the real
+    # consumer path went unexercised. Production-path proof is the default; a deliberately
+    # test-side invariant can opt out with "production_only": false, recorded in the manifest.
+    _TEST_PATH = re.compile(r"(^|/)(tests?|__tests__|specs?|e2e|__mocks__)(/|$)|"
+                            r"(^|[._-])(test|tests|spec|specs)[._-][^/]*$|"
+                            r"(^|/)(test|conftest)_[^/]*$", re.I)
     for rc in man.get("required_consumers", []):
         rx = re.compile(rc["field"])
         in_producer = any(_matches(rel, rc["producer_paths"]) and rx.search(_read(full))
                           for rel, full in files)
         if not in_producer:
             continue  # field not introduced => nothing to require
-        in_consumer = any(_matches(rel, rc["consumer_paths"]) and rx.search(_read(full))
-                          for rel, full in files)
-        if not in_consumer:
+        consumer_hits = [rel for rel, full in files
+                         if _matches(rel, rc["consumer_paths"]) and rx.search(_read(full))]
+        if rc.get("production_only", True):
+            production_hits = [rel for rel in consumer_hits if not _TEST_PATH.search(rel)]
+        else:
+            production_hits = consumer_hits
+        if not production_hits:
             violations.append({"class": "dead_shared_field", "id": rc["id"],
-                               "field": rc["field"], "reason": rc["reason"]})
+                               "field": rc["field"], "reason": rc["reason"],
+                               "test_only_hits": [h for h in consumer_hits if h not in production_hits],
+                               "detail": ("consumer found ONLY in test files — a test-authored "
+                                          "duplicate is not a live production consumer (v0.38 6.2)"
+                                          if consumer_hits else "no consumer at all")})
 
     # 3) mock-only I/O slices
     rels = [rel for rel, _ in files]
@@ -119,13 +135,42 @@ def sweep(repo, slug, manifest_path=None):
                            "mock_only": len(man.get("mock_only_slices", []))}}
 
 
+def write_receipt(repo, slug, manifest_path, code, detail, out_path=None):
+    """v0.38 D2 — a structured, committable proof the sweep EXECUTED (schema
+    assets/sweep-receipt.schema.json). 'feature-sweep clean' as prose in a terminal event is
+    not a receipt; scripts/finalize-gate.py refuses completion without this file committed,
+    verdict clean, and manifest_sha256 matching the committed invariants.json bytes."""
+    import hashlib
+    from datetime import datetime, timezone
+    mp = manifest_path or os.path.join(repo, ".parallax", slug, "invariants.json")
+    receipt = {
+        "schema_version": "parallax-sweep-receipt-v1",
+        "slug": slug,
+        "verdict": "clean" if code == 0 else "violations",
+        "manifest_sha256": hashlib.sha256(open(mp, "rb").read()).hexdigest(),
+        "checked": detail.get("checked", {"forbidden": 0, "consumers": 0, "mock_only": 0}),
+        "violations": detail.get("violations", []),
+        "swept_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    path = out_path or os.path.join(repo, ".parallax", slug, "sweep-receipt.json")
+    json.dump(receipt, open(path, "w"), indent=2)
+    return path
+
+
 def main(argv):
-    ap = argparse.ArgumentParser(description="Parallax v0.37 whole-feature invariant sweep.")
+    ap = argparse.ArgumentParser(description="Parallax v0.37 whole-feature invariant sweep (+ v0.38 receipt).")
     ap.add_argument("--repo", default=".")
     ap.add_argument("--slug", required=True)
     ap.add_argument("--manifest", default=None, help="override path to invariants.json")
+    ap.add_argument("--receipt", nargs="?", const="", default=None,
+                    help="v0.38 D2: write the structured sweep receipt (default path "
+                         ".parallax/<slug>/sweep-receipt.json; pass a value to override). "
+                         "finalize-gate requires the committed receipt — prose is not proof.")
     a = ap.parse_args(argv)
     code, detail = sweep(a.repo, a.slug, a.manifest)
+    if a.receipt is not None and code in (0, 2):     # a receipt records clean OR violations; bad input (3) has nothing to receipt
+        detail["receipt"] = write_receipt(a.repo, a.slug, a.manifest, code, detail,
+                                          a.receipt or None)
     print(json.dumps(detail))
     return code
 

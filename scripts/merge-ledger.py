@@ -222,6 +222,19 @@ def merge(ledger, rnd, slice_id, current_diff, slug=None):
     return ledger
 
 
+_ROUND_SCHEMA = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "..", "assets", "codex", "review-round.schema.json")
+
+
+def _load_budget_chain():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "budget_chain",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "budget_chain.py"))
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    return mod
+
+
 def main(argv):
     ap = argparse.ArgumentParser()
     ap.add_argument("ledger"); ap.add_argument("round")
@@ -229,6 +242,19 @@ def main(argv):
     ap.add_argument("--current-diff", dest="current_diff", required=True)
     ap.add_argument("--slug")
     ap.add_argument("--policy", help="trusted .parallax/codex.toml — records the [review] policy_hash this ledger was triaged under (epic-gate.py checks it == the committed policy).")
+    ap.add_argument("--pinned-policy", dest="pinned_policy",
+                    help="v0.38 5.2 (gate A5): path to .parallax/<slug>/review-policy.frozen.json. "
+                         "When given, the round BUDGET is enforced HERE at ingestion — a round beyond "
+                         "the effective pinned budget (snapshot + recorded BA-* amendments) is refused "
+                         "(exit 5), and policy_hash is stamped from the EFFECTIVE pinned policy, never "
+                         "the live codex.toml.")
+    ap.add_argument("--raw-response", dest="raw_response",
+                    help="v0.38 5.3 (gate A4): path to the VERBATIM provider response for this round. "
+                         "REQUIRED for a real merge: it must parse as JSON, equal the round content, "
+                         "and it is persisted as <slice>.round<N>.raw.json next to the ledger before "
+                         "the round is recorded — a verifier round with no re-readable raw receipt "
+                         "does not exist. A malformed round/raw is a PROVIDER ERROR (retry/fallback), "
+                         "never something to hand-extract a verdict from.")
     ap.add_argument("--contract-hash", dest="contract_hash", help="frozen hash of the normative spec contract (scripts/contract-hash.sh) — recorded into the ledger and frozen per run, like policy_hash.")
     ap.add_argument("--repo-root", dest="repo_root",
                     help="v0.37.3 F4: repository root whose TRACKED files anchor the file "
@@ -246,7 +272,51 @@ def main(argv):
                               "detail": "--repo-root was requested; refusing to fall back to raw string identity"}))
             return 3
     ledger = json.load(open(a.ledger)) if os.path.exists(a.ledger) else {}
-    rnd = json.load(open(a.round)) if a.round != "-" else json.loads(sys.stdin.read())
+    try:
+        rnd = json.load(open(a.round)) if a.round != "-" else json.loads(sys.stdin.read())
+    except Exception as exc:
+        print(json.dumps({"error": f"provider-error: round is not parseable JSON ({exc}) — retry the "
+                                   "provider or fall back; NEVER hand-extract a verdict from a "
+                                   "malformed envelope (v0.38 5.3)"}))
+        return 2
+    # v0.38 5.3 (gate A4) — the ledger ingests ONLY a schema-valid round backed by a persisted
+    # verbatim raw response. The RUN1 live failure: a GLM envelope crashed the parser and the
+    # orchestrator hand-authored the "pass" that reached this script. Now: (1) the round must
+    # validate against review-round.schema.json (a malformed/hand-extracted verdict is a
+    # provider error — retry/fallback, never a pass); (2) --raw-response is mandatory, must
+    # equal the round content, and is persisted as <slice>.round<N>.raw.json BEFORE the round
+    # is recorded, symmetric with pre-freeze — so every post-green verdict is independently
+    # re-derivable post-hoc; (3) a receipt {round, raw_artifact, raw_sha256} is written into
+    # the ledger, and triage/epic-gate refuse a ledger whose receipts don't cover its rounds.
+    try:
+        import jsonschema
+        jsonschema.validate(rnd, json.load(open(_ROUND_SCHEMA)))
+    except ImportError:
+        print(json.dumps({"error": "jsonschema is required; refusing an unvalidated review round "
+                                   "(fail closed, v0.38 5.3)"}))
+        return 2
+    except Exception as exc:
+        print(json.dumps({"error": f"provider-error: round is not schema-valid "
+                                   f"({getattr(exc, 'message', exc)}) — retry the provider or fall "
+                                   "back; NEVER hand-author a verdict (v0.38 5.3)"}))
+        return 2
+    if not a.raw_response:
+        print(json.dumps({"error": "provider raw response required (--raw-response): a verifier round "
+                                   "with no persisted verbatim receipt is not auditable and does not "
+                                   "count (v0.38 5.3, gate A4)"}))
+        return 2
+    try:
+        raw_bytes = open(a.raw_response, "rb").read()
+        if json.loads(raw_bytes.decode("utf-8")) != rnd:
+            print(json.dumps({"error": "provider-error: --raw-response content does not equal the "
+                                       "round being merged — the raw receipt must be the verbatim "
+                                       "provider verdict, not a re-typed one (v0.38 5.3)"}))
+            return 2
+    except Exception as exc:
+        print(json.dumps({"error": f"provider-error: cannot read/parse --raw-response ({exc}); a "
+                                   "malformed envelope is a round FAILURE — retry or fall back "
+                                   "(v0.38 5.3)"}))
+        return 2
     if _CANON:
         # Re-derive every existing fingerprint under the SAME canonicalization (ids never
         # change — fingerprint is derived grouping metadata). A pre-v0.37.3 ledger whose
@@ -255,8 +325,46 @@ def main(argv):
         for f in ledger.get("findings", []):
             if f.get("fingerprint"):
                 f["fingerprint"] = fingerprint(f.get("kind"), f.get("spec_ref"), f.get("where"))
+    # v0.38 5.2 (gate A5) — the round BUDGET is enforced at ingestion against the PINNED
+    # policy (+ its recorded BA-* amendment chain), never the live codex.toml. The RUN1 live
+    # failure: an extra round was self-authorized by a bare assumption_recorded, and the
+    # later HOLD was cleared by editing codex.toml. Now the round beyond the effective pinned
+    # budget is refused HERE — widening first requires `contract-amend.py record-budget`
+    # (a human-repeated machine-minted token), which this check then honors.
     new_policy_hash = None
-    if a.policy:
+    effective_policy = None
+    chain_hashes = None
+    if a.pinned_policy:
+        bc = _load_budget_chain()
+        try:
+            frozen = json.load(open(a.pinned_policy))
+            amend_dir = os.path.join(os.path.dirname(os.path.abspath(a.pinned_policy)), "amendments")
+            if not os.path.isdir(amend_dir):
+                amend_dir = os.path.normpath(os.path.join(
+                    os.path.dirname(os.path.abspath(a.pinned_policy)), "..", "amendments"))
+            records = bc.load_amendment_files(amend_dir)
+            effective_policy, eff_hash, chain = bc.effective_policy(
+                frozen, records, a.slug or frozen.get("slug"))
+            # every hash ON the sanctioned chain (pinned + each amendment step) — a ledger
+            # stamped at any of these is legitimate history; anything else is a swap.
+            chain_hashes = {frozen["policy_hash"]}
+            chain_hashes.update(r["new_policy_hash"] for r in bc.budget_records(records))
+        except (OSError, ValueError, bc.BudgetError) as exc:
+            print(json.dumps({"error": f"pinned-policy invalid (fail closed): {exc}"}))
+            return 2
+        next_round = int(ledger.get("rounds_used", 0)) + 1
+        if next_round > int(effective_policy["max_rounds"]):
+            print(json.dumps({"error": "round-budget-exhausted", "round": next_round,
+                              "pinned_max_rounds": effective_policy["max_rounds"],
+                              "chain": chain,
+                              "detail": "the budget in force was PINNED at freeze; widening it "
+                                        "requires a recorded review-budget amendment "
+                                        "(contract-amend.py record-budget, human-repeated "
+                                        "machine-minted token) — a codex.toml edit or an "
+                                        "assumption_recorded is not authority (v0.38 5.2, gate A5)"}))
+            return 5
+        new_policy_hash = eff_hash
+    elif a.policy:
         import triage as T
         pol, _ = T.load_policy(a.policy)
         new_policy_hash = T.policy_hash(pol)
@@ -267,19 +375,44 @@ def main(argv):
     for key, newval in (("policy_hash", new_policy_hash), ("contract_hash", a.contract_hash)):
         prior = ledger.get(key)
         if newval is not None and prior is not None and prior != newval:
+            # v0.38 5.2 — ONE sanctioned exception to the v0.25 mid-run freeze: a policy_hash
+            # transition whose PRIOR value sits on the recorded budget-amendment chain and whose
+            # new value is the current effective hash. That is exactly a legitimate BA-* widening
+            # taking effect mid-run; any other transition (incl. the RUN1 sed-edit) still PARKS.
+            if key == "policy_hash" and chain_hashes is not None \
+                    and prior in chain_hashes and newval == eff_hash:
+                continue
             print(json.dumps({"error": f"{key}-changed-mid-run", "frozen": prior, "current": newval,
-                              "detail": f"{key} is frozen per run; PARK and require a fresh full review"}))
+                              "detail": f"{key} is frozen per run; PARK and require a fresh full review"
+                                        + (" (a policy change is sanctioned only via a recorded"
+                                           " review-budget amendment)" if key == "policy_hash" else "")}))
             return 4
     out = merge(ledger, rnd, a.slice_id, a.current_diff, a.slug)
     if new_policy_hash is not None:               # round 1 records; later rounds confirmed-equal above
         out["policy_hash"] = new_policy_hash
     if a.contract_hash is not None:
         out["contract_hash"] = a.contract_hash
+    # v0.38 5.3 — persist the verbatim raw response at its canonical name BEFORE recording the
+    # receipt (symmetric with pre_freeze.round<N>.raw.json), then bind it into the ledger.
+    round_no = out["rounds_used"]
+    raw_name = f"{a.slice_id}.round{round_no}.raw.json"
     if a.ledger != "-":
-        os.makedirs(os.path.dirname(a.ledger) or ".", exist_ok=True)
+        reviews_dir = os.path.dirname(os.path.abspath(a.ledger)) or "."
+        os.makedirs(reviews_dir, exist_ok=True)
+        raw_dst = os.path.join(reviews_dir, raw_name)
+        if os.path.exists(raw_dst) and open(raw_dst, "rb").read() != raw_bytes:
+            print(json.dumps({"error": f"refusing to overwrite a DIFFERENT raw receipt {raw_name} "
+                                       "(append-only round history, v0.38 5.3)"}))
+            return 2
+        with open(raw_dst, "wb") as handle:
+            handle.write(raw_bytes)
+    receipts = out.setdefault("round_receipts", [])
+    receipts.append({"round": round_no, "raw_artifact": raw_name,
+                     "raw_sha256": hashlib.sha256(raw_bytes).hexdigest()})
+    if a.ledger != "-":
         json.dump(out, open(a.ledger, "w"), indent=2)
     summary = {"slice_id": out["slice_id"], "rounds_used": out["rounds_used"],
-               "findings": len(out["findings"])}
+               "findings": len(out["findings"]), "raw_receipt": raw_name}
     if _PATH_WARNINGS:
         summary["path_warnings"] = list(_PATH_WARNINGS)   # ambiguous paths kept distinct (F4) — loud, never silent
     print(json.dumps(summary))

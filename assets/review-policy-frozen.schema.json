@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Parallax freeze-time-frozen review policy snapshot (v0.38 5.2)",
+  "description": "The [review] budget/policy actually in force, pinned at spec FREEZE by `scripts/pre-freeze-budget.py pin-policy` into .parallax/<slug>/review-policy.frozen.json and committed with the contract. This closes the RUN1 live finding where a rounds-exceeded epic-gate HOLD was cleared by sed-editing codex.toml max_rounds 2->3 post-hoc and re-stamping the ledgers: from v0.38, scripts/epic-gate.py, scripts/triage.py (--pinned-policy) and scripts/merge-ledger.py evaluate rounds_used against THIS pinned budget — the live codex.toml must hash-match it (mismatch fails closed), and widening is sanctioned ONLY by a recorded review-budget amendment (scripts/contract-amend.py, kind review-budget-amendment) whose chain starts from this snapshot's policy_hash. Never edited in place; pin-policy refuses to overwrite a different snapshot.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "slug", "pinned_at", "source_policy_sha256", "policy", "pre_freeze_max_rounds", "policy_hash"],
+  "properties": {
+    "schema_version": { "const": "parallax-review-policy-frozen-v1" },
+    "slug": { "type": "string", "minLength": 1 },
+    "pinned_at": { "type": "string", "minLength": 1 },
+    "source_policy_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "sha256 of the raw codex.toml bytes the snapshot was pinned from (full-file provenance)." },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_rounds", "block_severities", "advisory_severities", "always_block_kinds"],
+      "properties": {
+        "max_rounds": { "type": "integer", "minimum": 1 },
+        "block_severities": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "advisory_severities": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "always_block_kinds": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "pre_freeze_max_rounds": { "type": "integer", "minimum": 1 },
+    "policy_hash": { "type": "string", "pattern": "^[0-9a-f]{16}$", "description": "scripts/triage.py policy_hash() canonicalization of `policy` — the same 16-hex value merge-ledger stamps into ledgers, so a ledger is bound to the PINNED policy, not to whatever codex.toml says at gate time." }
+  }
+}

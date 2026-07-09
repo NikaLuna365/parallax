@@ -21,9 +21,13 @@ For ref R = --feature-ref, the feature is VERIFIED iff ALL hold:
      (spec/slices/validation/slices.lock — so neither the policy nor the spec was swapped after review),
      rounds_used >= 1 (a verifier actually ran), and triages GREEN against the diff its fixes were proven at.
 
-The policy is read from the COMMITTED .parallax/codex.toml at R (NOT the working tree — an operator could
-swap a permissive one in at gate time). run-state, every ledger and slices.lock are validated fail-closed
-(no jsonschema / invalid => HOLD). Exit: 0 verified (advance), 1 hold (do NOT advance), 3 bad input.
+v0.38 5.2 (gates A3/A5): the review policy/budget AUTHORITY is the committed freeze-time snapshot
+`.parallax/<slug>/review-policy.frozen.json` plus its recorded review-budget-amendment chain
+(BA-*.json) — never the live OR committed codex.toml. The committed codex.toml must hash-MATCH the
+effective pinned policy or the gate HOLDS: a post-freeze `sed` of max_rounds (the RUN1 live bypass)
+mismatches the pin, and re-stamped ledgers point at a hash no recorded amendment sanctions. run-state,
+every ledger and slices.lock are validated fail-closed (no jsonschema / invalid => HOLD).
+Exit: 0 verified (advance), 1 hold (do NOT advance), 3 bad input.
 
 Usage:
     epic-gate.py --feature-ref <ref> --slug <slug> [--repo <dir>]
@@ -32,9 +36,11 @@ import argparse, json, os, subprocess, sys, tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import triage as T
+import budget_chain as BC
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _SCHEMA_LEDGER     = os.path.join(_HERE, "..", "assets", "codex", "review-ledger.schema.json")
+_SCHEMA_ROUND      = os.path.join(_HERE, "..", "assets", "codex", "review-round.schema.json")
 _SCHEMA_RUNSTATE   = os.path.join(_HERE, "..", "assets", "run-state.schema.json")
 _SCHEMA_SLICESLOCK = os.path.join(_HERE, "..", "assets", "slices-lock.schema.json")
 _SCHEMA_FEATURE    = os.path.join(_HERE, "..", "assets", "feature-state.schema.json")
@@ -141,8 +147,45 @@ def gate(repo, ref, slug):
         if rs.get("feature_id") is not None and rs.get("feature_id") != fs.get("feature_id"):
             return False, {"feature_state": "run-state feature_id != feature-state feature_id"}
 
-    # policy from the COMMITTED config, never the working tree (P0#1)
-    policy, phash = _committed_policy(repo, ref)
+    # v0.38 5.2 (gates A3/A5) — the review budget/policy AUTHORITY is the freeze-time-frozen
+    # snapshot + its recorded budget-amendment chain, both read COMMITTED at the ref. The
+    # committed codex.toml is no longer authority — it must merely hash-MATCH the effective
+    # pinned policy, so the RUN1 bypass (sed-edit max_rounds 2->3 post-hoc, re-stamp the
+    # ledgers, commit) now fails closed twice over: the edited toml mismatches the pinned
+    # hash, and the re-stamped ledgers point at a hash no recorded amendment sanctions.
+    pin_raw = _git_show(repo, ref, f".parallax/{slug}/review-policy.frozen.json")
+    if pin_raw is None:
+        return False, {"pinned_policy": f"no committed .parallax/{slug}/review-policy.frozen.json — "
+                                        "the round budget must be pinned at freeze (v0.38 5.2); "
+                                        "a run without a pinned budget cannot be gated"}
+    try:
+        frozen = json.loads(pin_raw)
+    except Exception as e:
+        return False, {"pinned_policy": f"bad json: {e}"}
+    # committed budget amendments (BA-*) at the ref — the ONLY sanctioned widening path
+    p = subprocess.run(["git", "-C", repo, "ls-tree", "-r", "--name-only", ref,
+                        f".parallax/{slug}/amendments"], capture_output=True, text=True)
+    ba_records = []
+    for path in [l for l in p.stdout.splitlines() if l.endswith(".json")]:
+        raw = _git_show(repo, ref, path)
+        try:
+            ba_records.append(json.loads(raw))
+        except Exception as e:
+            return False, {"pinned_policy": f"bad amendment {path}: {e}"}
+    try:
+        policy, phash, ba_chain = BC.effective_policy(frozen, ba_records, slug)
+        # every hash on the sanctioned chain: a ledger stamped at the pin or at any recorded
+        # amendment step is legitimate history; a hash OUTSIDE the chain is a swap.
+        chain_hashes = {frozen["policy_hash"]}
+        chain_hashes.update(r["new_policy_hash"] for r in BC.budget_records(ba_records))
+    except BC.BudgetError as e:
+        return False, {"pinned_policy": f"budget authority invalid (fail closed): {e}"}
+    # the committed codex.toml must MATCH the effective pinned policy — an edit is not authority
+    _live_policy, live_hash = _committed_policy(repo, ref)
+    if live_hash != phash:
+        return False, {"pinned_policy": f"committed codex.toml policy hash {live_hash!r} != effective "
+                                        f"pinned policy {phash!r} (chain {ba_chain or ['<none>']}) — "
+                                        "editing codex.toml is not a budget amendment (v0.38 5.2)"}
     # frozen normative contract (spec/slices/validation/slices.lock) recomputed from the committed commit
     # (v0.26 P0) — each ledger's contract_hash must equal this, so the spec can't be rewritten after review.
     chash = _contract_hash(repo, ref, slug)
@@ -194,14 +237,43 @@ def gate(repo, ref, slug):
             results[sid] = f"ledger slug={ledger.get('slug')!r} != {slug!r}"; verified = False; continue
         if ledger.get("slice_id") != sid:
             results[sid] = f"identity mismatch: ledger slice_id={ledger.get('slice_id')!r} != {sid!r}"; verified = False; continue
-        if ledger.get("policy_hash") != phash:                      # P0#1 — same policy as committed
-            results[sid] = f"policy_hash {ledger.get('policy_hash')!r} != committed-policy {phash!r}"; verified = False; continue
+        if ledger.get("policy_hash") not in chain_hashes:           # P0#1 + v0.38 5.2: must sit ON the sanctioned chain
+            results[sid] = (f"policy_hash {ledger.get('policy_hash')!r} is not on the sanctioned "
+                            f"budget chain (pinned {frozen['policy_hash']!r} -> effective {phash!r}) — "
+                            "a re-stamp not backed by a recorded amendment fails closed (v0.38 5.2)"); verified = False; continue
         if ledger.get("contract_hash") != chash:                    # v0.26 P0 — same spec/validation as committed
             results[sid] = f"contract_hash {ledger.get('contract_hash')!r} != committed-contract {chash!r}"; verified = False; continue
         if int(ledger.get("rounds_used", 0)) < 1:
             results[sid] = "rounds_used<1 (no verifier round ran)"; verified = False; continue
+        # v0.38 5.3 (gate A4) — every round must be backed by a COMMITTED, sha256-matching,
+        # schema-valid raw provider response. The receipts in the ledger alone are not proof:
+        # re-read each raw file at the ref and re-derive both properties, so a hand-authored
+        # verdict (the RUN1 S2 malformed-envelope extraction) cannot survive to the gate.
+        rerr = T.receipts_cover_rounds(ledger)
+        if rerr:
+            results[sid] = rerr; verified = False; continue
+        raw_bad = None
+        for receipt in ledger.get("round_receipts", []):
+            raw_path = f".parallax/{slug}/reviews/{receipt['raw_artifact']}"
+            raw = _git_show(repo, ref, raw_path)
+            if raw is None:
+                raw_bad = f"receipt round {receipt['round']}: no committed {raw_path}"; break
+            import hashlib as _hashlib
+            if _hashlib.sha256(raw.encode()).hexdigest() != receipt["raw_sha256"]:
+                raw_bad = f"receipt round {receipt['round']}: committed raw sha256 != receipt (tampered)"; break
+            try:
+                raw_doc = json.loads(raw)
+            except Exception as e:
+                raw_bad = f"receipt round {receipt['round']}: raw not JSON ({e})"; break
+            rverr = _validate(raw_doc, _SCHEMA_ROUND)
+            if rverr:
+                raw_bad = f"receipt round {receipt['round']}: raw {rverr}"; break
+        if raw_bad:
+            results[sid] = raw_bad; verified = False; continue
         if int(ledger.get("rounds_used", 0)) > policy["max_rounds"]:
-            results[sid] = "rounds-exceeded"; verified = False; continue
+            results[sid] = (f"rounds-exceeded (used {ledger.get('rounds_used')}, PINNED budget "
+                            f"{policy['max_rounds']} — widening requires a recorded review-budget "
+                            "amendment, never a codex.toml edit; v0.38 5.2)"); verified = False; continue
         diff, derr = _verified_diff(ledger)
         if derr:
             results[sid] = derr; verified = False; continue

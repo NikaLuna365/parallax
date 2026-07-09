@@ -46,6 +46,7 @@ _EPIC_GATE = os.path.join(_HERE, "epic-gate.py")
 _CODE_TREE_HASH_SH = os.path.join(_HERE, "code-tree-hash.sh")
 _ASSETS = os.path.join(_HERE, "..", "assets")
 _SCHEMA_ARBITER = os.path.join(_ASSETS, "arbiter-receipt.schema.json")
+_SCHEMA_SWEEP   = os.path.join(_ASSETS, "sweep-receipt.schema.json")
 _SCHEMA_RUNSTATE = os.path.join(_ASSETS, "run-state.schema.json")
 _SCHEMA_RUNEVIDENCE = os.path.join(_ASSETS, "run-evidence.schema.json")
 _SCHEMA_EVENT = os.path.join(_ASSETS, "run-evidence-event.schema.json")
@@ -165,6 +166,7 @@ def gate(repo, ref, slug):
     if evt_bytes is None:
         return 1, {"evidence": f"missing committed .parallax/{slug}/evidence/events.jsonl"}
     saw_terminal = False
+    iter_events = 0
     for i, line in enumerate(evt_bytes.decode("utf-8", "replace").splitlines(), 1):
         if not line.strip():
             continue
@@ -177,8 +179,19 @@ def gate(repo, ref, slug):
             return 1, {"events": f"line {i} {everr}"}
         if ev.get("event_type") == "run_completed" and ev.get("run_id") == rid and ev.get("slug") == slug:
             saw_terminal = True
+        if ev.get("event_type") == "arbiter_iteration_started":
+            iter_events += 1
     if not saw_terminal:
         return 1, {"events": f"no run_completed event with run_id={rid!r} slug={slug!r}"}
+    # (14b, v0.38 D1) iteration self-audit — the RUN1 timeline logged 5 arbiter_iteration_started
+    # for 14 actual iterations. FLAG (never hold) when run-state's own counters exceed the logged
+    # events, so an auditor trusting events.jsonl alone learns it under-counts.
+    iter_claimed = sum(int(s.get("iterations") or 0) for s in rs.get("slices", []))
+    telemetry_warning = None
+    if iter_claimed > iter_events:
+        telemetry_warning = (f"run-state claims {iter_claimed} arbiter iterations but events.jsonl "
+                             f"logs only {iter_events} arbiter_iteration_started — per-iteration "
+                             "event emission was incomplete (v0.38 D1 self-audit; non-blocking)")
 
     # (15) committed evidence byte hashes == completion.*_sha256
     rev_sha = hashlib.sha256(ev_bytes).hexdigest()
@@ -219,6 +232,32 @@ def gate(repo, ref, slug):
     if bad:
         return 1, {"arbiter_receipts": bad}
 
+    # (18, v0.38 D2) the whole-feature sweep must be RECEIPTED, not prose. The RUN1 terminal
+    # event said "feature-sweep clean" with empty artifact_paths and nothing on disk — from
+    # v0.38 completion requires a committed, schema-valid sweep receipt whose verdict is clean
+    # and whose manifest_sha256 matches the committed invariants.json bytes.
+    sw_raw = _git_show(repo, ref, f".parallax/{slug}/sweep-receipt.json")
+    if sw_raw is None:
+        return 1, {"sweep": f"no committed .parallax/{slug}/sweep-receipt.json — 'feature-sweep "
+                            "clean' as prose is not a receipt (v0.38 D2)"}
+    try:
+        sw = json.loads(sw_raw)
+    except Exception as e:
+        return 1, {"sweep": f"bad json: {e}"}
+    swerr = _validate(sw, _SCHEMA_SWEEP)
+    if swerr:
+        return 1, {"sweep": swerr}
+    if sw.get("slug") != slug:
+        return 1, {"sweep": f"receipt slug {sw.get('slug')!r} != {slug!r}"}
+    if sw.get("verdict") != "clean":
+        return 1, {"sweep": f"receipt verdict {sw.get('verdict')!r} != 'clean'"}
+    inv_bytes = _git_show_bytes(repo, ref, f".parallax/{slug}/invariants.json")
+    if inv_bytes is None:
+        return 1, {"sweep": "receipt present but no committed invariants.json to bind it to"}
+    if sw.get("manifest_sha256") != hashlib.sha256(inv_bytes).hexdigest():
+        return 1, {"sweep": "receipt manifest_sha256 != committed invariants.json (the sweep ran "
+                            "against a different manifest)"}
+
     # (17b) delegate the deep verifier/contract/tree/slice-set checks to epic-gate.py
     p = subprocess.run(
         ["python3", _EPIC_GATE, "--feature-ref", ref, "--slug", slug, "--repo", repo],
@@ -227,8 +266,11 @@ def gate(repo, ref, slug):
     if p.returncode != 0:
         return 1, {"epic_gate": "hold", "detail": (p.stdout.strip() or p.stderr.strip())}
 
-    return 0, {"verdict": "finalize-ok", "freshness": "bound",
-               "arbiter_receipts": "all-green", "epic_gate": "verified"}
+    out = {"verdict": "finalize-ok", "freshness": "bound",
+           "arbiter_receipts": "all-green", "sweep": "receipted-clean", "epic_gate": "verified"}
+    if telemetry_warning:
+        out["telemetry_warning"] = telemetry_warning
+    return 0, out
 
 
 def main(argv):

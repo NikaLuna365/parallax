@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Parallax whole-feature sweep receipt (v0.38 D2)",
+  "description": "Structured proof that scripts/feature-sweep.py actually EXECUTED against the integrated tree, written by the sweep itself (--receipt) at .parallax/<slug>/sweep-receipt.json and committed with the terminal bundle. Closes the RUN1 gap where the terminal event asserted 'feature-sweep clean' as prose with empty artifact_paths and nothing on disk: scripts/finalize-gate.py now refuses completion unless a committed receipt validates here, its verdict is clean, and its manifest_sha256 matches the committed invariants.json bytes (the sweep provably ran against THE manifest, not a different one).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "slug", "verdict", "manifest_sha256", "checked", "violations", "swept_at"],
+  "properties": {
+    "schema_version": { "const": "parallax-sweep-receipt-v1" },
+    "slug": { "type": "string", "minLength": 1 },
+    "verdict": { "enum": ["clean", "violations"] },
+    "manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "sha256 of the invariants.json bytes the sweep ran against — finalize-gate re-derives this from the committed manifest and requires the match." },
+    "checked": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["forbidden", "consumers", "mock_only"],
+      "properties": {
+        "forbidden": { "type": "integer", "minimum": 0 },
+        "consumers": { "type": "integer", "minimum": 0 },
+        "mock_only": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "violations": { "type": "array", "items": { "type": "object" } },
+    "swept_at": { "type": "string", "minLength": 1 }
+  }
+}

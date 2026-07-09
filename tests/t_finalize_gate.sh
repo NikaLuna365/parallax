@@ -38,7 +38,7 @@ def evt(et="run_completed", run_id="r"):
             "event_type":et,"actor":"main","summary":"x","artifact_paths":{}}
 
 def build(completion=True, arbiter=True, evidence=True, gu=False,
-          bad_ts=False, ev_runid="r", terminal=True, tamper=False, tree_bad=False):
+          bad_ts=False, ev_runid="r", terminal=True, tamper=False, tree_bad=False, sweep=True):
     R=tempfile.mkdtemp(); sh("git","init","-q",R)
     sh("git","-C",R,"config","user.email","t@t"); sh("git","-C",R,"config","user.name","t")
     os.makedirs(R+"/src"); os.makedirs(R+"/.parallax/demo/reviews")
@@ -49,15 +49,29 @@ def build(completion=True, arbiter=True, evidence=True, gu=False,
     open(R+"/.parallax/demo/slices.md","w").write("S1, S2\n")
     open(R+"/.parallax/demo/validation.md","w").write("full: npm test\n")
     w(R+"/.parallax/demo/slices.lock", {"slug":"demo","slices":["S1","S2"]})
+    # v0.38 5.2 — pinned budget authority, committed with the contract
+    sh("python3", os.path.join(PLUGIN,"scripts/pre-freeze-budget.py"), "pin-policy",
+       "--policy", R+"/.parallax/codex.toml", "--slug","demo",
+       "--out", R+"/.parallax/demo/review-policy.frozen.json")
     sh("git","-C",R,"add","-A"); sh("git","-C",R,"commit","-q","-m","frozen")
     vt=sh("bash",TH,"HEAD",R).stdout.strip(); ch=sh("bash",CH,"HEAD","demo",R).stdout.strip()
     for sid in ("S1","S2"):
+        raw=json.dumps({"verdict":"pass","findings":[]}).encode()               # v0.38 5.3 raw receipt
+        open(f"{R}/.parallax/demo/reviews/{sid}.round1.raw.json","wb").write(raw)
         w(f"{R}/.parallax/demo/reviews/{sid}.json",
-          {"slug":"demo","slice_id":sid,"rounds_used":1,"policy_hash":PHASH,"contract_hash":ch,"findings":[]})
+          {"slug":"demo","slice_id":sid,"rounds_used":1,"policy_hash":PHASH,"contract_hash":ch,
+           "round_receipts":[{"round":1,"raw_artifact":f"{sid}.round1.raw.json",
+                              "raw_sha256":hashlib.sha256(raw).hexdigest()}],"findings":[]})
         if arbiter:
             w(f"{R}/.parallax/demo/arbiter/{sid}.json",
               {"schema_version":"parallax-arbiter-receipt-v1","slug":"demo","slice_id":sid,
                "arbiter":"arbiter-1","verdict":"green","verified_diff":VD[sid]})
+    # v0.38 D2 — committed invariants manifest + an EXECUTED, receipted sweep (prose is not proof)
+    w(R+"/.parallax/demo/invariants.json", {"schema_version":"parallax-feature-invariants-v1","slug":"demo",
+      "forbidden_patterns":[],"required_consumers":[],"mock_only_slices":[]})
+    if sweep:
+        subprocess.run(["python3", os.path.join(PLUGIN,"scripts/feature-sweep.py"),
+                        "--repo", R, "--slug", "demo", "--receipt"], capture_output=True, text=True, check=True)
     rev_p=R+"/.parallax/demo/evidence/run-evidence.json"; evt_p=R+"/.parallax/demo/evidence/events.jsonl"
     if evidence:
         w(rev_p, runev(run_id=ev_runid))
@@ -83,6 +97,7 @@ def fg(R): return sh("python3",FG,"--feature-ref","HEAD","--slug","demo","--repo
 
 cases={
  "happy":              (fg(build()), 0),
+ "no-sweep-receipt":   (fg(build(sweep=False)), 1),   # v0.38 D2: 'clean' as prose is not a receipt
  "no-completion":      (fg(build(completion=False)), 1),   # old weak path: updated_at present, no completion
  "bad-timestamp":      (fg(build(bad_ts=True)), 1),
  "evidence-runid":     (fg(build(ev_runid="other")), 1),

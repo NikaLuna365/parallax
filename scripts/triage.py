@@ -115,6 +115,20 @@ def validate_ledger(ledger, schema_path, require=True):
         return f"ledger-schema-invalid: {getattr(e, 'message', e)}"
 
 
+def receipts_cover_rounds(ledger):
+    """v0.38 5.3 (gate A4) — every consumed round must carry a raw receipt. Returns an error
+    string (=> escalate) or None. merge-ledger.py is the only writer of receipts and persists
+    the verbatim raw response before recording one, so a rounds_used with no matching receipt
+    means the round history was hand-assembled — exactly the hand-authored-pass path this
+    closes. Rounds must be receipted 1..N exactly (no gaps, no extras)."""
+    rounds_used = int(ledger.get("rounds_used", 0))
+    got = sorted(int(r.get("round", 0)) for r in ledger.get("round_receipts", []))
+    if got != list(range(1, rounds_used + 1)):
+        return (f"round-receipts-incomplete: rounds_used={rounds_used} but receipted rounds are "
+                f"{got} — a verifier round with no persisted raw receipt does not count (v0.38 5.3)")
+    return None
+
+
 def triage(ledger, policy, current_diff):
     blockers, contests, advisories = [], [], []
     for f in ledger.get("findings", []):
@@ -136,10 +150,42 @@ def triage(ledger, policy, current_diff):
             "advisories": advisories, "rounds_used": rounds_used, "max_rounds": policy["max_rounds"]}
 
 
+def load_pinned_policy(pinned_path, slug=None):
+    """v0.38 5.2 (gate A3) — policy from the freeze-time-frozen snapshot
+    (.parallax/<slug>/review-policy.frozen.json, written by pre-freeze-budget.py pin-policy),
+    optionally advanced by its recorded review-budget amendment chain (BA-*.json in the
+    sibling amendments/ dir). Fail closed: an unreadable/tampered snapshot or an invalid
+    chain is an error (=> escalate), NEVER a silent fall-back to codex.toml — the pinned
+    snapshot exists precisely so a codex.toml edit cannot move a gate."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "budget_chain", os.path.join(os.path.dirname(os.path.abspath(__file__)), "budget_chain.py"))
+    bc = importlib.util.module_from_spec(spec); spec.loader.exec_module(bc)
+    try:
+        frozen = json.load(open(pinned_path))
+    except Exception as e:
+        return None, None, f"pinned-policy-unreadable: {e}"
+    slug = slug or frozen.get("slug")
+    amend_dir = os.path.join(os.path.dirname(pinned_path), "..", "amendments") \
+        if os.path.basename(os.path.dirname(pinned_path)) == "reviews" \
+        else os.path.join(os.path.dirname(pinned_path), "amendments")
+    try:
+        records = bc.load_amendment_files(os.path.normpath(amend_dir))
+        policy, phash, chain = bc.effective_policy(frozen, records, slug)
+    except bc.BudgetError as e:
+        return None, None, f"pinned-policy-invalid: {e}"
+    return policy, {"policy_hash": phash, "chain": chain}, None
+
+
 def main(argv):
     ap = argparse.ArgumentParser()
     ap.add_argument("ledger")
     ap.add_argument("--policy", help="path to the TRUSTED .parallax/codex.toml")
+    ap.add_argument("--pinned-policy", dest="pinned_policy",
+                    help="v0.38 5.2: path to .parallax/<slug>/review-policy.frozen.json — the "
+                         "freeze-time-frozen budget authority (+ BA-* amendment chain). When given "
+                         "it OVERRIDES --policy for disposition; unreadable/invalid => escalate, "
+                         "never a silent codex.toml fallback.")
     ap.add_argument("--current-diff", dest="current_diff", help="SHA of the assembled tree under review (a git write-tree of the staged tree)")
     ap.add_argument("--schema", default="assets/codex/review-ledger.schema.json")
     ap.add_argument("--no-schema-check", dest="no_schema", action="store_true",
@@ -153,10 +199,23 @@ def main(argv):
     schema_err = validate_ledger(ledger, a.schema, require=not a.no_schema)
     if schema_err:
         print(json.dumps({"decision": "escalate", "error": schema_err})); return 2
-    policy, note = load_policy(a.policy)
+    if not a.no_schema:   # the receipt check is structural, like schema validation: same (insecure, tests-only) opt-out
+        receipt_err = receipts_cover_rounds(ledger)
+        if receipt_err:
+            print(json.dumps({"decision": "escalate", "error": receipt_err})); return 2
+    if a.pinned_policy:
+        policy, pin_info, err = load_pinned_policy(a.pinned_policy, ledger.get("slug"))
+        if err:
+            print(json.dumps({"decision": "escalate", "error": err})); return 2
+        note = None
+    else:
+        policy, note = load_policy(a.policy)
+        pin_info = None
     out = triage(ledger, policy, a.current_diff)
     if note:
         out["policy_note"] = note
+    if pin_info:
+        out["pinned_policy"] = pin_info
     print(json.dumps(out))
     return {"green": 0, "block": 1, "escalate": 2}.get(out["decision"], 3)
 
