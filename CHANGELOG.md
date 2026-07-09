@@ -2,6 +2,18 @@
 
 All notable changes to the Parallax plugin. Versions are cumulative.
 
+## 0.38.1 — Release-artifact naming & signing hygiene (no behavior change)
+Packaging correction only. v0.38.0 shipped its checksum file as `SHA256SUMS.v0.38`, dropping the
+patch digit and breaking the full-version convention (`SHA256SUMS.v0.37.5`, etc.). v0.38.1 restores
+`SHA256SUMS.<MAJOR.MINOR.PATCH>`, derives the suffix from the plugin version in the release/verify
+tooling so it can't truncate again, and refreshes `.release-signing/README-verify.md`. No plugin
+code, schema, gate, or runtime behavior changes; the adopt capability and every v0.31–v0.38.0
+boundary are preserved byte-for-byte. The v0.38.0 checksum pair was also renamed to
+`SHA256SUMS.v0.38.0(+.sig)` for a consistent archive (the SSH signature covers file content, not the
+name, so it stays Good). The only in-plugin diff from v0.38.0 is `plugin.json` (version) + this
+`CHANGELOG.md` + the `[release_coherence]` version literal in `tests/run.sh` (a release-metadata
+assertion, not runtime behavior); all scripts, assets, commands, agents, and skills are byte-identical.
+
 ## 0.38.0 — Adopt & Multi-Session Continuity
 A **capability** minor (operational continuity), driven by the v0.37.4 soak (`ANALYSIS_v0.37.4_live_production_runs.md` §4 RUN2, `TRIAGE_v0.37.4_live_runs_to_v0.38.md` Cluster B). Adds `/parallax:run --adopt <slug>` (and `/parallax:auto --adopt`): recover a run interrupted **UNCLEANLY** — a session/context death mid-build (`status=running`, never a clean pause) with in-flight **background** tracks whose completion notifications never crossed the session boundary — **distinct** from the existing clean `--resume` limit-pause. Adopt reconstructs ground truth **git-first** from a new per-slug dispatched-subagent manifest (`subagents.json`), the (v0.37.5-reconciled) checkpoint, and `events.jsonl`; reaps in-flight background branches; re-dispatches only genuinely-missing tracks **blind**; and **fails closed** (escalates) on irreconcilable state — never fabricating a track or marking a slice done without its receipts. A machine-generated `handoff.md` replaces the hand-written `RUN-HANDOFF.md` an operator needed before. **Capability release: public claims stay design-intent until a production soak exercises adopt** (the two v0.37.4 runs are findings, never benchmark evidence). No auto-push to `main`, **no new top-level command** (`--adopt` is a flag), every v0.31–v0.37.5 boundary preserved. As everywhere, **mechanical** = a script/schema the harness executes; **directive** = a prompt-contract obligation the harness can only check is present. Additive: with no interrupted run to adopt, runtime is behaviorally identical to v0.37.5; `--adopt` is opt-in. Depends on v0.37.5 F7 (run-state↔git reconciliation), which it **consumes, not re-implements**.
 

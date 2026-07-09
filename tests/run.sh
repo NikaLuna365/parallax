@@ -986,13 +986,14 @@ echo "[cloud_setup]  (real install attempts, not commented-out — locks #6)"
 grep -qE '^\s*command -v codex .*\|\| npm i -g' scripts/cloud-setup.sh && ok "cloud-setup.sh actually ATTEMPTS the CLI installs (uncommented)" || no "cloud-setup.sh installs are still commented out"
 grep -qiE 'best-effort|adjust the package names' README.md && ok "README is honest about best-effort installs" || no "README overclaims that setup installs"
 
-echo "[release_coherence]  (v0.38.0 — manifest/changelog/docs agree on the release; v0.31-v0.37.5 kept)"
-{ grep -q '"version": "0.38.0"' .claude-plugin/plugin.json \
-  && grep -q '^## 0.38.0' CHANGELOG.md \
+echo "[release_coherence]  (v0.38.1 — manifest/changelog/docs agree on the release; v0.31-v0.38.0 kept)"
+{ grep -q '"version": "0.38.1"' .claude-plugin/plugin.json \
+  && grep -q '^## 0.38.1' CHANGELOG.md \
   && grep -qiF 'adopt' README.md \
   && grep -qiF 'multi-session' README.md \
   && [ -f scripts/adopt-reconcile.py ] && [ -f scripts/subagent-manifest.py ] && [ -f scripts/render-handoff.py ] \
   && [ -f assets/subagents.schema.json ] \
+  && grep -q '^## 0.38.0' CHANGELOG.md \
   && grep -q '^## 0.37.5' CHANGELOG.md \
   && grep -qiF 'self-attestation' README.md \
   && grep -qiF 'pinned' README.md \
@@ -1022,8 +1023,8 @@ echo "[release_coherence]  (v0.38.0 — manifest/changelog/docs agree on the rel
   && [ -f scripts/feature-sweep.py ] && [ -f scripts/contract-amend.py ] \
   && [ -f scripts/evidence-event.py ] && [ -f scripts/strip-openai-schema.py ] \
   && [ -f assets/blindfold-scope.schema.json ]; } \
-  && ok "version 0.38.0 in plugin.json; CHANGELOG has 0.38.0 (0.37.5/0.37.4/0.37.3/0.37.2/0.37.1/0.37.0/0.36.1/0.31.0 kept); README covers adopt & multi-session continuity + governance self-attestation + z.ai + prior boundaries; new v0.38 scripts (adopt-reconcile/subagent-manifest/render-handoff) + subagents schema present" \
-  || no "release coherence: version/changelog/docs not aligned for 0.38.0"
+  && ok "version 0.38.1 in plugin.json; CHANGELOG has 0.38.1 (0.38.0/0.37.5/0.37.4/0.37.3/0.37.2/0.37.1/0.37.0/0.36.1/0.31.0 kept); README covers adopt & multi-session continuity + governance self-attestation + z.ai + prior boundaries; new v0.38 scripts (adopt-reconcile/subagent-manifest/render-handoff) + subagents schema present" \
+  || no "release coherence: version/changelog/docs not aligned for 0.38.1"
 
 echo ""
 echo "== $PASS passed, $FAIL failed =="
