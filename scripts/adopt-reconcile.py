@@ -248,6 +248,19 @@ def adopt(a: argparse.Namespace):
     report["slices"] = slice_reports
     report["escalations"] = escalations
 
+    # A stale dispatched track (its recorded branch vanished) on a slice adopt is still CONTINUING is
+    # never silently dropped: if the slice is genuinely unrecoverable it already escalated above (A5);
+    # if it is recoverable from git under the canonical track branches, surface the vanished record here
+    # so it lands in the handoff and the operator sees the dispatched track that left no branch — the
+    # manifest is a checkpoint, git is the truth, and a stale entry is drift, not a green (TZ §10.2(d)).
+    classified = {r["id"]: r["class"] for r in slice_reports}
+    stale_tracks = [{"slice": sl, "role": rl, "branch": r.get("branch")}
+                    for (sl, rl), r in m_by_key.items()
+                    if r.get("kind") == "missing-branch"
+                    and classified.get(sl) not in ("integrated", "escalate", None)]
+    if stale_tracks:
+        report["stale_dispatched_tracks"] = stale_tracks
+
     # --- 5) FAIL CLOSED on any escalation.
     if escalations:
         report["verdict"] = "escalate"

@@ -171,4 +171,27 @@ assert s9['class']=='in_progress_missing_track' and s9['redispatch']==['test'], 
 assert s9['keep_present']=='code'
 PY
 
+###########################################################################################
+# STALE-TRACK — a manifest entry naming a VANISHED branch on a slice that is otherwise
+# recoverable from the canonical git branches is SURFACED (stale_dispatched_tracks), never
+# silently dropped, and NOT over-escalated (the run stays adoptable — git is the truth).
+###########################################################################################
+R="$T/stale"; newrepo "$R"
+S6C=$(track "$R" S6-code 1); S6T=$(track "$R" S6-test 1)
+python3 "$SM" record "$R/.parallax/demo/subagents.json" --run-id r1 --slug demo --slice S6 --role blind-coder \
+  --branch feature/demo-S6-oldcode --wave-base "$WB" --session-id dead --mode background >/dev/null || fail "STALE: setup"
+cat > "$R/.parallax/demo/run-state.json" <<J
+{"run_id":"r1","slug":"demo","epic":"e","base_tip":"$WB","status":"running","lock":$DEAD_LEASE,
+ "slices":[{"id":"S6","status":"in_progress","code_tip":"$S6C","test_tip":"$S6T","wave_base":"$WB"}],
+ "integrated":[],"updated_at":"t"}
+J
+python3 "$AD" --repo "$R" --slug demo --now "$NOW" >/tmp/parallax_ad_stale || fail "STALE: refused an adoptable run"
+python3 - /tmp/parallax_ad_stale <<'PY' || fail "STALE: vanished dispatched track not surfaced (or over-escalated)"
+import json,sys
+d=json.load(open(sys.argv[1]))
+assert d['verdict']=='adoptable', d['verdict']                          # not over-escalated
+st=d.get('stale_dispatched_tracks') or []
+assert any(t['branch']=='feature/demo-S6-oldcode' for t in st), st      # surfaced, not silently dropped
+PY
+
 echo "t_adopt OK"
