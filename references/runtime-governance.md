@@ -204,6 +204,46 @@ Adopt **never** fabricates a missing track (re-dispatching it blind is not fabri
 artifact would be) and **never** marks a slice done without its arbiter/verifier receipts. That is the
 exact failure this release prevents; the stop conditions are a hard part of the contract.
 
+## v0.39 — gate reachability in the real environment (hand-driven & monorepo)
+The v0.31→v0.38 arc made the gates **mechanical**; the first true multi-package monorepo soak
+(`ANALYSIS_v0.38.1_live_production_runs.md`, `TRIAGE_v0.38.1_live_runs_to_v0.39.md` — findings, not a
+benchmark) showed they are **un-exercised in production**: every run was HAND-DRIVEN, so the gates
+never fired on the box, and the detached-HEAD hazard B1 mechanizes was caught by a human. v0.39 makes
+them reachable on the hand/monorepo path and removes the friction that causes the hand-driving. A
+clean skill-flow run is behaviorally identical to v0.38.1; this only *adds* fail-closed coverage.
+
+- **Hand-driven / degraded finalize (mechanical; gates HG1–HG3).** A **flag on `/parallax:run`'s
+  done-gate** (`--finalize <slug>`, or auto-detected on a hand-integrated slice) — NOT a new command —
+  routes the hand path through `scripts/finalize-handdriven.py`, which REUSES the existing gates:
+  **HG3** refuses a stale tip (`recorded_tip != git rev-parse <branch>`, the B1 invariant on the hand
+  path); **HG2** routes the hand-committed post-green raw verdict through `merge-ledger.py` (schema-gate:
+  a malformed/hand-authored verdict is a provider error) then `triage.py` (must dispose GREEN) before
+  it can unblock a merge; **HG1** emits the adopt-critical receipts and runs `evidence-event.py
+  audit-slice`, failing closed (E1) if an integrated slice lacks them. Harness:
+  `tests/t_finalize_handdriven.sh`.
+- **Monorepo silent-failure guards (mechanical; gates D1/D2).** **D1** — `blindfold-guard.py
+  --assert-pathspec-match` fails closed when the blindfold `git rm` pathspec matches ZERO files (the
+  canonical `**/*.test.ts` silently no-ops on a `src/`-prefixed pnpm workspace, leaving the tree
+  un-blindfolded); a test-less slice records `--allow-no-tests`. **D2** — `scripts/push-guard.sh`: a
+  pre-push `git fetch` + `merge-base --is-ancestor` ancestry check and a `branch-ref == HEAD` assertion
+  after every commit, mechanizing the moving-`main` / detached-HEAD checks the owner did by hand; wired
+  into the Step-4 feature + epic pushes. Harness: `tests/t_monorepo_guards.sh`.
+- **CI/lint parity (mechanical; §5.3).** The validation contract may declare a per-check
+  `ci_equivalent` (whole-tree) command; the arbiter runs the local AND CI-equivalent forms through
+  `scripts/ci-parity.py`, so a slice green locally but red under the whole-tree CI form is NOT green.
+- **F1 guard:196 hardening (mechanical; §5.4).** `blindfold-guard.py --base-ref` — in scope mode a
+  NEW-since-base impl file absent from `protected_impl_paths` fails closed on the test side even under a
+  broad `dependency_allow_globs` root.
+- **Done-gate telemetry regeneration (mechanical; §5.5).** `evidence-event.py update-run
+  --restamp-version` re-stamps `run-evidence.json` to the live plugin version at the done-gate
+  (RUN-A still read a spec-phase-frozen `0.36.1`) and moves `status` off `frozen-spec`.
+- **CLI foot-guns (mechanical; §5.6).** `triage.py --schema` resolves against `__file__` (worktree-safe);
+  `pre-freeze-budget.py record` accepts a JSON string OR a path; a post-dispatch `push-guard.sh
+  committed` assertion confirms each track committed to the RIGHT branch.
+
+**Carried (validation, not code):** the Cluster B adopt soak and the F1g monorepo skill-flow soak are
+scheduled, not discharged — the "gates protect production" claim stays out until one runs.
+
 ## What v0.37 is not
 Not a benchmark or quality claim, not a new product surface, and not a weakening of the Codex
 cross-model verifier (the live runs showed it catches real defects; the fix is controlled

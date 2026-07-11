@@ -1,7 +1,7 @@
 ---
 name: run
 description: "Phase 2-5 of the Parallax pipeline. From a frozen .parallax/ spec, build each slice with a blind test-writer + blind coder in parallel, validate-and-loop through the arbiter until green, then push the feature branch. Run /parallax:spec first."
-argument-hint: "[feature-slug]   [--autonomous]  [--parallel]   [--resume]   [--adopt]"
+argument-hint: "[feature-slug]   [--autonomous]  [--parallel]   [--resume]   [--adopt]   [--finalize]"
 ---
 
 # /parallax:run — build the frozen spec, blind + arbitrated, then push
@@ -18,9 +18,9 @@ You are the **orchestrator** for Phase 2-5. You author **no code and no tests** 
 
 ## Step 0 — Preflight
 
-1. Resolve the slug: use `$ARGUMENTS` if given, else the current `feature/<slug>` branch. **If `--resume` is passed (or a `.parallax/<slug>/run-state.json` with status `paused-on-limit` exists), this is a RESUME:** load that checkpoint and continue from it per *Limits, checkpointing & resume* — skip the fresh dispatch for already-`integrated` slices. **If `--adopt` is passed, this is an ADOPT (v0.38):** the run was interrupted *uncleanly* (`status=running`, the session died, in-flight background tracks) — do **not** trust the checkpoint's `status`; go straight to *Adopt (`--adopt <slug>`)* below, which reconstructs the truth git-first before any dispatch. Otherwise start fresh and create the checkpoint.
+1. Resolve the slug: use `$ARGUMENTS` if given, else the current `feature/<slug>` branch. **If `--resume` is passed (or a `.parallax/<slug>/run-state.json` with status `paused-on-limit` exists), this is a RESUME:** load that checkpoint and continue from it per *Limits, checkpointing & resume* — skip the fresh dispatch for already-`integrated` slices. **If `--adopt` is passed, this is an ADOPT (v0.38):** the run was interrupted *uncleanly* (`status=running`, the session died, in-flight background tracks) — do **not** trust the checkpoint's `status`; go straight to *Adopt (`--adopt <slug>`)* below, which reconstructs the truth git-first before any dispatch. **If `--finalize` is passed — or the done-gate auto-detects a HAND-INTEGRATED slice (a slice whose work is already committed on `feature/<slug>` but with no `events.jsonl` receipt / no machine gate for it) — this is a HAND-DRIVEN FINALIZE (v0.39):** route it through *Hand-driven / degraded finalize* below so the same fail-closed gates that hold in the skill flow (E1 evidence, the post-green merge-ledger/triage gate, the B1 stale-tip refusal) fire on the hand path too, before anything is treated as done or pushed. Otherwise start fresh and create the checkpoint.
 2. Read `PREFIX` from `.parallax/codex.toml` `[git] branch_prefix` (default `feature/`). `git switch ${PREFIX}<slug>`. Confirm `.parallax/<slug>/spec.md`, `.parallax/<slug>/slices.md`, `.parallax/<slug>/validation.md` exist (per-feature subdirectory, not the `.parallax/` root). If not → tell the user to run `/parallax:spec` first and stop.
-3. Confirm a clean working tree and that this is a local repo (`git rev-parse --show-toplevel`). Read the three artifacts. From `.parallax/<slug>/validation.md` extract: `SRC_GLOBS`, `TEST_GLOBS`, and the commands (fast, full, lint, typecheck, build) + external setup. From `.parallax/<slug>/slices.md` extract the ordered slice list with each slice's domain and dependencies.
+3. Confirm a clean working tree and that this is a local repo (`git rev-parse --show-toplevel`). Read the three artifacts. From `.parallax/<slug>/validation.md` extract: `SRC_GLOBS`, `TEST_GLOBS`, and the commands (fast, full, lint, typecheck, build) + external setup. **CI-equivalent (v0.39 §5.3):** a check MAY also declare a `ci_equivalent` command — the **whole-tree** form the repo's CI actually runs (e.g. CI runs `biome` format-only over ALL files while local runs per-file), pointing at the repo's real CI config where one exists. Where a check declares one, the arbiter must run **both** the local form and the CI-equivalent form via `scripts/ci-parity.py` (Step 2b), so "local green" cannot diverge from "CI green" — the exact `parallax-errors.md:88` divergence. From `.parallax/<slug>/slices.md` extract the ordered slice list with each slice's domain and dependencies.
 4. Order the slices by dependency (topological). You will process them **one at a time**; within a slice the two tracks run **in parallel**.
 5. **Cross-branch value scan (catch duplicated business values before they merge).** The blind tracks each build from `main` independently, so neither can see a value that already lives as a named constant on a *sibling* feature branch of the same epic — but once both branches merge, the same tariff/threshold sitting as a bare literal here and a named constant there will silently drift the moment someone edits one. You are the only party that sees across branches, so check now, before dispatching:
    - Pull the salient business values out of `.parallax/<slug>/spec.md` — money amounts, rates, thresholds, fixed quantities, and named sets/enums.
@@ -99,6 +99,14 @@ done
 SRC_PATHSPECS=(  ':(glob)src/**'  )                          # = validation.md SRC_GLOBS
 TEST_PATHSPECS=( ':(glob)tests/**'  ':(glob)**/*.test.*' )   # = validation.md TEST_GLOBS
 
+# v0.39 §5.2 D1 — a zero-match blindfold `git rm` SILENTLY NO-OPS (parallax-errors.md:160): on a
+# src/-prefixed pnpm workspace `:(glob)tests/**` matches nothing, so the code tree is never
+# blindfolded AND nothing is flagged (the tests were simply never removed). Assert the test-side
+# pathspec matches a NON-EMPTY set on the CODE worktree BEFORE the rm (fail closed on a wrong monorepo
+# pathspec); a genuinely test-less slice records that with --allow-no-tests.
+python3 "$ROOT/scripts/blindfold-guard.py" --assert-pathspec-match --repo "$WT/code" \
+  $(printf ' --pathspec %q' "${TEST_PATHSPECS[@]}") \
+  || { echo "PARK: blindfold test-pathspec matches ZERO files on the code tree — a git rm here would silently no-op and leave tests visible to the coder (v0.39 §5.2 D1). Fix the monorepo pathspec (src/ prefix) or pass --allow-no-tests."; exit 2; }
 # Blindfold each track branch by removing the opposite side's tracked files.
 ( cd "$WT/code" && git rm -q -r --ignore-unmatch -- "${TEST_PATHSPECS[@]}" \
     && git commit -q -m "parallax: blindfold code tree (remove tests)" || true )
@@ -137,10 +145,13 @@ fi
 # no tracked test paths, and the test worktree no tracked implementation source OR compiled build output
 # (a committed dist/, an answer-bearing fixture, a leaked source file in a brownfield/monorepo checkout).
 # A leak PARKS the slice fail-closed — it is contamination, never something to "continue anyway" past.
-python3 "$ROOT/scripts/blindfold-guard.py" --worktree "$WT/code" --side code --slug "$SLUG" "${SCOPE_ARGS[@]}" \
+# v0.39 §5.4 — pass --base-ref "$BASE_OID" so that in slice-scoped (monorepo) mode a NEW impl file
+# the coder created but absent from protected_impl_paths still FAILS CLOSED on the test side even
+# under a broad dependency_allow_globs (closes the guard:196 hole; no-op in strict mode / on the code side).
+python3 "$ROOT/scripts/blindfold-guard.py" --worktree "$WT/code" --side code --slug "$SLUG" --base-ref "$BASE_OID" "${SCOPE_ARGS[@]}" \
   || { echo "PARK: code worktree contaminated by test paths — fail closed (v0.37 P0.1)"; exit 2; }
-python3 "$ROOT/scripts/blindfold-guard.py" --worktree "$WT/test" --side test --slug "$SLUG" "${SCOPE_ARGS[@]}" \
-  || { echo "PARK: test worktree contaminated by implementation/compiled output — fail closed (v0.37 P0.1 / v0.37.3 F1)"; exit 2; }
+python3 "$ROOT/scripts/blindfold-guard.py" --worktree "$WT/test" --side test --slug "$SLUG" --base-ref "$BASE_OID" "${SCOPE_ARGS[@]}" \
+  || { echo "PARK: test worktree contaminated by implementation/compiled output OR a new impl file absent from protected_impl_paths — fail closed (v0.37 P0.1 / v0.37.3 F1 / v0.39 §5.4)"; exit 2; }
 ```
 
 Re-run both `blindfold-guard.py` assertions **again before accepting each track's done-gate** (Step 2b), not only at setup — a track can fetch or generate the opposite side's files mid-slice, and the wall must hold on every wave. On every re-check **re-derive the scope manifest first** (`protected_impl_paths` / `protected_test_paths` are each track's committed diff vs the slice's fork point, so they must reflect the track's latest commit) and pass the same `--scope-manifest`; the `dependency_allow_globs` come verbatim from the frozen contract's *Monorepo dependency roots* line and never widen mid-slice. In a plain (non-monorepo) repo `DEP_ALLOW_GLOBS` stays empty and the guard runs the strict whole-tree mode exactly as v0.37. The manifest path exists **only** to retire the documented live-run workaround — a whole-tree `--allow-glob '**'` is never an acceptable monorepo answer, and the scope-manifest schema rejects it mechanically.
@@ -164,6 +175,14 @@ Launch both subagents in a single message (or as background tasks). Give each on
 - → `blind-coder-D` (cwd `$WT/code`): *"Slice `S.id`: `S.description`. Authoritative spec, read it directly: `.parallax/<slug>/spec.md` §<this slice's sections> (this message points to the spec, it does not restate it). Validation contract: `.parallax/<slug>/validation.md` — use its REAL lint/typecheck/build commands. Implement THIS slice only, simplest code that satisfies the spec, per your skills. Report your done-gate result + any candidate spec-gaps."*
 
 Each worker commits its own work to its own branch (`${PREFIX}$SLUG-code` / `${PREFIX}$SLUG-test`). Wait for both done-gates. If either reports a candidate spec-gap, hold and treat it at 2c.
+
+**Post-dispatch commit hygiene (v0.39 §5.6).** A recurring hand-path snag was a track that "didn't commit" or "committed to the wrong branch" (parallax-errors.md:108/114) — silently leaving nothing (or the wrong tree) to assemble. After each track reports its done-gate, assert it actually **committed, to the RIGHT branch**, before assembling:
+```bash
+bash "$ROOT/scripts/push-guard.sh" committed "$ROOT" "$WT/code" "$BASE_OID" "${PREFIX}$SLUG-code" \
+  || { echo "PARK: blind-coder did not commit (or committed to the wrong branch) — nothing to assemble (v0.39 §5.6)"; exit 2; }
+bash "$ROOT/scripts/push-guard.sh" committed "$ROOT" "$WT/test" "$BASE_OID" "${PREFIX}$SLUG-test" \
+  || { echo "PARK: test-writer did not commit (or committed to the wrong branch) (v0.39 §5.6)"; exit 2; }
+```
 
 **Evidence (v0.37.3 F5 — inline, right here, not at the end of the run).** Immediately after launching both subagents, append `slice_dispatched` (actor `main`) via the canonical Step 0.7 call. As each done-gate reports back, append `test_writer_red` (actor `test-writer`) and `blind_coder_done` (actor `blind-coder`), carrying `--branch`/`--commit`/`--worktree` when known. These three calls per slice are what keep `events.jsonl` moving instead of stopping dead after `spec_frozen`.
 
@@ -338,8 +357,11 @@ RE=".parallax/$SLUG/evidence/run-evidence.json"; EV=".parallax/$SLUG/evidence/ev
 EVD_FWT="$FWT/.parallax/$SLUG/evidence"    # RUN_ID as Step 0.7
 # --transcript-path (v0.37.5 D3): the session .jsonl ITSELF when derivable — never the container
 # dir (the RUN2 defect), never invented; omit the flag when genuinely unknown.
-python3 scripts/evidence-event.py update-run "$EVD_FWT" --status complete \
+python3 scripts/evidence-event.py update-run "$EVD_FWT" --status complete --restamp-version \
   --run-id "$RUN_ID" --slug "$SLUG" --feature-tip "$TIP" --dirty-at-end false
+# v0.39 §5.5 (#11) — --restamp-version regenerates run-evidence.json plugin.version to the LIVE plugin
+# version at the done-gate; RUN-A still read a spec-phase-frozen 0.36.1 after a v0.38.1 build. Fires on
+# BOTH the skill-flow done-gate (here) and the hand-driven finalize (finalize-handdriven.py).
 python3 scripts/evidence-event.py append "$EVD_FWT" --run-id "$RUN_ID" --slug "$SLUG" \
   --event-type run_completed --actor main \
   --summary "run complete: all slices integrated and verified" --artifact-paths '{}'
@@ -362,6 +384,10 @@ if ! python3 scripts/finalize-gate.py --feature-ref "$VERIFIED_OID" --slug "$SLU
 fi
 # (d) Push the FEATURE branch AT the pinned OID — reached ONLY after finalize-gate.py passed; the remote
 #     feature == exactly what the gate checked and what may enter the epic (no lag). NEVER --force.
+# v0.39 §5.2 D2 — pre-push guard: the feature ref must be CURRENT (== the pinned OID, not lagging behind
+# a detached HEAD — the RUN-A hazard errors:168), mechanizing what the owner did by hand.
+bash "$ROOT/scripts/push-guard.sh" ref-current "$ROOT" "$TIP_REF" "$VERIFIED_OID" \
+  || { echo "HOLD: feature ref $TIP_REF lags the pinned OID (detached-HEAD lag) — a push would ship an INCOMPLETE tree (v0.39 §5.2 D2). NOT pushed."; exit 2; }
 if git -C "$ROOT" remote get-url origin >/dev/null 2>&1; then
   git -C "$ROOT" push origin "$VERIFIED_OID:refs/heads/$TIP_REF"
 else
@@ -387,6 +413,11 @@ if ! python3 scripts/epic-gate.py --feature-ref "$VERIFIED_OID" --slug "$SLUG"; 
 fi
 # (e) Advance the epic to the SAME pinned OID — immutable across the gate->push window (no TOCTOU, v0.25 P0#1).
 git fetch origin "<epic>"
+# v0.39 §5.2 D2 — pre-push ancestry guard: origin/<epic> (freshly fetched — it moved TWICE mid-run in
+# RUN-A, errors:166) must be an ANCESTOR of the pinned OID, i.e. this push is a real fast-forward. A
+# non-ancestor => the epic advanced => MERGE first (per Content) then push, never a blind non-ff push.
+bash "$ROOT/scripts/push-guard.sh" ancestor "$ROOT" "origin/<epic>" "$VERIFIED_OID" \
+  || { echo "HOLD: origin/<epic> is NOT an ancestor of the pinned OID (the epic moved) — MERGE first, never a blind non-ff push (v0.39 §5.2 D2). Epic NOT advanced."; exit 0; }
 git push origin "$VERIFIED_OID:refs/heads/<epic>"   # rejected if NOT a fast-forward — never --force  (epic should share the PREFIX namespace)
 # Evidence (v0.37.3 F5): the feature entered the epic — record it (and pr_opened/pr_merged when
 # a PR is actually observable, e.g. via gh; absent knowledge stays absent, never invented).
@@ -544,6 +575,23 @@ On a session boundary (a context-exhaustion pause, or an explicit `--adopt`), th
 ### Adopt-critical evidence is mandatory (v0.38 §5.4)
 The evidence events `adopt` depends on — `slice_dispatched` (with its `subagents.json` manifest entry), `session_handoff`, manifest status updates, and the arbiter/verifier receipts — are emitted **even on a hand-driven or degraded path**, or the step **fails closed**. A slice integrated with no `slice_dispatched`/receipt evidence is a later-adopt blind spot; `scripts/evidence-event.py audit-slice` flags it (harness gate E1) rather than letting it pass silently. Adopt-critical evidence is not optional — a degraded mode may skip niceties, never these.
 
+### Hand-driven / degraded finalize (`--finalize <slug>` — v0.39 §5.1; make the gates fire on the box)
+The v0.38.1 monorepo soak found **every** production run was hand-driven — slices integrated by hand on `feature/<slug>` with post-green verdicts hand-committed as `reviews/*.raw.json`, **no** `events.jsonl` receipt, **no** `merge-ledger`/`triage` gate, E1 never enforced — so the v0.38 mechanization never executed where the risk lives, and the detached-HEAD hazard B1 targets was caught by a human, not the machinery. This entry routes the hand path through the **same fail-closed gates** as the skill flow. It is a **flag on this command's done-gate, not a new command**; the done-gate also **auto-detects** a hand-integrated slice (committed on `feature/<slug>` with no matching `events.jsonl` receipt) and refuses to treat it as done until it passes here. Before a hand-integrated slice may be treated as done or pushed, run `scripts/finalize-handdriven.py` per slice — it **reuses** the existing gates and fails closed on any:
+```bash
+ROOT=$(git rev-parse --show-toplevel); SLUG="<slug>"; SID="S<n>"
+PREFIX="$(awk -F'"' '/^\[git\]/{g=1} g&&/^branch_prefix/{print $2; exit}' .parallax/codex.toml 2>/dev/null)"; PREFIX="${PREFIX:-feature/}"
+EVD=".parallax/$SLUG/evidence"; RUN_ID="$(python3 -c 'import json;print(json.load(open(".parallax/'"$SLUG"'/evidence/run-evidence.json"))["run"]["run_id"])' 2>/dev/null || echo "handdriven-$SLUG")"
+python3 scripts/finalize-handdriven.py --repo "$ROOT" --slug "$SLUG" --evidence-dir "$EVD" --run-id "$RUN_ID" \
+  --slice "$SID" --branch "${PREFIX}$SLUG" --recorded-tip "$(git -C "$ROOT" rev-parse "${PREFIX}$SLUG")" \
+  --raw-verdict ".parallax/$SLUG/reviews/$SID.raw.json" --ledger ".parallax/$SLUG/reviews/$SID.json" \
+  --current-diff "$DIFF" --pinned-policy ".parallax/$SLUG/review-policy.frozen.json" \
+  || { echo "HOLD: hand-driven finalize failed closed for $SID — a stale tip (HG3), a rejected/hand-authored verdict (HG2), or a missing receipt (HG1). NOTHING treated as done or pushed."; exit 2; }
+```
+- **HG3 — stale tip.** `git rev-parse ${PREFIX}$SLUG` must equal the recorded tip (the B1 invariant on the hand path: git is the truth). A lagging/advanced ref refuses — the exact RUN-A detached-HEAD near-miss, now machine-caught.
+- **HG2 — the post-green verdict is gated, never trusted.** The hand-committed raw verdict is routed through `merge-ledger.py` (schema-gate: a malformed/hand-authored verdict is a **provider error**, rejected) then `triage.py` (must dispose GREEN under the pinned policy) before it can unblock a merge.
+- **HG1 — evidence fail-closed.** Only after HG2 gates the verdict GREEN, the adopt-critical receipts (`slice_dispatched` + `arbiter_green`) are emitted into `events.jsonl` and `evidence-event.py audit-slice` runs; an integrated slice still missing its receipts fails closed (E1 on the hand path). Then run-evidence is **re-stamped** to the live plugin version (§5.5).
+After all slices pass, the normal `finalize-gate.py` (Step 4) still runs — the hand path does not bypass it; it feeds it. Nothing reaches `main`; epic → `main` stays a human PR.
+
 ### Driving the hourly retry (scheduler-agnostic)
 The plugin provides `--resume` + the checkpoint; the **hourly trigger is external** (same headlessness as §3.5 scheduling): `cron`/CI calling `claude -p "/parallax:run --resume <slug>"` (or `/parallax:auto --resume <slug>`) each hour, or a Cowork scheduled task. Interval defaults to 60 min (`[retry]` in `.parallax/codex.toml`); if the limit error carried a `retry_after`, prefer it over blind hourly. The schedule **self-terminates**: a resume that finds `status = complete` no-ops and reports done (remove the schedule). Nothing reaches `main` regardless — epic → `main` is always a human PR.
 
@@ -572,7 +620,7 @@ When `[notify]` in `.parallax/codex.toml` is enabled, the orchestrator pushes **
 - **You author nothing.** No editing src or tests. You orchestrate git + dispatch + routing only.
 - **Hub-and-spoke / the blindness wall:** all coordination flows through you; workers never talk to each other; only the arbiter's natural-language analysis crosses to a worker — **never** raw test code to the coder, **never** raw implementation to the test-writer.
 - **Dispatch points, never paraphrases.** Worker dispatch messages carry role, paths, commands, and spec-section pointers only — never a restatement of the spec's normative content (see Step 2a). A paraphrase is a competing, weaker source of truth that can pull a worker off the frozen spec; the spec is the single place a worker reads behavior from.
-- **Real checks only:** every gate (worker done-gates and the arbiter) runs the commands in `.parallax/<slug>/validation.md` verbatim. Never substitute, weaken, or invent a check — a made-up check that "passes" is the documented cause of false-green completions.
+- **Real checks only:** every gate (worker done-gates and the arbiter) runs the commands in `.parallax/<slug>/validation.md` verbatim. Never substitute, weaken, or invent a check — a made-up check that "passes" is the documented cause of false-green completions. **CI parity (v0.39 §5.3):** where a check declares a `ci_equivalent` (whole-tree) command, the arbiter runs the local form **and** the CI-equivalent form through `scripts/ci-parity.py`; a slice whose per-file local check passes but whose declared whole-tree CI form **fails** is **NOT green** (local-green must equal CI-green for the declared checks).
 - **Epic integration — a three-level contract.** Folding a slice/feature into an integration or epic branch is governed at three distinct levels; keep them separate (the word *fast-forward* names a kind of **push / ref-update**, not a kind of merge). This defeats the `3be6cee` incident class, where a content-copy silently dropped a fix and its regression test while every check stayed green:
   - *Invariant (the root).* `origin/<epic>`'s history is **append-only** — any commit ever pushed to the epic stays an ancestor of it forever; nothing may drop a commit back out. The machine check is the preflight ancestor scan (Step 0.6).
   - *Content.* A feature enters the epic **only via `git merge` of its real tip** (a degenerate fast-forward merge is fine; **rebase, squash, and content-rebuild are forbidden**). *(This governs **feature → epic**, where the tree is clean. **Within** a feature, parallel blindfold track branches are **assembled** per Step 2b — never merged — since a track branch's blindfold commit `git rm`'d the other side, and merging it would propagate that deletion.)* After any **non-degenerate** merge, run the **full validation suite on the merged tree before pushing** — a real merge yields a tree neither side validated alone (the "final whole-feature check" extended to integration merges).

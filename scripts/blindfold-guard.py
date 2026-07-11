@@ -165,13 +165,26 @@ def load_scope(path, expect_slug):
     return doc
 
 
-def guard(worktree, side, test_glob, impl_glob, compiled_glob, allow_glob, scope=None):
+def _tree_files(repo, ref):
+    """Tracked file set at a git ref (for --base-ref new-vs-base detection). None on failure."""
+    p = subprocess.run(["git", "-C", repo, "ls-tree", "-r", "--name-only", ref],
+                       capture_output=True, text=True)
+    if p.returncode != 0:
+        return None
+    return {l for l in p.stdout.splitlines() if l}
+
+
+def guard(worktree, side, test_glob, impl_glob, compiled_glob, allow_glob, scope=None, new_impl_paths=None):
     files, err = _tracked(worktree)
     if files is None:
         return 3, {"error": f"git ls-files failed in {worktree!r}: {err}"}
     protected_impl = set(scope["protected_impl_paths"]) if scope else set()
     protected_test = set(scope["protected_test_paths"]) if scope else set()
     dep_globs = list(scope["dependency_allow_globs"]) if scope else []
+    # v0.39 §5.4 — files created SINCE the slice's base (fork point). In scope mode, a NEW impl
+    # file is the slice's OWN work even if it sits under a broad dependency_allow_globs root, so it
+    # must fail closed on the test side even though the base tree under that root is visible.
+    new_impl = set(new_impl_paths) if new_impl_paths else set()
     allowed = lambda f: any(fnmatch.fnmatch(f, g) for g in allow_glob)
     dep_allowed = lambda f: any(fnmatch.fnmatch(f, g) for g in dep_globs)
     offending = []
@@ -187,6 +200,15 @@ def guard(worktree, side, test_glob, impl_glob, compiled_glob, allow_glob, scope
             if f in protected_impl:
                 offending.append({"path": f, "why": "implementation-source-visible-to-test-writer",
                                   "protected": True})
+                continue
+            # v0.39 §5.4 (guard:196 hardening) — a NEW-since-base implementation file the manifest
+            # DID NOT list is still the slice's own new work; in scope mode it would otherwise be
+            # masked by a broad dependency_allow_globs (e.g. src/packages/shared/**). Check it
+            # BEFORE the allow/dep-glob short-circuit so no allowlist can hide it (fail closed).
+            if scope is not None and f in new_impl and (not is_test) and _is_impl(f, impl_glob) \
+               and not _is_compiled(f, compiled_glob):
+                offending.append({"path": f, "why": "new-implementation-source-visible-to-test-writer-absent-from-protected",
+                                  "new_since_base": True})
                 continue
             if allowed(f) or dep_allowed(f):
                 continue
@@ -215,11 +237,46 @@ def guard(worktree, side, test_glob, impl_glob, compiled_glob, allow_glob, scope
     return 0, {"verdict": "clean", "side": side, "tracked": len(files)}
 
 
+def assert_pathspec_match(a):
+    """v0.39 §5.2 D1 — fail closed on a zero-match blindfold pathspec. The canonical blindfold
+    `git rm '**/*.test.ts'` silently NO-OPS on a src/-prefixed pnpm workspace (parallax-errors.md:160):
+    the pathspec matches zero files, so the tree is never blindfolded and no leak is flagged (there
+    is nothing to flag — the tests were simply never removed). This asserts the test-side pathspec
+    matches a NON-EMPTY set of files on the source ref, so a wrong monorepo pathspec cannot let the
+    blindfold no-op silently. A slice that genuinely has no test files records that with --allow-no-tests."""
+    if not a.pathspec:
+        print(json.dumps({"error": "assert-pathspec-match requires at least one --pathspec"}))
+        return 3
+    repo = a.repo or a.worktree
+    # `git ls-files` (unlike `git ls-tree`) honors :(glob) pathspec magic — the SAME matching the
+    # blindfold `git rm -- "${TEST_PATHSPECS[@]}"` uses on the worktree — so this asserts exactly what
+    # the rm would remove. Run in the worktree BEFORE the rm.
+    cmd = ["git", "-C", repo, "ls-files", "--", *a.pathspec]
+    p = subprocess.run(cmd, capture_output=True, text=True)
+    if p.returncode != 0:
+        print(json.dumps({"error": f"git ls-files failed in {repo!r}: {p.stderr.strip()}"}))
+        return 3
+    matched = [l for l in p.stdout.splitlines() if l]
+    if not matched:
+        if a.allow_no_tests:
+            print(json.dumps({"verdict": "no-tests-ok", "pathspec": a.pathspec,
+                              "note": "zero match ALLOWED — slice explicitly recorded as test-less (--allow-no-tests)"}))
+            return 0
+        print(json.dumps({"verdict": "zero-match", "pathspec": a.pathspec,
+                          "error": "blindfold pathspec matches ZERO files — a `git rm` here would "
+                                   "silently no-op and leave the tree UN-BLINDFOLDED (v0.39 §5.2 D1). "
+                                   "Fix the monorepo pathspec (e.g. src/ prefix) or pass --allow-no-tests "
+                                   "if the slice genuinely has no tests."}))
+        return 2
+    print(json.dumps({"verdict": "matched", "pathspec": a.pathspec, "count": len(matched)}))
+    return 0
+
+
 def main(argv):
-    ap = argparse.ArgumentParser(description="Parallax v0.37 / v0.37.3 blindfold isolation guard.")
+    ap = argparse.ArgumentParser(description="Parallax v0.37 / v0.37.3 / v0.39 blindfold isolation guard.")
     ap.add_argument("--worktree", default=".", help="track worktree to inspect (default: cwd)")
-    ap.add_argument("--side", required=True, choices=["test", "code"],
-                    help="test = test-writer worktree; code = blind-coder worktree")
+    ap.add_argument("--side", default=None, choices=["test", "code"],
+                    help="test = test-writer worktree; code = blind-coder worktree (required unless --assert-pathspec-match)")
     ap.add_argument("--slug", default=None)
     ap.add_argument("--test-glob", action="append", default=[], help="extra test-path globs")
     ap.add_argument("--impl-glob", action="append", default=[], help="extra implementation-path globs")
@@ -233,7 +290,27 @@ def main(argv):
                          "protected_test_paths always fail closed on the opposite track; "
                          "dependency_allow_globs are visible to the test side for import "
                          "resolution. Omit for the original strict whole-tree mode.")
+    ap.add_argument("--base-ref", default=None,
+                    help="v0.39 §5.4: the slice's base/fork ref. In scope mode, a NEW-since-base impl "
+                         "file absent from protected_impl_paths fails closed on the test side even under "
+                         "a broad dependency_allow_globs (closes the guard:196 hole).")
+    # v0.39 §5.2 D1 — zero-match blindfold pathspec assertion (no --side needed).
+    ap.add_argument("--assert-pathspec-match", dest="assert_pathspec_match", action="store_true",
+                    help="assert the given --pathspec matches a NON-EMPTY set on --ref (fail closed on a "
+                         "silent zero-match blindfold no-op); does not scan a worktree")
+    ap.add_argument("--repo", default=None, help="repo for --assert-pathspec-match (default: --worktree)")
+    ap.add_argument("--ref", default="HEAD", help="source ref for --assert-pathspec-match (default: HEAD)")
+    ap.add_argument("--pathspec", action="append", default=[], help="git pathspec(s) for --assert-pathspec-match")
+    ap.add_argument("--allow-no-tests", dest="allow_no_tests", action="store_true",
+                    help="permit a zero-match (slice genuinely has no test files)")
     a = ap.parse_args(argv)
+
+    if a.assert_pathspec_match:
+        return assert_pathspec_match(a)
+
+    if a.side is None:
+        print(json.dumps({"error": "--side is required (test|code) unless --assert-pathspec-match"}))
+        return 3
     scope = None
     if a.scope_manifest:
         try:
@@ -241,8 +318,17 @@ def main(argv):
         except ValueError as exc:
             print(json.dumps({"error": str(exc), "slug": a.slug}))
             return 3
+    new_impl_paths = None
+    if a.base_ref and scope is not None:
+        cur = _tree_files(a.worktree, "HEAD")
+        base = _tree_files(a.worktree, a.base_ref)
+        if cur is None or base is None:
+            print(json.dumps({"error": f"--base-ref set but cannot read HEAD/{a.base_ref!r} in {a.worktree!r}",
+                              "slug": a.slug}))
+            return 3
+        new_impl_paths = cur - base
     code, detail = guard(a.worktree, a.side, a.test_glob, a.impl_glob, a.compiled_glob,
-                         a.allow_glob, scope)
+                         a.allow_glob, scope, new_impl_paths)
     detail["slug"] = a.slug
     detail["mode"] = "slice-scoped" if scope else "strict"
     print(json.dumps(detail))

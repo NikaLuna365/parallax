@@ -58,6 +58,22 @@ and no free-text field a human must fill. Both are auditability/recovery artifac
 they record what was dispatched and reconstruct the truth git-first; they never assert a slice is
 verified — that stays with the arbiter/verifier receipts, which adopt refuses to fabricate.
 
+## Making the evidence fire on the box (v0.39 — hand-driven done-gate + telemetry regeneration)
+The v0.38.1 monorepo soak found the evidence trail was **written by the skill flow but skipped on the
+hand path**: RUN-B/RUN-C had no `run-evidence.json` / `events.jsonl` at all, and RUN-A's
+`run-evidence.json` stayed frozen at a spec-phase `0.36.1`/`frozen-spec` after a v0.38.1 build. v0.39
+makes the evidence reachable and current at the **done-gate**, on both the skill AND hand path:
+`scripts/finalize-handdriven.py` (the `--finalize` done-gate entry) emits the adopt-critical receipts
+(`slice_dispatched` + `arbiter_green`) into `events.jsonl` and runs `evidence-event.py audit-slice`
+before a hand-integrated slice may be treated as done (fail-closed E1); and `evidence-event.py
+update-run --restamp-version` re-stamps `run-evidence.json` `plugin.version` to the LIVE plugin version
+and moves `status` off `frozen-spec` at every done-gate, so the evidence reflects the plugin that
+actually built the slice — not the freeze-phase snapshot (#11). The evidence remains auditability, not
+a benchmark: it records what happened and never asserts a slice is verified (that stays with the
+arbiter/verifier receipts the hand-driven finalize gates through `merge-ledger`/`triage`). The
+companion push guard (`scripts/push-guard.sh`) is a git-integrity check, not evidence — see
+`references/runtime-governance.md`.
+
 ## Why this release (the GPI lesson, in the abstract)
 A recent real Parallax run demonstrated the method end-to-end — intake/spec, Architecture Fitness,
 blind TDD tracks, a live e2e, and a post-e2e **trust defect** that was turned into a spec assumption,

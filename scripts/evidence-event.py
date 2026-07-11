@@ -151,6 +151,19 @@ def update_run(a: argparse.Namespace) -> int:
         if not isinstance(doc.get("provenance"), dict):   # Gap-4: provenance may be an explicit null
             doc["provenance"] = {}
         doc["provenance"]["transcript_path"] = a.transcript_path
+    if a.restamp_version:
+        # v0.39 §5.5 (#11) — regenerate the plugin version at the done-gate. run-evidence.json's
+        # `plugin.version` is stamped at spec-phase and, on the hand path, was never refreshed
+        # (RUN-A still read 0.36.1 after a v0.38.1 build). Re-stamp it to the LIVE plugin version
+        # so the evidence is not frozen at the freeze-phase snapshot.
+        try:
+            live_ver = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))["version"]
+        except Exception as exc:
+            return _fail(f"cannot read live plugin version for --restamp-version: {exc}", 2)
+        plugin = doc.get("plugin")
+        if not isinstance(plugin, dict):
+            return _fail("run-evidence.json has no 'plugin' object to re-stamp", 2)
+        plugin["version"] = live_ver
     try:
         _validate(doc, RUN_SCHEMA)
     except EnvironmentError as exc:
@@ -238,6 +251,9 @@ def parser() -> argparse.ArgumentParser:
     p_u.add_argument("--slug", default=None, help="assert the file's slug before touching it")
     p_u.add_argument("--feature-tip", default=None)
     p_u.add_argument("--dirty-at-end", default=None, choices=["true", "false"])
+    p_u.add_argument("--restamp-version", dest="restamp_version", action="store_true",
+                     help="v0.39 §5.5: re-stamp plugin.version to the LIVE plugin manifest version "
+                          "at the done-gate (fixes the spec-phase-frozen run-evidence version, #11)")
     p_u.add_argument("--transcript-path", dest="transcript_path", default=None,
                      help="v0.37.5 D3: auxiliary provenance — must be the session .jsonl itself, "
                           "never a container directory")

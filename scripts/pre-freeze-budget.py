@@ -324,10 +324,17 @@ def record(args: argparse.Namespace) -> int:
     if action != "run":
         raise GateError("pre-freeze round was not authorized; checkpoint before invoking verifier")
 
+    # v0.39 §5.6 — accept a PATH to a JSON file OR an inline JSON string. The old signature took
+    # only a file path (parallax-errors.md:162), a foot-gun that pushed operators to hand-drive.
+    raw = args.verdict
+    p = Path(raw)
     try:
-        verdict = json.loads(args.verdict.read_text(encoding="utf-8"))
+        if p.exists():
+            verdict = json.loads(p.read_text(encoding="utf-8"))
+        else:
+            verdict = json.loads(raw)
     except Exception as exc:
-        raise GateError(f"cannot read verifier verdict {args.verdict}: {exc}") from exc
+        raise GateError(f"verdict is neither a readable JSON file nor a valid JSON string ({raw!r}): {exc}") from exc
     validate(verdict, ROUND_SCHEMA)
 
     round_number = state["rounds_used"] + 1
@@ -542,7 +549,7 @@ def parser() -> argparse.ArgumentParser:
     p_check = subs.add_parser("check", parents=[common])
     p_check.set_defaults(func=check)
     p_record = subs.add_parser("record", parents=[common])
-    p_record.add_argument("verdict", type=Path)
+    p_record.add_argument("verdict", help="verifier verdict: a PATH to a JSON file OR an inline JSON string (v0.39 §5.6)")
     p_record.add_argument("--provider", required=True)
     p_record.add_argument("--contract-file", action="append", type=Path, required=True)
     p_record.set_defaults(func=record)

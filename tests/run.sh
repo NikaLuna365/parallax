@@ -952,6 +952,62 @@ bash tests/t_evidence_required.sh >/tmp/parallax_er 2>&1; errc=$?
 if [ "$errc" = 0 ]; then ok "audit-slice: a slice with slice_dispatched + arbiter_green passes; a hand-driven slice with no such evidence is FLAGGED (not silently accepted); a dispatched-but-unarbitered slice is flagged; --no-require-arbiter relaxes correctly; slice ids match as whole tokens"; else no "adopt evidence required (E1)"; sed 's/^/      /' /tmp/parallax_er; fi
 grep -qF 'audit-slice' commands/run.md && ok "run.md marks adopt-critical evidence mandatory (slice_dispatched/session_handoff/manifest/receipts) or fail closed" || no "run.md adopt-critical-evidence directive missing (E1)"
 
+echo "[hand_driven_finalize]  (v0.39 §5.1, gates HG1-HG3 — EXECUTES finalize-handdriven.py: the v0.38 gates fire on the HAND path)"
+bash tests/t_finalize_handdriven.sh >/tmp/parallax_hf 2>&1; hfrc=$?
+if [ "$hfrc" = 2 ] && grep -q SKIP /tmp/parallax_hf; then echo "  · jsonschema not installed — hand-driven finalize execution test skipped (fails closed)";
+elif [ "$hfrc" = 0 ]; then ok "hand-driven finalize: happy path finalizes + re-stamps run-evidence to the live version; HG3 a stale tip (recorded != git) refuses (B1 on the hand path); HG2 a malformed/hand-authored verdict is rejected by the merge-ledger schema-gate (never a merge-unblock); HG1 a slice with no emitted receipts fails closed (E1)"; else no "hand-driven finalize (HG1-HG3)"; sed 's/^/      /' /tmp/parallax_hf; fi
+{ grep -qF 'finalize-handdriven.py' commands/run.md && grep -qF -- '--finalize' commands/run.md; } && ok "run.md done-gate routes the hand-driven/degraded path through finalize-handdriven.py (a --finalize flag / auto-detect, not a new command)" || no "run.md --finalize hand-path wiring missing (HG1-HG3)"
+
+echo "[monorepo_guards]  (v0.39 §5.2 D1/D2 + §5.4 + §5.6 — EXECUTES blindfold zero-match assertion, guard:196 --base-ref, push-guard)"
+bash tests/t_monorepo_guards.sh >/tmp/parallax_mg 2>&1; mgrc=$?
+if [ "$mgrc" = 2 ] && grep -q SKIP /tmp/parallax_mg; then echo "  · jsonschema not installed — monorepo guards execution test skipped (fail closed)";
+elif [ "$mgrc" = 0 ]; then ok "D1 a zero-match blindfold pathspec (src/-prefixed workspace) fails closed (no silent no-op); §5.4 a NEW-since-base impl absent from protected_impl fails closed under --base-ref even via a broad dep-glob (guard:196); D2 push-guard refuses a lagging branch ref, a non-fast-forward push, a non-committing/wrong-branch track"; else no "monorepo guards (D1/D2/5.4)"; sed 's/^/      /' /tmp/parallax_mg; fi
+{ grep -qF -- '--assert-pathspec-match' commands/run.md && grep -qF 'push-guard.sh' commands/run.md && grep -qF -- '--base-ref' commands/run.md; } && ok "run.md wires the D1 blindfold assertion, the --base-ref guard, and the D2 pre-push guard (feature + epic push)" || no "run.md monorepo-guard wiring missing (D1/D2/5.4)"
+
+echo "[ci_parity]  (v0.39 §5.3 — EXECUTES ci-parity.py: local-green must == CI-green for a declared check)"
+CIP=$(python3 scripts/ci-parity.py --local 'true' --ci 'true'; echo "rc=$?")
+CIP2=$(python3 scripts/ci-parity.py --local 'true' --ci 'false' >/dev/null 2>&1; echo "$?")
+CIP3=$(python3 scripts/ci-parity.py --local 'false' --ci 'true' >/dev/null 2>&1; echo "$?")
+if echo "$CIP" | grep -q 'rc=0' && [ "$CIP2" = 2 ] && [ "$CIP3" = 1 ]; then
+  ok "ci-parity.py: local+CI green -> 0; local green but CI-equivalent (whole-tree) RED -> 2 (ci-divergence, NOT green); local red -> 1 (ordinary route)"; else no "ci-parity.py wrong (rc=$CIP cidiverge=$CIP2 localred=$CIP3)"; fi
+{ grep -qiF 'ci_equivalent' commands/run.md && grep -qiF 'ci parity' skills/role-arbiter/SKILL.md; } && ok "run.md validation-contract documents ci_equivalent + the arbiter runs both forms; role-arbiter carries the CI-parity contract" || no "run.md/role-arbiter CI-parity directive missing (5.3)"
+
+echo "[telemetry_restamp]  (v0.39 §5.5 — EXECUTES evidence-event.py update-run --restamp-version: run-evidence version regenerated at the done-gate)"
+python3 - <<'PY' && ok "update-run --restamp-version rewrites plugin.version to the LIVE plugin manifest version and moves status off frozen-spec (fixes #11 spec-phase-frozen 0.36.1)" || no "telemetry restamp wrong (5.5)"
+import json, os, subprocess, tempfile
+LIVE=json.load(open(".claude-plugin/plugin.json"))["version"]
+D=tempfile.mkdtemp(); os.makedirs(D+"/evidence")
+json.dump({"schema_version":"parallax-run-evidence-v1","plugin":{"name":"parallax","version":"0.36.1"},
+ "run":{"run_id":"r","slug":"d","command_entry":"run","started_at":"t","updated_at":"t","status":"frozen-spec"},
+ "repo":{"root":None,"branch":None,"base_tip":None,"feature_tip":None,"dirty_at_start":None,"dirty_at_end":None},
+ "artifacts":{"spec":None,"slices":None,"validation":None,"slices_lock":None,"run_state":None},
+ "capabilities_exercised":{"existing_affordance_review":None,"architecture_fitness":None,"project_scout":None,"intake_handoff":None,"safe_resolution":None},
+ "evidence_limits":[]}, open(D+"/evidence/run-evidence.json","w"))
+p=subprocess.run(["python3","scripts/evidence-event.py","update-run",D+"/evidence","--restamp-version","--status","complete"],capture_output=True,text=True)
+assert p.returncode==0, p.stdout+p.stderr
+d=json.load(open(D+"/evidence/run-evidence.json"))
+assert d["plugin"]["version"]==LIVE, (d["plugin"]["version"], LIVE)
+assert d["run"]["status"]!="frozen-spec"
+PY
+grep -qF -- '--restamp-version' commands/run.md && ok "run.md done-gate calls update-run --restamp-version (fires on the skill AND hand path)" || no "run.md restamp wiring missing (5.5)"
+
+echo "[cli_footguns]  (v0.39 §5.6 — EXECUTES: triage --schema resolves vs __file__; pre-freeze-budget record accepts a JSON string OR a path)"
+python3 - <<'PY' && ok "triage.py --schema default resolves from any cwd (worktree-safe, not cwd-relative); pre-freeze-budget.py record takes a JSON STRING or a PATH" || no "CLI foot-gun fixes wrong (5.6)"
+import json, os, subprocess, tempfile
+# triage --schema resolves from a DIFFERENT cwd (a worktree) — the schema is found, not schema-missing
+led={"schema_version":"parallax-review-ledger-v1","slug":"d","slice_id":"S1","findings":[],"rounds_used":1,
+     "round_receipts":[{"round":1,"raw_artifact":"reviews/S1.round1.raw.json","raw_sha256":"0"*64}]}
+D=tempfile.mkdtemp(); lp=os.path.join(D,"led.json"); json.dump(led,open(lp,"w"))
+PLUGIN=os.getcwd()
+p=subprocess.run(["python3",os.path.join(PLUGIN,"scripts/triage.py"),lp,"--current-diff","a"*40],
+                 cwd=D, capture_output=True, text=True)
+assert "schema-missing" not in p.stdout, p.stdout   # the __file__-relative default resolved
+# pre-freeze-budget record: the source now accepts a JSON string OR a path (source + arg contract)
+src=open("scripts/pre-freeze-budget.py").read()
+assert "a JSON file OR an inline JSON string" in src or "readable JSON file nor a valid JSON string" in src
+assert 'p_record.add_argument("verdict", help=' in src   # no longer type=Path
+PY
+
 echo "[finalize_freshness]  (v0.37 P0.2 + v0.37.1 — EXECUTES finalize-gate.py: terminal completion receipt bound to committed evidence)"
 bash tests/t_finalize_gate.sh >/tmp/parallax_fg 2>&1; fgrc=$?
 if [ "$fgrc" = 2 ]; then echo "  · jsonschema not installed — finalize-gate execution test skipped";
@@ -986,8 +1042,12 @@ echo "[cloud_setup]  (real install attempts, not commented-out — locks #6)"
 grep -qE '^\s*command -v codex .*\|\| npm i -g' scripts/cloud-setup.sh && ok "cloud-setup.sh actually ATTEMPTS the CLI installs (uncommented)" || no "cloud-setup.sh installs are still commented out"
 grep -qiE 'best-effort|adjust the package names' README.md && ok "README is honest about best-effort installs" || no "README overclaims that setup installs"
 
-echo "[release_coherence]  (v0.38.1 — manifest/changelog/docs agree on the release; v0.31-v0.38.0 kept)"
-{ grep -q '"version": "0.38.1"' .claude-plugin/plugin.json \
+echo "[release_coherence]  (v0.39.0 — manifest/changelog/docs agree on the release; v0.31-v0.38.1 kept)"
+{ grep -q '"version": "0.39.0"' .claude-plugin/plugin.json \
+  && grep -q '^## 0.39.0' CHANGELOG.md \
+  && grep -qiF 'hand-driven' README.md \
+  && grep -qiF 'monorepo' README.md \
+  && [ -f scripts/finalize-handdriven.py ] && [ -f scripts/push-guard.sh ] && [ -f scripts/ci-parity.py ] \
   && grep -q '^## 0.38.1' CHANGELOG.md \
   && grep -qiF 'adopt' README.md \
   && grep -qiF 'multi-session' README.md \
@@ -1023,8 +1083,8 @@ echo "[release_coherence]  (v0.38.1 — manifest/changelog/docs agree on the rel
   && [ -f scripts/feature-sweep.py ] && [ -f scripts/contract-amend.py ] \
   && [ -f scripts/evidence-event.py ] && [ -f scripts/strip-openai-schema.py ] \
   && [ -f assets/blindfold-scope.schema.json ]; } \
-  && ok "version 0.38.1 in plugin.json; CHANGELOG has 0.38.1 (0.38.0/0.37.5/0.37.4/0.37.3/0.37.2/0.37.1/0.37.0/0.36.1/0.31.0 kept); README covers adopt & multi-session continuity + governance self-attestation + z.ai + prior boundaries; new v0.38 scripts (adopt-reconcile/subagent-manifest/render-handoff) + subagents schema present" \
-  || no "release coherence: version/changelog/docs not aligned for 0.38.1"
+  && ok "version 0.39.0 in plugin.json; CHANGELOG has 0.39.0 (0.38.1/0.38.0/0.37.5/…/0.31.0 kept); README covers gate reachability (hand-driven finalize + monorepo guards) + adopt + prior boundaries; new v0.39 scripts (finalize-handdriven/push-guard/ci-parity) present" \
+  || no "release coherence: version/changelog/docs not aligned for 0.39.0"
 
 echo ""
 echo "== $PASS passed, $FAIL failed =="

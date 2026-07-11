@@ -31,6 +31,14 @@ Exit code: 0 green, 1 block, 2 escalate, 3 bad input. Prints a JSON decision to 
 """
 import argparse, hashlib, json, os, sys
 
+# v0.39 §5.6 — the default ledger schema resolves against THIS script's location, not the caller's
+# cwd. The old cwd-relative default ("assets/codex/review-ledger.schema.json") failed closed when
+# triage.py was invoked from a worktree cwd (parallax-errors.md:123) — schema-missing => escalate —
+# so a legitimate ledger could not be certified from the real box. __file__-relative works anywhere.
+_DEFAULT_SCHEMA = os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "codex", "review-ledger.schema.json")
+)
+
 # SAFE STRICT DEFAULTS — used verbatim when --policy is missing/unreadable (fail closed).
 DEFAULT_POLICY = {
     "max_rounds": 2,
@@ -194,7 +202,8 @@ def main(argv):
                          "it OVERRIDES --policy for disposition; unreadable/invalid => escalate, "
                          "never a silent codex.toml fallback.")
     ap.add_argument("--current-diff", dest="current_diff", help="SHA of the assembled tree under review (a git write-tree of the staged tree)")
-    ap.add_argument("--schema", default="assets/codex/review-ledger.schema.json")
+    ap.add_argument("--schema", default=_DEFAULT_SCHEMA,
+                    help="ledger schema; defaults to the copy next to this script (resolves from any cwd, v0.39 §5.6)")
     ap.add_argument("--no-schema-check", dest="no_schema", action="store_true",
                     help="INSECURE: skip ledger schema validation (logic-isolation tests only). Default fails closed.")
     a = ap.parse_args(argv)
