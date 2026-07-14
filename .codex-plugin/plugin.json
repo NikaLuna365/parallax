@@ -1,0 +1,27 @@
+{
+  "name": "parallax",
+  "version": "0.40.1",
+  "description": "Spec-driven blind-coder TDD workflow with independent verification, fail-closed gates, and provider fallback.",
+  "author": {
+    "name": "NikaLuna365",
+    "url": "https://github.com/NikaLuna365"
+  },
+  "homepage": "https://github.com/NikaLuna365/parallax",
+  "repository": "https://github.com/NikaLuna365/parallax",
+  "keywords": ["tdd", "code-review", "verification", "provider-fallback", "limits"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Parallax",
+    "shortDescription": "Fail-closed blind-coder TDD with independent verification",
+    "longDescription": "A spec-driven workflow that separates test-writing, implementation, arbitration, provider limits, and independent verification.",
+    "developerName": "NikaLuna365",
+    "category": "Developer tools",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://github.com/NikaLuna365/parallax",
+    "defaultPrompt": [
+      "Use Parallax to plan and verify this feature.",
+      "Run a Parallax limits check for configured providers.",
+      "Review this change with Parallax's fail-closed gates."
+    ]
+  }
+}
