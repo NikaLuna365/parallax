@@ -61,6 +61,21 @@ clean base. If reconciliation is not possible, the role parks. Every attempt
 is normalized and can be appended to the existing evidence timeline as a
 `provider_attempt` event with host/provider/transport/model identity.
 
+## Reviewer boundary
+
+`review-api` is separate from `aider-api`. `scripts/review-runtime.py` sends
+the spec, assembled source/tests, and arbiter evidence as explicit read-only
+context to an OpenAI-compatible Chat Completions endpoint. It requests JSON
+mode, validates the response against the full `review-round.schema.json`, and
+atomically writes the raw receipt. It does not start Aider, run shell commands,
+inspect git, merge branches, or write candidate files. A malformed response,
+timeout, auth error, or schema failure is a provider failure and can fall back
+to the next reviewer.
+
+Branch assembly and tests remain orchestrator responsibilities: the arbiter
+assembles the code/test snapshot and runs tests, lint, typecheck, and build;
+the reviewer judges that snapshot and the supplied evidence afterward.
+
 ## Codex host seam
 
 `scripts/codex-host.py` dispatches the same request through the same runtime,

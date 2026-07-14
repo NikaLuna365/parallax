@@ -40,7 +40,10 @@ def main(argv=None) -> int:
     try:
         registry, _ = load_registry(Path(request.get("repo", ".")).resolve(), Path(args.registry).resolve())
         result = dispatch(request, registry, args.host)
-    except (OSError, ValueError):
+    except ValueError as exc:
+        error_class = "unsafe-provider-chain" if "effective provider" in str(exc) or "Aider transport" in str(exc) else "host_capability_missing"
+        result = {"status": "parked", "error_class": error_class, "host": args.host}
+    except OSError:
         result = {"status": "parked", "error_class": "host_capability_missing", "host": args.host}
     except Exception:
         # A provider/runtime failure is not turned into a host capability claim.
@@ -52,6 +55,8 @@ def main(argv=None) -> int:
                                    "request": str(Path(args.request).resolve()), "result": result},
                                   indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(result, indent=2, sort_keys=True))
+    if result.get("review_verdict") == "concerns":
+        return 2
     return 0 if result.get("status") in {"committed", "no_change"} else 2
 
 

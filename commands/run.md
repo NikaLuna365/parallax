@@ -38,6 +38,16 @@ identity. Do not put keys, raw API responses, or full provider output into the
 spec, decision log, receipts, or evidence; transport artifacts are bounded and
 redacted.
 
+For the cross-model verifier, a provider with `transport = "review-api"` is
+not sent through the worker/Aider adapter. The assembled integration tree is
+already the review subject: the arbiter has assembled the real source and test
+branches and run the declared tests, lint, typecheck, and build. The verifier
+transport receives that snapshot plus the spec and validation evidence as
+explicit read-only context, returns one `review-round.schema.json` object, and
+lets the runtime atomically persist the raw receipt. It never merges branches,
+runs candidate tests, or writes candidate files. Findings still go through
+`merge-ledger.py` and `triage.py`; a provider error never becomes a pass.
+
 Fallback is per role and only follows an attempt that produced no accepted
 commit. If the failed provider changed files, discard/reconcile the disposable
 worktree to the exact recorded clean base before trying the next chain entry.

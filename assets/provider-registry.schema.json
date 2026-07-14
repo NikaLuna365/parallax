@@ -32,7 +32,9 @@
           "model": {"type": ["string", "null"]},
           "key_env": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
           "capabilities": {"type": "array", "items": {"type": "string"}},
-          "base_url": {"type": "string"}
+          "base_url": {"type": "string"},
+          "review_timeout_s": {"type": "number", "exclusiveMinimum": 0},
+          "review_max_tokens": {"type": "integer", "minimum": 1}
           ,"credential_class": {"type": "string"}
           ,"project_scope": {"type": "string"}
           ,"operator_budget_usd": {"type": "number", "minimum": 0}

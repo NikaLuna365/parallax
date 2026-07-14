@@ -2,6 +2,23 @@
 
 All notable changes to the Parallax plugin. Versions are cumulative.
 
+## 0.40.6 — Read-only direct reviewer transport
+
+Separates reviewer execution from code-writing workers. z.ai GLM review now
+uses a direct Chat Completions `review-api` transport with explicit assembled
+context, JSON mode, full review-round schema validation, worktree mutation
+protection, and atomic raw receipts; Aider remains available for coder and
+test-writer roles only.
+
+Adds a same-model OpenRouter GLM-5.2 reviewer fallback with independent
+OpenRouter key-budget checks and credential separation. Effective verifier
+chains are fail-closed against request-level Aider bypasses, unsafe reviewer
+capabilities, malformed responses, and invalid OpenRouter credentials.
+
+Adds regression coverage for direct dispatch, schema/receipt handling,
+worktree immutability, concerns propagation, chain overrides, and provider
+credential isolation.
+
 ## 0.40.5 — CI test isolation fix
 
 Fixes the OpenRouter catalog regression test so it supplies its own mocked

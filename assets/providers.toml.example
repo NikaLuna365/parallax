@@ -41,6 +41,42 @@ limits_source_class = "official-dashboard"
 limits_limitations = ["Official z.ai docs expose dashboard billing/rate-limit pages; no configured machine-readable balance endpoint.", "API balance remains unknown unless an official endpoint is separately proven."]
 capabilities = ["read", "write", "shell"]
 
+# The same z.ai key has a separate reviewer identity. Reviewers use the
+# direct Chat Completions API: no Aider, no shell, and no writable worktree.
+[providers.zai_reviewer]
+kind = "reviewer"
+transport = "review-api"
+model = "glm-5.2"
+credential_class = "zai-api"
+base_url = "https://api.z.ai/api/paas/v4/chat/completions"
+key_env = "ZAI_API_KEY"
+auth_probe = "zai-models"
+auth_endpoint = "https://api.z.ai/api/paas/v4/models"
+auth_method = "GET"
+review_timeout_s = 180
+review_max_tokens = 12000
+capabilities = ["read", "structured_output"]
+
+# Optional same-model fallback. This is the OpenRouter account/key budget, not
+# the direct z.ai balance. It is also a direct reviewer transport, never Aider.
+[providers.openrouter_glm52_reviewer]
+kind = "reviewer"
+transport = "review-api"
+model = "z-ai/glm-5.2"
+logical_model = "glm-5.2"
+credential_class = "openrouter-api-key"
+base_url = "https://openrouter.ai/api/v1/chat/completions"
+key_env = "OPENROUTER_API_KEY"
+budget_source_class = "official-api"
+budget_key_endpoint = "https://openrouter.ai/api/v1/key"
+budget_remaining_path = "limit_remaining"
+budget_limit_path = "limit"
+budget_exact = true
+balance_scope = "openrouter-key"
+review_timeout_s = 180
+review_max_tokens = 12000
+capabilities = ["read", "structured_output"]
+
 # Optional OpenRouter transport. This is an OpenRouter key/account budget, not
 # a direct z.ai balance. It deliberately uses a different credential and may
 # route to z-ai/GLM only when the policy below says so.
@@ -123,7 +159,7 @@ required_capabilities = ["read", "structured_output"]
 automatic_fallback = true
 
 [roles.cross_model_verifier]
-chain = ["codex", "zai", "gemini"]
+chain = ["codex", "zai_reviewer", "openrouter_glm52_reviewer", "gemini"]
 required_capabilities = ["read", "structured_output"]
 automatic_fallback = true
 

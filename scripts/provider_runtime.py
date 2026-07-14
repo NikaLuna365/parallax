@@ -43,7 +43,7 @@ DEFAULT_CHAINS = {
     "blind_coder": ["codex", "zai", "deepseek", "claude"],
     "test_writer": ["codex", "zai", "deepseek", "claude"],
     "arbiter": ["codex", "zai"],
-    "cross_model_verifier": ["codex", "zai", "gemini"],
+    "cross_model_verifier": ["codex", "zai_reviewer", "gemini"],
 }
 ROLE_ALIASES = {"blind-coder": "blind_coder", "test-writer": "test_writer"}
 EDITING_ROLES = {"blind-coder", "test-writer", "arbiter"}
@@ -285,6 +285,25 @@ def _validate_registry_doc(doc: Any) -> dict[str, Any]:
                 raise ValueError(f"provider {name!r} requires {key}")
         if provider["transport"] in {"codex-cli", "aider-api", "openrouter-api", "native-claude"} and not provider.get("command"):
             raise ValueError(f"provider {name!r} requires command for {provider['transport']}")
+        if provider["transport"] == "review-api":
+            if provider.get("kind") not in {"reviewer", "both"}:
+                raise ValueError(f"provider {name!r} review-api must have kind=reviewer or both")
+            if not provider.get("base_url") or not provider.get("model") or not provider.get("key_env"):
+                raise ValueError(f"provider {name!r} review-api requires base_url, model, and key_env")
+            capabilities = set(provider.get("capabilities", []))
+            if not {"read", "structured_output"}.issubset(capabilities):
+                raise ValueError(f"provider {name!r} review-api requires read and structured_output capabilities")
+            if capabilities & {"write", "shell"}:
+                raise ValueError(f"provider {name!r} review-api must not declare write or shell capabilities")
+            endpoints = " ".join(str(provider.get(key, "")) for key in
+                                  ("base_url", "budget_key_endpoint", "budget_endpoint", "credits_endpoint")).lower()
+            if "openrouter.ai" in endpoints:
+                if provider.get("key_env") != "OPENROUTER_API_KEY" or provider.get("credential_class") != "openrouter-api-key":
+                    raise ValueError(f"provider {name!r} OpenRouter review-api requires OPENROUTER_API_KEY/openrouter-api-key")
+                if "management_key_env" in provider:
+                    raise ValueError(f"provider {name!r} review-api must not carry an OpenRouter management key")
+                if provider.get("credits_key_env") == provider.get("key_env"):
+                    raise ValueError(f"provider {name!r} credits_key_env must differ from key_env")
         if provider["transport"] == "openrouter-api":
             if provider.get("key_env") != "OPENROUTER_API_KEY":
                 raise ValueError(f"provider {name!r} openrouter-api requires key_env=OPENROUTER_API_KEY")
@@ -307,7 +326,7 @@ def _validate_registry_doc(doc: Any) -> dict[str, Any]:
                 raise ValueError(f"provider {name!r} z.ai auth_probe requires the official models endpoint")
             if str(provider.get("auth_method", "GET")).upper() != "GET":
                 raise ValueError(f"provider {name!r} auth_probe must use GET")
-        if provider["transport"] == "aider-api" and provider.get("key_env"):
+        if provider.get("key_env"):
             if not ENV_NAME.fullmatch(provider["key_env"]):
                 raise ValueError(f"provider {name!r} key_env is not an environment variable name")
         if provider.get("credits_key_env") and not ENV_NAME.fullmatch(provider["credits_key_env"]):
@@ -315,6 +334,13 @@ def _validate_registry_doc(doc: Any) -> dict[str, Any]:
         source_class = provider.get("budget_source_class", "unknown")
         if source_class not in SOURCE_CLASSES:
             raise ValueError(f"provider {name!r} has invalid budget_source_class")
+    roles = doc.get("roles", {})
+    verifier = roles.get("cross_model_verifier", {}) if isinstance(roles, dict) else {}
+    if isinstance(verifier, dict):
+        for name in verifier.get("chain", []):
+            provider = doc["providers"].get(name)
+            if isinstance(provider, dict) and provider.get("transport") in {"aider-api", "openrouter-api"}:
+                raise ValueError(f"cross_model_verifier provider {name!r} cannot use an Aider transport; use review-api")
     _schema_validate(doc, REGISTRY_SCHEMA)
     return doc
 
@@ -1563,7 +1589,7 @@ def run_attempt(request: dict[str, Any], provider_name: str, provider: dict[str,
 def _attempt(request: dict[str, Any], provider: str, config: dict[str, Any], attempt: int, host: str,
              status: str, branch: str | None, commit: str | None, error: str | None,
              artifacts: list[str], returncode: int | None, limit_observation: dict[str, Any] | None = None,
-             limit_action: str | None = None) -> dict[str, Any]:
+             limit_action: str | None = None, review_verdict: str | None = None) -> dict[str, Any]:
     logical_model = config.get("logical_model") or (str(config.get("model")).split("/", 1)[-1] if config.get("transport") == "openrouter-api" else config.get("model"))
     result = {"schema_version": "parallax-worker-attempt-v1", "host": host, "provider": provider,
               "transport": config.get("transport"), "model": logical_model, "role": request.get("role"),
@@ -1584,6 +1610,8 @@ def _attempt(request: dict[str, Any], provider: str, config: dict[str, Any], att
         result["limit_observation"] = limit_observation
     if limit_action is not None:
         result["limit_action"] = limit_action
+    if review_verdict is not None:
+        result["review_verdict"] = review_verdict
     _schema_validate(result, ATTEMPT_SCHEMA)
     return result
 
@@ -1623,7 +1651,7 @@ def _mark_provider_state(request: dict[str, Any], registry: dict[str, Any], name
         status = "healthy"
     elif result.get("status") == "auth_error":
         status = "auth_failed"
-    elif result.get("error_class") == "insufficient_balance" and provider.get("credential_class") == "zai-api":
+    elif result.get("error_class") == "insufficient_balance":
         status = "exhausted"
     elif result.get("status") == "limit" and error_class in {"limit", "insufficient_balance", "openrouter-budget-exhausted"}:
         status = "rate_limited"
@@ -1662,6 +1690,23 @@ def _route_chain(request: dict[str, Any], registry: dict[str, Any], chain: list[
     return routed
 
 
+def _validate_effective_review_chain(registry: dict[str, Any], role_key: str, chain: list[str]) -> None:
+    """Prevent request-level chain overrides from reintroducing Aider review."""
+    if role_key != "cross_model_verifier":
+        return
+    providers = registry.get("providers", {})
+    for name in chain:
+        provider = providers.get(name)
+        if not isinstance(provider, dict):
+            continue
+        if provider.get("transport") in {"aider-api", "openrouter-api"}:
+            raise ValueError(f"cross_model_verifier effective provider {name!r} cannot use an Aider transport; use review-api")
+        if provider.get("transport") == "review-api":
+            capabilities = set(provider.get("capabilities", []))
+            if not {"read", "structured_output"}.issubset(capabilities) or capabilities & {"write", "shell"}:
+                raise ValueError(f"cross_model_verifier effective provider {name!r} is not read-only structured review")
+
+
 def _openrouter_budget_gate(request: dict[str, Any], registry: dict[str, Any], name: str,
                             provider: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
     snapshot = _snapshot_for_provider(Path(request.get("repo", request["worktree"])).resolve(), name, provider, registry,
@@ -1674,6 +1719,42 @@ def _openrouter_budget_gate(request: dict[str, Any], registry: dict[str, Any], n
     if healthy:
         _record_successful_probe(Path(request.get("repo", request["worktree"])).resolve(), name, provider, registry, snapshot)
     return healthy, snapshot
+
+
+def _review_attempt(request: dict[str, Any], provider_name: str, provider: dict[str, Any],
+                    attempt: int, host: str) -> dict[str, Any]:
+    """Run a non-editing review transport without entering the worker path."""
+    import importlib.util
+    module_path = ROOT / "scripts" / "review-runtime.py"
+    spec = importlib.util.spec_from_file_location("parallax_review_runtime", module_path)
+    if spec is None or spec.loader is None:
+        return _attempt(request, provider_name, provider, attempt, host, "provider_error",
+                        request.get("expected_branch"), None, "review-runtime-missing", [], None)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    review_request = dict(request.get("review_request") or request)
+    review_request.setdefault("repo", request.get("repo", request.get("worktree")))
+    review_request.setdefault("worktree", request.get("worktree"))
+    if not review_request.get("raw_output"):
+        return _attempt(request, provider_name, provider, attempt, host, "provider_error",
+                        request.get("expected_branch"), None, "review-request-missing-raw-output", [], None)
+    try:
+        result = module.run_review(review_request, request.get("limits_registry", {}), provider_name)
+    except module.ReviewError as exc:
+        if exc.error_class in {"auth-failed", "missing-key"}:
+            status, error = "auth_error", exc.error_class
+        elif exc.error_class in {"rate-limited", "insufficient_balance"}:
+            status, error = "limit", exc.error_class
+        elif exc.error_class in {"provider-timeout-or-network"}:
+            status, error = "timeout", exc.error_class
+        else:
+            status, error = "provider_error", exc.error_class
+        return _attempt(request, provider_name, provider, attempt, host, status,
+                        request.get("expected_branch"), None, error, [], None)
+    return _attempt(request, provider_name, provider, attempt, host, "no_change",
+                    request.get("expected_branch"), None, None,
+                    [str(result["raw_artifact"])], 0, limit_action="continue",
+                    review_verdict=result["verdict"]["verdict"])
 
 
 def _record_successful_probe(repo: Path, name: str, provider: dict[str, Any], registry: dict[str, Any],
@@ -1706,6 +1787,7 @@ def dispatch(request: dict[str, Any], registry: dict[str, Any], host: str) -> di
     providers = registry.get("providers", {})
     request["primary_provider"] = request.get("primary_provider", chain[0] if chain else None)
     request["chain"] = _route_chain(request, registry, list(chain))
+    _validate_effective_review_chain(registry, role_key, request["chain"])
     chain = request["chain"]
     if request.get("recheck"):
         store = ProviderStateStore(_state_path(registry))
@@ -1728,6 +1810,17 @@ def dispatch(request: dict[str, Any], registry: dict[str, Any], host: str) -> di
             if blocked:
                 result = _attempt(request, name, provider, idx, host, "limit", request.get("expected_branch"), None,
                                   "persistent-exhausted", [], None, limit_action="handoff")
+            elif role_key == "cross_model_verifier" and provider.get("transport") == "review-api":
+                if provider.get("budget_key_endpoint"):
+                    budget_ok, budget_snapshot = _openrouter_budget_gate(request, registry, name, provider)
+                    if not budget_ok:
+                        error = "openrouter-budget-exhausted" if budget_snapshot["budget"].get("remaining") == 0 else "openrouter-budget-unavailable"
+                        result = _attempt(request, name, provider, idx, host, "limit", request.get("expected_branch"), None,
+                                          error, [], None, limit_action="handoff")
+                    else:
+                        result = _review_attempt(request, name, provider, idx, host)
+                else:
+                    result = _review_attempt(request, name, provider, idx, host)
             elif provider.get("transport") == "openrouter-api":
                 budget_ok, budget_snapshot = _openrouter_budget_gate(request, registry, name, provider)
                 if not budget_ok:
@@ -1744,7 +1837,8 @@ def dispatch(request: dict[str, Any], registry: dict[str, Any], host: str) -> di
             _append_jsonl(attempt_records, result)
             request["attempt_receipt"] = str(attempt_records)
         _evidence_event(request, result)
-        if result["status"] == "committed":
+        review_success = role_key == "cross_model_verifier" and provider.get("transport") == "review-api" if isinstance(provider, dict) else False
+        if result["status"] == "committed" or (review_success and result["status"] == "no_change"):
             result["fallback_attempts"] = results[:-1]
             return result
         if not fallback_available:
