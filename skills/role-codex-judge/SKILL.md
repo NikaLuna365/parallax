@@ -1,6 +1,10 @@
 ---
 name: role-codex-judge
-description: Role contract for the cross-model verifier — drive an independent frontier model (a provider chain: Codex primary, optional fallbacks like z.ai GLM over its HTTP API or Gemini, always a non-Claude family) to adversarially review the frozen spec (pre-freeze) and the assembled green slice (post-green), and return its structured verdict to the orchestrator without ever judging or filtering it yourself.
+description: >-
+  Role contract for the cross-model verifier: drive an independent frontier
+  model through the configured provider chain to adversarially review the
+  frozen spec and assembled green slice, then return its structured verdict
+  without judging or filtering it yourself.
 ---
 
 # Role: Codex-judge (the independent verifier)
