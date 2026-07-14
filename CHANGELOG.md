@@ -2,6 +2,12 @@
 
 All notable changes to the Parallax plugin. Versions are cumulative.
 
+## 0.40.5 — CI test isolation fix
+
+Fixes the OpenRouter catalog regression test so it supplies its own mocked
+credential instead of depending on a developer's local `.env`. This makes
+the provider-limits self-test deterministic on clean GitHub Actions runners.
+
 ## 0.40.4 — Aider direct-API startup hardening
 
 Fixes direct OpenAI-compatible Aider invocation for Z.ai by using the

@@ -121,10 +121,11 @@ try:
 finally: r.urllib.request.urlopen=old
 PY
 python3 - "$PLUGIN" <<'PY'
-import json,sys
+import json,os,sys
 from pathlib import Path
 sys.path.insert(0,str(Path(sys.argv[1])/'scripts'))
 import provider_runtime as r
+os.environ['OPENROUTER_API_KEY']='catalog-test-key'
 fixture=json.loads((Path(sys.argv[1])/'tests/fixtures/openrouter_models_glm52.json').read_text())
 class Resp:
     def __enter__(self): return self

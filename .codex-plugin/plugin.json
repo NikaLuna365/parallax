@@ -1,6 +1,6 @@
 {
   "name": "parallax",
-  "version": "0.40.4",
+  "version": "0.40.5",
   "description": "Spec-driven blind-coder TDD workflow with independent verification, fail-closed gates, and provider fallback.",
   "author": {
     "name": "NikaLuna365",
