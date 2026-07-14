@@ -2,6 +2,14 @@
 
 All notable changes to the Parallax plugin. Versions are cumulative.
 
+## 0.40.4 — Aider direct-API startup hardening
+
+Fixes direct OpenAI-compatible Aider invocation for Z.ai by using the
+required `openai/<model>` model namespace. Aider is also started with
+`--no-gitignore`, so worker startup cannot prompt to modify or write the
+repository `.gitignore`. OpenRouter Aider routing keeps its `openrouter/`
+namespace and isolated credential path.
+
 ## 0.40.3 — Aider-compatible Z.ai authentication fix
 
 Fixes direct Z.ai `aider-api` dispatch when the provider registry uses

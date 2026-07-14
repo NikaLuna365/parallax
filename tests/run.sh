@@ -1053,10 +1053,10 @@ bash tests/t_host_verification.sh >/tmp/parallax_host_verification 2>&1 && ok "h
   || { no "Claude/Codex host verification"; sed 's/^/      /' /tmp/parallax_host_verification; }
 python3 -m py_compile scripts/provider_runtime.py scripts/provider-runtime.py scripts/codex-host.py scripts/host-verification.py && ok "provider and host verification scripts pass Python syntax checks" || no "provider/host runtime Python syntax"
 
-echo "[release_coherence]  (v0.40.3 — manifest/changelog/docs agree on the release; v0.31-v0.40 kept)"
-{ grep -q '"version": "0.40.3"' .claude-plugin/plugin.json \
-  && grep -q '"version": "0.40.3"' .codex-plugin/plugin.json \
-  && grep -q '^## 0.40.3' CHANGELOG.md \
+echo "[release_coherence]  (v0.40.4 — manifest/changelog/docs agree on the release; v0.31-v0.40 kept)"
+{ grep -q '"version": "0.40.4"' .claude-plugin/plugin.json \
+  && grep -q '"version": "0.40.4"' .codex-plugin/plugin.json \
+  && grep -q '^## 0.40.4' CHANGELOG.md \
   && grep -qiF 'provider' README.md \
   && grep -qiF 'provider' SECURITY.md \
   && [ -f scripts/provider_runtime.py ] && [ -f scripts/provider-runtime.py ] && [ -f scripts/codex-host.py ] \
@@ -1101,8 +1101,8 @@ echo "[release_coherence]  (v0.40.3 — manifest/changelog/docs agree on the rel
   && [ -f scripts/feature-sweep.py ] && [ -f scripts/contract-amend.py ] \
   && [ -f scripts/evidence-event.py ] && [ -f scripts/strip-openai-schema.py ] \
   && [ -f assets/blindfold-scope.schema.json ]; } \
-  && ok "version 0.40.3 in Claude/Codex manifests; CHANGELOG has 0.40.3; limits/OpenRouter/Codex docs/schemas/tests are present; v0.31-v0.40 gates remain" \
-  || no "release coherence: version/changelog/docs not aligned for 0.40.3"
+  && ok "version 0.40.4 in Claude/Codex manifests; CHANGELOG has 0.40.4; limits/OpenRouter/Codex docs/schemas/tests are present; v0.31-v0.40 gates remain" \
+  || no "release coherence: version/changelog/docs not aligned for 0.40.4"
 
 echo ""
 echo "== $PASS passed, $FAIL failed =="

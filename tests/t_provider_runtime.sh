@@ -107,10 +107,11 @@ cmd=r._provider_command({'transport':'aider-api','command':sys.executable,'model
 assert cmd.count('--read') == 1 and 'spec.md' in cmd and cmd.count('--file') == 1 and 'src/impl.py' in cmd
 assert '--no-auto-commits' in cmd
 assert '--yes-always' in cmd and '--yes' not in cmd
+assert '--no-gitignore' in cmd
 direct=r._provider_command({'transport':'aider-api','command':sys.executable,'model':'glm-5.2','base_url':'https://api.z.ai/api/paas/v4','key_env':'ZAI_API_KEY'}, {'worktree':'.','visibility_manifest':{'visible_files':['spec.md'],'writable_files':['src/impl.py']}}, Path('/tmp/prompt'))
-assert direct[direct.index('--model')+1] == 'glm-5.2'
+assert direct[direct.index('--model')+1] == 'openai/glm-5.2'
 assert direct[direct.index('--openai-api-base')+1] == 'https://api.z.ai/api/paas/v4'
-assert '--yes-always' in direct and '--yes' not in direct
+assert '--yes-always' in direct and '--yes' not in direct and '--no-gitignore' in direct
 openrouter=r._provider_command({'transport':'openrouter-api','command':sys.executable,'model':'z-ai/glm-5.2','key_env':'OPENROUTER_API_KEY'}, {'worktree':'.','visibility_manifest':{'visible_files':['spec.md'],'writable_files':['src/impl.py']}}, Path('/tmp/prompt'))
 assert openrouter[openrouter.index('--model')+1] == 'openrouter/z-ai/glm-5.2'
 assert '--openai-api-base' not in openrouter

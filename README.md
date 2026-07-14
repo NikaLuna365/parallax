@@ -52,6 +52,12 @@ Direct Z.ai workers using Aider now map the registry's `ZAI_API_KEY` into
 Aider's required `OPENAI_API_KEY` child-process variable. OpenRouter keeps
 its separate credential path.
 
+### v0.40.4 Aider startup hardening
+
+Direct OpenAI-compatible providers use Aider's required `openai/<model>`
+namespace, and Aider runs with `--no-gitignore` so startup does not alter the
+worker repository's `.gitignore`.
+
 ### v0.40.1 passive limits and OpenRouter
 
 Use `python3 scripts/provider-runtime.py limits`, `limits z.ai`, or the exact

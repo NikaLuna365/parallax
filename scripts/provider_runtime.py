@@ -1304,9 +1304,11 @@ def _provider_command(provider: dict[str, Any], request: dict[str, Any], prompt_
     if transport in {"aider-api", "openrouter-api"}:
         if transport == "openrouter-api" and provider.get("key_env") != "OPENROUTER_API_KEY":
             raise ValueError("openrouter-api requires OPENROUTER_API_KEY and cannot use ZAI_API_KEY")
-        out = argv + ["--yes-always", "--no-auto-commits"]
+        out = argv + ["--yes-always", "--no-auto-commits", "--no-gitignore"]
         if model:
-            if transport == "openrouter-api":
+            if transport == "aider-api":
+                model = model if model.startswith("openai/") else "openai/" + model
+            elif transport == "openrouter-api":
                 version = _aider_version(request, provider, argv)
                 if version < (0, 40, 0):
                     raise ValueError("unsupported_openrouter_invocation")
