@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Parallax provider-neutral preflight and budget report",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["registry", "providers", "budgets", "observed_at"],
+  "properties": {
+    "registry": {"type": "string"},
+    "tracked_secret_carriers": {"type": "array", "items": {"type": "string"}},
+    "observed_at": {"type": "string"},
+    "providers": {"type": "array", "items": {"type": "object", "required": ["provider", "transport", "configured", "probe_status"], "properties": {"provider": {"type": "string"}, "transport": {"type": "string"}, "model": {}, "configured": {"type": "boolean"}, "probe_status": {"type": "string"}, "live_signal_status": {"type": "string"}, "secret_source": {"type": ["string", "null"]}}}},
+    "budgets": {"type": "array", "items": {"type": "object", "required": ["provider", "configured", "authenticated", "budget", "confidence"], "properties": {"provider": {"type": "string"}, "configured": {"type": "boolean"}, "authenticated": {"type": "string", "enum": ["yes", "no", "unknown"]}, "confidence": {"type": "string", "enum": ["high", "medium", "low"]}, "budget": {"type": "object", "required": ["status", "currency", "remaining", "reset_at", "source", "source_class", "observed_at"], "properties": {"status": {"type": "string", "enum": ["known", "unknown", "limited", "unavailable"]}, "currency": {"type": ["string", "null"]}, "remaining": {"type": ["number", "null"]}, "reset_at": {"type": ["string", "null"]}, "source": {"type": ["string", "null"]}, "source_class": {"type": "string", "enum": ["official-api", "official-cli", "official-dashboard", "local-health-probe", "unknown"]}, "observed_at": {"type": "string"}}}}}}
+  }
+}

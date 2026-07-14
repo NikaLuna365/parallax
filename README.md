@@ -6,6 +6,82 @@ A spec-driven, blind-coder TDD pipeline (Claude Code plugin). *Code and tests lo
 
 A maximally-concrete, **read-only spec** drives two **independent** tracks — a test-writer and a blind coder that never sees the tests — and a single whole-seeing **arbiter** loops with failure analysis until green, then integrates and pushes. An optional, structurally-independent **cross-model verifier** (Codex, with a z.ai GLM or Gemini fallback) reviews the spec before the blind tracks and each green slice after.
 
+## v0.40 provider runtime
+
+The executable provider core lives in `scripts/provider_runtime.py`. Copy
+`assets/providers.toml.example` to `.parallax/providers.toml` for shareable
+provider/role definitions; put keys only in ignored `.parallax/.env`, legacy
+`.parallax/zai.env`, or `~/.config/parallax/providers.env`.
+
+Use `python3 scripts/provider-runtime.py preflight --repo .` during planning.
+It reports command/key presence and read-only probe status without printing
+secrets. Add `--probe-budget` only when a configured read-only budget adapter is
+intended to run. Budget reports preserve `known`, `unknown`, `limited`, and
+`unavailable`; `unknown` is never converted to zero or unlimited.
+
+Budget provenance is explicit. A configured official adapter (API or exact
+provider CLI) may report a timestamped balance; the example maps DeepSeek's
+official `GET /user/balance`. Gemini dashboard or project-quota observations,
+z.ai usage/dashboard information, Claude
+subscription limit/reset signals, and Codex local auth/health remain
+informational and do not become a personal dollar balance. Every observation
+keeps source class, confidence, and timestamp.
+
+During dispatch the local supervisor observes optional live signals at safe
+boundaries: before request, after response, before commit, and before
+fallback. It returns `continue`, `handoff`, or `sleep_until_reset`; it never
+preempts an in-flight provider process. Configure a read-only
+`live_signal_command` or `live_signal_path` for host signals such as Claude
+Code status-line `rate_limits.*.used_percentage`/`resets_at`, Codex `/usage` or
+`/status`, or Gemini CLI `/stats model`. Without a machine-readable signal,
+predictive status is explicitly `unknown`; explicit limit/auth errors remain
+the fallback trigger. Gemini's model-level fallback stays inside Gemini CLI;
+cross-provider handoff belongs to this supervisor.
+
+### v0.40.1 passive limits and OpenRouter
+
+Use `python3 scripts/provider-runtime.py limits`, `limits z.ai`, or the exact
+alias `limit`. `--json` is validated by `assets/provider-limits.schema.json`;
+`--watch N` repeats read-only collection and marks the last snapshot stale on
+failure. The command never starts inference. Arbitrary `probe_command` values
+are skipped unless the registry says `probe_policy = "explicit"`, the adapter
+declares `probe_read_only = true`, and `--probe-auth`/`--probe-all` is passed.
+
+Each worker attempt refreshes `.parallax/<slug>/runtime/limits.snapshot.json`
+and `limits.context.md` at safe boundaries. The short envelope is passive:
+the supervisor applies thresholds and fallback, while the worker is told not
+to spend a request checking limits. Aider receives one explicit `--read` file;
+Codex receives the fixed prefix; the native host gets the same request context.
+
+The optional `openrouter-api` transport uses only `OPENROUTER_API_KEY` and
+`https://openrouter.ai/api/v1`. Its official `/key` probe is an OpenRouter
+key-level budget, not a direct z.ai balance. `/credits` is used only when a
+separate management credential is explicitly configured; `/models` is a
+read-only catalog signal. Routing (`only`, `order`, `allow_fallbacks`, model
+fallbacks) and the data-retention policy are recorded in receipts/context.
+OpenRouter and direct `ZAI_API_KEY` credentials are never mixed, and upstream
+identity is preserved when OpenRouter serves a `z-ai/*` model.
+
+Routing memory is local SQLite (`~/.config/parallax/provider-state.sqlite` by
+default, configurable with `provider_state_db` or
+`PARALLAX_PROVIDER_STATE_DB`). It stores only a one-way key fingerprint and
+normalized provider observations; the database is not committed or copied to
+evidence. Direct z.ai `glm-5.2` can carry an operator-declared `$7` estimate
+labelled `operator-estimate`, never exact balance. An explicit z.ai
+insufficient-balance/402/business error records `exhausted` for that provider,
+transport, fingerprint, model, and scope; the next run skips it and probes the
+configured OpenRouter `z-ai/glm-5.2` fallback. Key rotation produces a new
+fingerprint. `limits --recheck` clears the selected persistent state.
+
+`python3 scripts/provider-runtime.py plan ...` produces the proposed matrix;
+`freeze --plan ... --selection ...` requires explicit confirmation and writes
+the selected host, role chains, capabilities, provider identities, fallback
+policy, and budget limitations without secrets. Worker dispatch owns the
+blindfold check, explicit writable-file list, clean-base fallback reset,
+commit, normalized attempt receipt, and evidence identity. The Codex-host seam
+is `scripts/codex-host.py`; requests missing the frozen artifacts park with
+`host_capability_missing` rather than emulating Claude's Task tool.
+
 ---
 
 ## Quick Start (5 minutes)

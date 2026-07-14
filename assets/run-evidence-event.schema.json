@@ -65,6 +65,7 @@
         "session_handoff",
         "feature_merged",
         "feature_sweep",
+        "provider_attempt",
         "run_completed",
         "run_parked",
         "failed_infra"
@@ -120,6 +121,13 @@
         "string",
         "null"
       ]
-    }
+    },
+    "host": {"type": ["string", "null"]},
+    "provider": {"type": ["string", "null"]},
+    "transport": {"type": ["string", "null"]},
+    "model": {"type": ["string", "null"]},
+    "attempt": {"type": ["integer", "null"], "minimum": 1},
+    "exit_class": {"type": ["string", "null"]},
+    "error_class": {"type": ["string", "null"]}
   }
 }

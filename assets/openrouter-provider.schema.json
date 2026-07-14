@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Parallax optional OpenRouter provider contract",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["transport", "base_url", "key_env", "model", "budget_key_endpoint"],
+  "properties": {
+    "transport": {"const": "openrouter-api"},
+    "base_url": {"const": "https://openrouter.ai/api/v1"},
+    "key_env": {"const": "OPENROUTER_API_KEY"},
+    "model": {"type": "string", "minLength": 1},
+    "budget_key_endpoint": {"const": "https://openrouter.ai/api/v1/key"},
+    "credits_endpoint": {"const": "https://openrouter.ai/api/v1/credits"},
+    "models_endpoint": {"const": "https://openrouter.ai/api/v1/models"},
+    "balance_scope": {"enum": ["openrouter-key", "openrouter-account"]},
+    "routing": {"type": "object"}
+  }
+}

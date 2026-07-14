@@ -1,0 +1,138 @@
+# Shareable provider registry. Copy to .parallax/providers.toml and edit values.
+# Secrets are never valid here. Put key values in .parallax/.env,
+# .parallax/zai.env (legacy), or ~/.config/parallax/providers.env.
+host_provider = "claude-code"
+fallback_policy = "ordered-clean-base"
+probe_policy = "explicit"
+# Optional; default is ~/.config/parallax/provider-state.sqlite.
+# provider_state_db = "~/.config/parallax/provider-state.sqlite"
+
+[limits]
+warning_threshold_pct = 80
+handoff_threshold_pct = 90
+unknown_policy = "continue-with-warning"
+stale_ttl_s = 120
+max_sleep_s = 3600
+reset_jitter_s = 30
+
+[providers.codex]
+kind = "both"
+transport = "codex-cli"
+command = "codex"
+model = "gpt-5.5"
+reasoning_effort = "high"
+capabilities = ["read", "write", "shell", "structured_output"]
+
+[providers.zai]
+kind = "both"
+transport = "aider-api"
+command = "aider"
+model = "glm-5.2"
+credential_class = "zai-api"
+operator_budget_usd = 7.0
+operator_budget_scope = "estimate-only"
+fallback_providers = ["openrouter_glm52"]
+base_url = "https://api.z.ai/api/paas/v4"
+key_env = "ZAI_API_KEY"
+auth_probe = "zai-models"
+auth_endpoint = "https://api.z.ai/api/paas/v4/models"
+auth_method = "GET"
+limits_source_class = "official-dashboard"
+limits_limitations = ["Official z.ai docs expose dashboard billing/rate-limit pages; no configured machine-readable balance endpoint.", "API balance remains unknown unless an official endpoint is separately proven."]
+capabilities = ["read", "write", "shell"]
+
+# Optional OpenRouter transport. This is an OpenRouter key/account budget, not
+# a direct z.ai balance. It deliberately uses a different credential and may
+# route to z-ai/GLM only when the policy below says so.
+[providers.openrouter]
+kind = "worker"
+transport = "openrouter-api"
+command = "aider"
+base_url = "https://openrouter.ai/api/v1"
+key_env = "OPENROUTER_API_KEY"
+credential_class = "openrouter-api-key"
+model = "z-ai/glm-5.1"
+budget_source_class = "official-api"
+budget_key_endpoint = "https://openrouter.ai/api/v1/key"
+credits_endpoint = "https://openrouter.ai/api/v1/credits"
+models_endpoint = "https://openrouter.ai/api/v1/models"
+budget_exact = true
+balance_scope = "openrouter-key"
+capabilities = ["read", "write", "structured_output"]
+
+[providers.openrouter.routing]
+only = ["z-ai"]
+allow_fallbacks = false
+data_retention_policy = "inherit-openrouter-account-policy"
+
+[providers.openrouter_glm52]
+kind = "worker"
+transport = "openrouter-api"
+command = "aider"
+base_url = "https://openrouter.ai/api/v1"
+key_env = "OPENROUTER_API_KEY"
+credential_class = "openrouter-api-key"
+model = "z-ai/glm-5.2"
+logical_model = "glm-5.2"
+budget_source_class = "official-api"
+budget_key_endpoint = "https://openrouter.ai/api/v1/key"
+credits_endpoint = "https://openrouter.ai/api/v1/credits"
+models_endpoint = "https://openrouter.ai/api/v1/models"
+budget_exact = true
+balance_scope = "openrouter-key"
+capabilities = ["read", "write", "structured_output"]
+
+[providers.openrouter_glm52.routing]
+only = ["z-ai"]
+allow_fallbacks = false
+data_retention_policy = "inherit-openrouter-account-policy"
+
+[providers.deepseek]
+kind = "worker"
+transport = "aider-api"
+command = "aider"
+model = "deepseek-v4-pro"
+base_url = "https://api.deepseek.com/v1"
+key_env = "DEEPSEEK_API_KEY"
+capabilities = ["read", "write", "shell"]
+budget_endpoint = "https://api.deepseek.com/user/balance"
+budget_source_class = "official-api"
+budget_exact = true
+budget_remaining_path = "balance_infos.0.total_balance"
+budget_currency_path = "balance_infos.0.currency"
+
+[providers.claude]
+kind = "worker"
+transport = "native-claude"
+command = "claude"
+capabilities = ["read", "write", "shell"]
+
+[roles.blind_coder]
+chain = ["codex", "zai", "deepseek", "claude"]
+required_capabilities = ["read", "write"]
+automatic_fallback = true
+
+[roles.test_writer]
+chain = ["codex", "zai", "deepseek", "claude"]
+required_capabilities = ["read", "write"]
+automatic_fallback = true
+
+[roles.arbiter]
+chain = ["codex", "zai"]
+required_capabilities = ["read", "structured_output"]
+automatic_fallback = true
+
+[roles.cross_model_verifier]
+chain = ["codex", "zai", "gemini"]
+required_capabilities = ["read", "structured_output"]
+automatic_fallback = true
+
+# GLM Coding Plan is intentionally separate from zai-api.  Do not pass a
+# subscription credential through Aider or an arbitrary SDK without confirming
+# z.ai's supported-tool rules.
+# [providers.zai-coding-subscription]
+# kind = "worker"
+# transport = "native-claude"
+# credential_class = "zai-coding-subscription"
+# plan_name = "coding-plan"
+# limits_source_class = "official-dashboard"

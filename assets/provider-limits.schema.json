@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Parallax provider limits snapshot or collection",
+  "type": "object",
+  "oneOf": [
+    {"$ref": "#/$defs/snapshot"},
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "snapshots", "observed_at"],
+      "properties": {
+        "schema_version": {"const": "parallax-provider-limits-v1"},
+        "snapshots": {"type": "array", "items": {"$ref": "#/$defs/snapshot"}},
+        "observed_at": {"type": "string", "format": "date-time"}
+      }
+    }
+  ],
+  "$defs": {
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "provider", "configured", "authenticated", "available", "plan", "budget", "model_catalog", "quota", "live_signal", "action", "source_class", "confidence", "stale", "observed_at", "limitations", "upstream_provider", "upstream_model", "balance_scope", "routing", "routing_state", "operator_estimate"],
+      "properties": {
+        "schema_version": {"const": "parallax-provider-limits-v1"},
+        "provider": {"type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9._-]+$"},
+        "upstream_provider": {"type": ["string", "null"]},
+        "upstream_model": {"type": ["string", "null"]},
+        "balance_scope": {"type": "string", "enum": ["openrouter-key", "openrouter-account", "provider-account", "unknown"]},
+        "routing": {
+          "type": "object", "additionalProperties": false,
+          "required": ["only", "order", "allow_fallbacks", "model_fallbacks", "data_retention_policy"],
+          "properties": {
+            "only": {"type": "array", "items": {"type": "string"}},
+            "order": {"type": "array", "items": {"type": "string"}},
+            "allow_fallbacks": {"type": "boolean"},
+            "model_fallbacks": {"type": "array", "items": {"type": "string"}},
+            "data_retention_policy": {"type": ["string", "null"]}
+          }
+        },
+        "routing_state": {"type": "string", "enum": ["unknown", "healthy", "warning", "exhausted", "rate_limited", "auth_failed", "stale"]},
+        "operator_estimate": {
+          "type": "object", "additionalProperties": false,
+          "required": ["remaining", "currency", "label", "scope"],
+          "properties": {
+            "remaining": {"type": ["number", "null"]},
+            "currency": {"type": ["string", "null"]},
+            "label": {"type": "string", "const": "operator-estimate"},
+            "scope": {"type": "string", "enum": ["estimate-only", "unknown"]}
+          }
+        },
+        "configured": {"type": "boolean"},
+        "authenticated": {"type": "string", "enum": ["yes", "no", "unknown"]},
+        "available": {"type": "string", "enum": ["yes", "no", "unknown"]},
+        "plan": {
+          "type": "object", "additionalProperties": false,
+          "required": ["name", "source"],
+          "properties": {
+            "name": {"type": ["string", "null"]},
+            "source": {"type": "string", "enum": ["official-api", "official-cli", "official-dashboard", "local-health-probe", "unknown"]}
+          }
+        },
+        "budget": {
+          "type": "object", "additionalProperties": false,
+          "required": ["status", "remaining", "currency", "reset_at", "exact"],
+          "properties": {
+            "status": {"type": "string", "enum": ["known", "unknown", "limited", "unavailable"]},
+            "remaining": {"type": ["number", "null"]},
+            "currency": {"type": ["string", "null"]},
+            "reset_at": {"type": ["string", "null"], "format": "date-time"},
+            "exact": {"type": "boolean"}
+          }
+        },
+        "model_catalog": {
+          "type": "object", "additionalProperties": false,
+          "required": ["status", "requested_model", "models"],
+          "properties": {
+            "status": {"type": "string", "enum": ["not-probed", "available", "model_unavailable", "unavailable"]},
+            "requested_model": {"type": ["string", "null"]},
+            "models": {
+              "type": "array",
+              "items": {
+                "type": "object", "additionalProperties": false,
+                "required": ["id", "pricing", "capabilities"],
+                "properties": {
+                  "id": {"type": "string"},
+                  "pricing": {"type": "object", "additionalProperties": {"type": "string"}},
+                  "capabilities": {"type": "array", "items": {"type": "string"}}
+                }
+              }
+            }
+          }
+        },
+        "quota": {
+          "type": "object", "additionalProperties": false,
+          "required": ["used_percentage", "remaining_percentage", "window", "reset_at"],
+          "properties": {
+            "used_percentage": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+            "remaining_percentage": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+            "window": {"type": ["string", "null"]},
+            "reset_at": {"type": ["string", "null"], "format": "date-time"}
+          }
+        },
+        "live_signal": {"type": "string", "enum": ["healthy", "near", "limited", "exhausted", "unknown"]},
+        "action": {"type": "string", "enum": ["continue", "handoff", "sleep_until_reset", "unknown"]},
+        "source_class": {"type": "string", "enum": ["official-api", "official-cli", "official-dashboard", "local-health-probe", "unknown"]},
+        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+        "stale": {"type": "boolean"},
+        "observed_at": {"type": "string", "format": "date-time"},
+        "limitations": {"type": "array", "items": {"type": "string", "maxLength": 240}}
+      }
+    }
+  }
+}

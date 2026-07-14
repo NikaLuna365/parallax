@@ -208,6 +208,58 @@ Run the whole spec phase unattended, from a written brief, when no principled fo
 
 ---
 
+## v0.40 provider planning checkpoint
+
+After project/validation discovery and before the final freeze, load the
+shareable `.parallax/providers.toml` through `scripts/provider-runtime.py` and
+run the read-only preflight. Show provider/transport/model, command
+availability, key presence source, probe status, and budget reports. Never show
+values from `.env`, a raw API response, or a full environment dump. Use
+`--probe-budget` only for configured read-only adapters; it must not issue a
+coding/review request.
+
+Keep configured, authenticated, model available, rate/limit signal,
+subscription allowance, and monetary balance separate. DeepSeek's official
+`GET /user/balance` can yield an exact timestamped observation; Gemini AI
+Studio/project usage or dashboard data may lag and is not a universal personal
+balance; z.ai usage/quotas remain `unknown` for exact money in this scope;
+Claude `/usage`/status is a subscription limit/reset signal separate from API
+billing; Codex Settings/Usage/limit banners and local auth health do not prove
+a machine-readable personal balance. Display source class and confidence.
+
+For continuous limit handling, configure only read-only machine-readable live
+signals when the host exposes them: Claude Code status-line
+`rate_limits.*.used_percentage`/`resets_at`, Codex `/usage` or `/status` and
+status-line usage, or Gemini CLI `/stats model`. Gemini model fallback is
+provider-local; cross-provider handoff remains the supervisor's decision.
+`codex doctor` is diagnostics, not quota evidence. If no live signal exists,
+mark predictive status `unknown` and rely on explicit limit/auth errors. The
+runtime samples signals only at safe boundaries and preserves receipts and
+clean-base fallback; it does not claim native host-turn preemption.
+
+Show capability gaps, the proposed role matrix, fallback order, and the
+estimate (labelled `estimate`, never `remaining balance`). A provider with
+budget `unknown` may be chosen explicitly and may not be silently excluded or
+preferred. Ask the user to confirm or edit host, role chains, required
+capabilities, fallback policy, and automatic-fallback flags. Then write the
+confirmed selection through:
+
+```bash
+python3 scripts/provider-runtime.py plan --repo . --output .parallax/<slug>/provider-plan.json
+python3 scripts/provider-runtime.py freeze \
+  --plan .parallax/<slug>/provider-plan.json \
+  --selection .parallax/<slug>/provider-selection.json \
+  --output .parallax/<slug>/provider-contract.json
+```
+
+The selection must contain `confirmed: true`. Commit the resulting
+`provider-contract.json` with the frozen artifacts. It records host, role
+chains, capability requirements, provider/model/transport identities, fallback
+policy, automatic-fallback choices, and budget observation limitations only;
+it never records keys, raw billing payloads, or raw provider responses. If the
+registry is absent or a selected provider lacks a real adapter/capability,
+record the gap and park rather than silently substituting another provider.
+
 ## Spec format (`.parallax/<feature-slug>/spec.md`)
 
 ```

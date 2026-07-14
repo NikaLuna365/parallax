@@ -1,0 +1,11 @@
+{
+  "data": [
+    {
+      "id": "z-ai/glm-5.2",
+      "pricing": {"prompt": "0.0000004", "completion": "0.0000016"},
+      "architecture": {"input_modalities": ["text", "image"], "output_modalities": ["text"]},
+      "supported_parameters": ["temperature", "max_tokens", "response_format"]
+    }
+  ],
+  "raw_marker": "must-not-be-retained"
+}

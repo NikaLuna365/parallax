@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Parallax normalized provider worker attempt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "host", "provider", "transport", "role", "slice_id", "attempt", "status", "worktree", "branch", "commit", "usage", "artifacts", "error_class", "exit_class"],
+  "properties": {
+    "schema_version": {"const": "parallax-worker-attempt-v1"},
+    "host": {"type": "string"}, "provider": {"type": "string"}, "transport": {"type": ["string", "null"]}, "model": {"type": ["string", "null"]},
+    "role": {"type": "string"}, "slice_id": {"type": "string"}, "attempt": {"type": "integer", "minimum": 1},
+    "status": {"type": "string", "enum": ["committed", "no_change", "limit", "auth_error", "provider_error", "timeout", "parked"]},
+    "worktree": {"type": "string"}, "branch": {"type": ["string", "null"]}, "commit": {"type": ["string", "null"]},
+    "usage": {"type": "object", "additionalProperties": false, "required": ["input_tokens", "output_tokens", "cost_usd"], "properties": {"input_tokens": {"type": ["integer", "null"]}, "output_tokens": {"type": ["integer", "null"]}, "cost_usd": {"type": ["number", "null"]}}},
+    "artifacts": {"type": "array", "items": {"type": "string"}}, "error_class": {"type": ["string", "null"]}, "exit_class": {"type": "string"},
+    "limit_action": {"type": ["string", "null"], "enum": ["continue", "handoff", "sleep_until_reset", "unknown", null]},
+    "upstream_provider": {"type": ["string", "null"]}, "upstream_model": {"type": ["string", "null"]},
+    "balance_scope": {"type": ["string", "null"]}, "routing": {"type": ["object", "null"], "additionalProperties": true},
+    "limit_observation": {"type": ["object", "null"], "additionalProperties": true},
+    "fallback_attempts": {"type": "array", "items": {"type": "object", "additionalProperties": true}}
+  }
+}

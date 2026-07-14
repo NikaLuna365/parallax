@@ -2,6 +2,70 @@
 
 All notable changes to the Parallax plugin. Versions are cumulative.
 
+## 0.40.1 — Passive limits context and optional OpenRouter transport
+
+Adds schema-validated `limits`/`limit` CLI and Claude-host slash commands,
+read-only human/JSON/watch output, canonical threshold policy, and a
+machine-generated limits snapshot/context envelope refreshed at worker safe
+boundaries. The envelope is injected into Codex/Aider/Claude worker requests
+without exposing secrets or widening blind-track artifacts. Final disposable
+worktree failures reconcile to `clean_base` or fail closed as
+`partial-edit-not-reconciled`; arbitrary probes require explicit opt-in.
+
+Adds optional `openrouter-api` using `OPENROUTER_API_KEY` and the official
+OpenRouter `/key` read-only key-budget source, with separate optional
+management-key `/credits` and `/models` catalog probes. Routing, data-retention
+policy, upstream identity, and balance scope are recorded. This is an
+OpenRouter wallet/key budget and is not a direct z.ai balance; direct z.ai API
+and Coding Plan credentials remain separate. See
+`references/zai-limits-research.md` and `references/provider-runtime.md`.
+
+Adds persistent local SQLite routing memory. Direct z.ai `glm-5.2` exhaustion
+from an explicit insufficient-balance/402/business error is keyed by provider,
+transport, one-way credential fingerprint, model, and scope, then skipped on
+later runs until reset/recheck. The same logical model can route to a probed
+OpenRouter `z-ai/glm-5.2`; key rotation gets an independent state. A declared
+operator budget (including the example `$7`) is retained as
+`operator-estimate`, never exact balance.
+
+### v0.40.1 remediation verification
+
+- Confirmed compatibility with installed Aider **0.86.2**. Aider worker
+  construction emits `--yes-always`; the obsolete `--yes` flag is not used.
+- Added a first-class, explicit-only z.ai GET `/api/paas/v4/models` auth and
+  availability probe using `ZAI_API_KEY` through the existing child environment
+  path. It records normalized `http_200`, `http_401`, and `network_failure`
+  statuses without retaining response bodies or secrets.
+- Local read-only live evidence: z.ai probe returned HTTP 200 and normalized
+  `authenticated=yes`. Exact balance remains `unknown`; no paid inference was
+  run. The generic Aider CLI has no enforceable USD cost cap, so paid smoke
+  remains fail-closed.
+- Remediation verification completed with `tests/run.sh` at **190 passed, 0
+  failed**, focused provider/host tests, Python compilation, plugin validation,
+  and diff checks passing.
+
+## 0.40.0 — Provider-agnostic runtime core
+
+Adds a mechanically tested provider registry, ignored env discovery, read-only
+preflight, source-labelled budget/limit reporting, explicit role-matrix freeze,
+Codex CLI and Aider/API worker command adapters, clean-base per-role fallback,
+normalized provider-attempt evidence, and a Codex-host worker seam. Exact
+money is deliberately narrow: only an explicitly configured official API or
+exact provider-CLI adapter may produce a timestamped exact balance (the example maps DeepSeek
+`GET /user/balance`); Gemini dashboard/project quota, z.ai usage, Claude
+subscription signals, and Codex local health remain unknown for personal
+dollar balance. The Codex-host entrypoint parks when the frozen artifacts needed
+for the shared gates are absent; it does not fake the Claude Task orchestrator.
+
+No real provider request or billing probe is part of the harness, and no live
+provider/budget evidence is claimed by this release.
+
+The supervisor also observes optional Claude status-line, Codex usage/status,
+and Gemini CLI `/stats model` signals at safe boundaries and returns
+`continue`, `handoff`, or `sleep_until_reset`. It never preempts an in-flight
+native host turn or treats `codex doctor` as quota evidence; without a live
+signal, predictive status remains unknown.
+
 ## 0.39.0 — Gate Reachability in the Real Environment
 A **hardening minor** driven by the first true multi-package monorepo soak (`ANALYSIS_v0.38.1_live_production_runs.md`, `TRIAGE_v0.38.1_live_runs_to_v0.39.md`; three real LuLu `Mark-n-post` production runs — a findings list, not a benchmark). The single coherent finding was **not a code defect**: the pipeline's judgment layer held on real money code (the cross-model Codex caught a silent `recipients[0]`-only money bug post-arbiter-green and policed its own remediation; blindness held; F3 closure + C1 seam + park-don't-guess all delivered live), but **the entire window was hand-driven, so the mechanical gates v0.38 shipped never executed on the box** — and the detached-HEAD hazard gate B1 mechanizes actually bit RUN-A and was caught by a human, not the machinery. The *cause* is monorepo ergonomics that push operators out of the skill flow. v0.39 makes the already-shipped gates **fire on the real box** and removes the friction. **No new command, no new behavior thesis, every v0.31–v0.38.1 boundary preserved; a clean skill-flow run is behaviorally identical to v0.38.1.** As everywhere, **mechanical** = a script/schema the harness executes; **directive** = a prompt-contract obligation the harness can only check is present. The public "gates protect production" claim stays out until one clean monorepo skill-flow (or adopt) soak runs (the Cluster B adopt soak is carried, still open).
 

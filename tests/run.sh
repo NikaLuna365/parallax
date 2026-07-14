@@ -824,8 +824,8 @@ echo "[zai_provider]  (v0.37.4 — z.ai/GLM OpenAI-compatible API fallback; the 
 grep -qF 'codex` / `gemini` / `zai' skills/role-codex-judge/SKILL.md \
   && ok "provider chain stays directive and now enumerates zai (codex | gemini | zai)" \
   || no "provider enum did not gain zai (v0.37.4)"
-if grep -rEnI --exclude-dir=.git '[0-9a-f]{32}\.[A-Za-z0-9]{16}' . >/tmp/parallax_zai_leak 2>/dev/null; then
-  no "SECRET LEAK: a literal z.ai-style key (32hex.16) is committed in the tree — it MUST live only in an untracked .parallax/zai.env"; sed 's/^/      /' /tmp/parallax_zai_leak
+if git grep -nEI '[0-9a-f]{32}\.[A-Za-z0-9]{16}' -- ':!*.env' ':!**/*.env' >/dev/null 2>&1; then
+  no "SECRET LEAK: a literal z.ai-style key is present in tracked files; local ignored env files are excluded from this static scan"
 else
   ok "secret-leak guard: no literal z.ai-style key committed anywhere in the tree (env / untracked .parallax/zai.env only)"
 fi
@@ -1042,9 +1042,26 @@ echo "[cloud_setup]  (real install attempts, not commented-out — locks #6)"
 grep -qE '^\s*command -v codex .*\|\| npm i -g' scripts/cloud-setup.sh && ok "cloud-setup.sh actually ATTEMPTS the CLI installs (uncommented)" || no "cloud-setup.sh installs are still commented out"
 grep -qiE 'best-effort|adjust the package names' README.md && ok "README is honest about best-effort installs" || no "README overclaims that setup installs"
 
-echo "[release_coherence]  (v0.39.0 — manifest/changelog/docs agree on the release; v0.31-v0.38.1 kept)"
-{ grep -q '"version": "0.39.0"' .claude-plugin/plugin.json \
-  && grep -q '^## 0.39.0' CHANGELOG.md \
+echo "[provider_runtime]  (v0.40 — executable registry, adapters, fallback, host seam)"
+bash tests/t_provider_runtime.sh >/tmp/parallax_provider_runtime 2>&1 && ok "provider runtime: registry/preflight/budget honesty; explicit Aider files; frozen matrix; fake Codex commit; clean-base fallback; provider attempts; Codex-host shared gates" \
+  || { no "provider runtime core"; sed 's/^/      /' /tmp/parallax_provider_runtime; }
+bash tests/t_provider_limits.sh >/tmp/parallax_provider_limits 2>&1 && ok "provider limits: schema/json/alias; no model or arbitrary probe; thresholds; OpenRouter key budget/routing/credential separation" \
+  || { no "provider limits v0.40.1"; sed 's/^/      /' /tmp/parallax_provider_limits; }
+bash tests/t_provider_state.sh >/tmp/parallax_provider_state 2>&1 && ok "provider state: z.ai exhaustion; OpenRouter same-model route; SQLite persistence; fingerprint rotation; operator estimate-only" \
+  || { no "provider state routing v0.40.1"; sed 's/^/      /' /tmp/parallax_provider_state; }
+bash tests/t_host_verification.sh >/tmp/parallax_host_verification 2>&1 && ok "host verification: Claude/Codex availability, diagnostic-only doctor, rate_limits and usage/status seam parsing, unknown quota evidence" \
+  || { no "Claude/Codex host verification"; sed 's/^/      /' /tmp/parallax_host_verification; }
+python3 -m py_compile scripts/provider_runtime.py scripts/provider-runtime.py scripts/codex-host.py scripts/host-verification.py && ok "provider and host verification scripts pass Python syntax checks" || no "provider/host runtime Python syntax"
+
+echo "[release_coherence]  (v0.40.1 — manifest/changelog/docs agree on the release; v0.31-v0.40 kept)"
+{ grep -q '"version": "0.40.1"' .claude-plugin/plugin.json \
+  && grep -q '^## 0.40.1' CHANGELOG.md \
+  && grep -qiF 'provider' README.md \
+  && grep -qiF 'provider' SECURITY.md \
+  && [ -f scripts/provider_runtime.py ] && [ -f scripts/provider-runtime.py ] && [ -f scripts/codex-host.py ] \
+  && [ -f scripts/host-verification.py ] && [ -f tests/t_host_verification.sh ] && [ -f tests/fixtures/openrouter_models_glm52.json ] \
+  && [ -f assets/provider-registry.schema.json ] && [ -f assets/provider-budget.schema.json ] && [ -f assets/provider-plan.schema.json ] && [ -f assets/worker-attempt.schema.json ] && [ -f assets/provider-limits.schema.json ] && [ -f assets/openrouter-provider.schema.json ] \
+  && [ -f commands/limits.md ] && [ -f commands/limit.md ] && [ -f references/zai-limits-research.md ] \
   && grep -qiF 'hand-driven' README.md \
   && grep -qiF 'monorepo' README.md \
   && [ -f scripts/finalize-handdriven.py ] && [ -f scripts/push-guard.sh ] && [ -f scripts/ci-parity.py ] \
@@ -1083,8 +1100,8 @@ echo "[release_coherence]  (v0.39.0 — manifest/changelog/docs agree on the rel
   && [ -f scripts/feature-sweep.py ] && [ -f scripts/contract-amend.py ] \
   && [ -f scripts/evidence-event.py ] && [ -f scripts/strip-openai-schema.py ] \
   && [ -f assets/blindfold-scope.schema.json ]; } \
-  && ok "version 0.39.0 in plugin.json; CHANGELOG has 0.39.0 (0.38.1/0.38.0/0.37.5/…/0.31.0 kept); README covers gate reachability (hand-driven finalize + monorepo guards) + adopt + prior boundaries; new v0.39 scripts (finalize-handdriven/push-guard/ci-parity) present" \
-  || no "release coherence: version/changelog/docs not aligned for 0.39.0"
+  && ok "version 0.40.1 in plugin.json; CHANGELOG has 0.40.1; limits/OpenRouter docs/schemas/tests are present; v0.31-v0.40 gates remain" \
+  || no "release coherence: version/changelog/docs not aligned for 0.40.1"
 
 echo ""
 echo "== $PASS passed, $FAIL failed =="

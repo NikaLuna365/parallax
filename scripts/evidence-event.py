@@ -94,6 +94,12 @@ def append(a: argparse.Namespace) -> int:
                      ("worktree", a.worktree), ("branch", a.branch), ("commit", a.commit)):
         if val is not None:
             event[key] = val
+    for key, val in (("host", a.host), ("provider", a.provider), ("transport", a.transport),
+                     ("model", a.model), ("exit_class", a.exit_class), ("error_class", a.error_class)):
+        if val is not None and val != "":
+            event[key] = val
+    if a.attempt is not None:
+        event["attempt"] = a.attempt
     try:
         _validate(event, EVENT_SCHEMA)
     except EnvironmentError as exc:
@@ -241,6 +247,13 @@ def parser() -> argparse.ArgumentParser:
     p_a.add_argument("--worktree", default=None)
     p_a.add_argument("--branch", default=None)
     p_a.add_argument("--commit", default=None)
+    p_a.add_argument("--host", default=None)
+    p_a.add_argument("--provider", default=None)
+    p_a.add_argument("--transport", default=None)
+    p_a.add_argument("--model", default=None)
+    p_a.add_argument("--attempt", type=int, default=None)
+    p_a.add_argument("--exit-class", default=None)
+    p_a.add_argument("--error-class", default=None)
     p_a.set_defaults(func=append)
 
     p_u = subs.add_parser("update-run", help="update run-evidence.json status/timestamps in place")

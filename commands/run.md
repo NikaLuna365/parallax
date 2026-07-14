@@ -6,6 +6,59 @@ argument-hint: "[feature-slug]   [--autonomous]  [--parallel]   [--resume]   [--
 
 # /parallax:run — build the frozen spec, blind + arbitrated, then push
 
+## v0.40 provider dispatch contract
+
+The existing Claude-hosted command remains the compatibility orchestrator. A
+provider selected in `provider-contract.json` is not represented by changing a
+Claude `model:` field. For an editable role, dispatch the normalized request
+through `scripts/provider-runtime.py dispatch` (or
+`scripts/codex-host.py` when Codex is the host), including the absolute
+worktree, expected branch, frozen spec/validation paths, role-specific
+visibility manifest, explicit writable files, done-gate, provider/model, and
+attempt id. The adapter is not a judge: only the existing worktree, commit,
+done-gate, blindness, arbiter, verifier, ledger, and finalization receipts can
+accept a result.
+
+The local supervisor checks optional live limit signals at safe boundaries
+(before request, after response, before commit, and before fallback) and emits
+`continue`, `handoff`, or `sleep_until_reset`. It never preempts an in-flight
+provider process. Claude status-line rate limits, Codex usage/status, and
+Gemini CLI `/stats model` are preserved as source-labelled signals; Gemini's
+model fallback does not perform cross-provider handoff. Without a live signal,
+predictive status is `unknown`, while explicit limit/auth errors still route
+through the clean-base fallback policy.
+
+Before every provider attempt and before accepting its result, run the existing
+`scripts/blindfold-guard.py`. Aider receives explicit `--read`/`--file` paths
+and `--no-auto-commits`; it must not infer broad paths from prompt text. Codex
+CLI receives bounded stdin and configured workspace-write/sandbox settings.
+Parallax owns the branch commit and writes a normalized attempt receipt plus a
+`provider_attempt` event carrying host/provider/transport/model/attempt/error
+identity. Do not put keys, raw API responses, or full provider output into the
+spec, decision log, receipts, or evidence; transport artifacts are bounded and
+redacted.
+
+Fallback is per role and only follows an attempt that produced no accepted
+commit. If the failed provider changed files, discard/reconcile the disposable
+worktree to the exact recorded clean base before trying the next chain entry.
+If reconciliation fails, or if all entries fail, park fail-closed under the
+existing `on_missing`/limit policy. Never mix partial edits, silently change
+roles, or claim a provider response is green.
+
+The documented Codex-host invocation is:
+
+```bash
+python3 scripts/codex-host.py \
+  --request .parallax/<slug>/provider-request.json \
+  --registry .parallax/providers.toml --host codex \
+  --artifact-dir .parallax/<slug>/evidence
+```
+
+It uses the same request, provider runtime, blindness check, fallback,
+attempt log, and host artifact. If frozen artifacts are missing it exits 2
+with `host_capability_missing`; it does not emulate Claude's Task tool or
+bypass `/parallax:run` finalization.
+
 You are the **orchestrator** for Phase 2-5. You author **no code and no tests** — you set up git, dispatch the blind workers and the arbiter, route their results, and manage the branch. Workers and the arbiter do all authoring/judging via their own skills.
 
 > **Branch namespace.** Throughout this doc `feature/` is the **default** prefix for everything the pipeline creates/pushes (the feature branch, track branches, lock, epic). It is **configurable** via `.parallax/codex.toml` `[git] branch_prefix` and read into `PREFIX` at Step 1. For a Claude Code **web (cloud) routine** (which runs with the laptop off but permits pushes only to `claude/*`), set `branch_prefix = "claude/"`; then wherever you see `feature/<slug>` below, use `${PREFIX}<slug>`. The default keeps local behaviour identical.
