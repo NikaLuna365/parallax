@@ -372,6 +372,17 @@ def _child_env(repo: Path, key_env: str | None, blocked_env: set[str] | None = N
     return env
 
 
+def _aider_child_env(provider: dict[str, Any], env: dict[str, str]) -> dict[str, str]:
+    """Adapt Parallax provider credentials to Aider's OpenAI-compatible contract."""
+    child = dict(env)
+    key_env = provider.get("key_env")
+    if provider.get("transport") == "aider-api" and key_env and child.get(key_env):
+        # Aider/LiteLLM reads OpenAI-compatible credentials from this name,
+        # while Parallax keeps provider-specific names in its registry.
+        child["OPENAI_API_KEY"] = child[key_env]
+    return child
+
+
 def _command_available(command: str | None) -> tuple[bool, str | None]:
     if not command:
         return True, None
@@ -1467,6 +1478,7 @@ def run_attempt(request: dict[str, Any], provider_name: str, provider: dict[str,
         if env.get(provider["key_env"]) and env[provider["key_env"]] in prompt:
             prompt_file.unlink(missing_ok=True)
             return _attempt(request, provider_name, provider, attempt, host, "parked", branch, None, "secret-in-prompt", [], None)
+    env = _aider_child_env(provider, env)
     try:
         cmd = _provider_command(provider, request, prompt_file)
         timeout = float(request.get("timeout_s", provider.get("timeout_s", 600)))

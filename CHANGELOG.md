@@ -2,6 +2,14 @@
 
 All notable changes to the Parallax plugin. Versions are cumulative.
 
+## 0.40.3 — Aider-compatible Z.ai authentication fix
+
+Fixes direct Z.ai `aider-api` dispatch when the provider registry uses
+`ZAI_API_KEY`: the child Aider process now receives the credential through
+the `OPENAI_API_KEY` name expected by Aider/LiteLLM. OpenRouter credentials
+remain isolated on their own transport. Adds a regression test for the
+credential mapping and preserves secret redaction.
+
 ## 0.40.2 — Codex plugin adapter
 
 Adds a validated Codex plugin manifest and a skills-only Parallax workflow

@@ -46,6 +46,12 @@ the same repository contracts, provider runtime, limits tooling, and
 fail-closed gates. Claude slash commands are not exposed as Codex commands;
 start a new Codex thread after installation so the bundled skills load.
 
+### v0.40.3 Z.ai/Aider authentication fix
+
+Direct Z.ai workers using Aider now map the registry's `ZAI_API_KEY` into
+Aider's required `OPENAI_API_KEY` child-process variable. OpenRouter keeps
+its separate credential path.
+
 ### v0.40.1 passive limits and OpenRouter
 
 Use `python3 scripts/provider-runtime.py limits`, `limits z.ai`, or the exact

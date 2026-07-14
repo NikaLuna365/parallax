@@ -98,6 +98,11 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(sys.argv[1])/'scripts'))
 import provider_runtime as r
+adapted = r._aider_child_env({'transport':'aider-api','key_env':'ZAI_API_KEY'}, {'ZAI_API_KEY':'zai-test-secret','OPENAI_API_KEY':'stale-key'})
+assert adapted['OPENAI_API_KEY'] == 'zai-test-secret'
+assert adapted['ZAI_API_KEY'] == 'zai-test-secret'
+unchanged = r._aider_child_env({'transport':'openrouter-api','key_env':'OPENROUTER_API_KEY'}, {'OPENROUTER_API_KEY':'or-test-secret'})
+assert 'OPENAI_API_KEY' not in unchanged
 cmd=r._provider_command({'transport':'aider-api','command':sys.executable,'model':'m','base_url':'https://example.invalid','key_env':'FAKE_KEY'}, {'worktree':'.','visibility_manifest':{'visible_files':['spec.md'],'writable_files':['src/impl.py']}}, Path('/tmp/prompt'))
 assert cmd.count('--read') == 1 and 'spec.md' in cmd and cmd.count('--file') == 1 and 'src/impl.py' in cmd
 assert '--no-auto-commits' in cmd
