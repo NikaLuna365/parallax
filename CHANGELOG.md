@@ -2,6 +2,14 @@
 
 All notable changes to the Parallax plugin. Versions are cumulative.
 
+## 0.40.2 — Codex plugin adapter
+
+Adds a validated Codex plugin manifest and a skills-only Parallax workflow
+adapter. Codex can install and enable the plugin from the local or GitHub
+marketplace, use the shared provider runtime and limits tooling, and follow
+the same fail-closed workflow contracts. Claude slash commands remain
+Claude-only; Codex uses the bundled skills and shared repository scripts.
+
 ## 0.40.1 — Passive limits context and optional OpenRouter transport
 
 Adds schema-validated `limits`/`limit` CLI and Claude-host slash commands,

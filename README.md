@@ -38,6 +38,14 @@ predictive status is explicitly `unknown`; explicit limit/auth errors remain
 the fallback trigger. Gemini's model-level fallback stays inside Gemini CLI;
 cross-provider handoff belongs to this supervisor.
 
+### v0.40.2 Codex adapter
+
+Codex CLI and the Codex desktop/IDE surfaces can install Parallax as a
+skills-only plugin through a configured marketplace. The Codex adapter uses
+the same repository contracts, provider runtime, limits tooling, and
+fail-closed gates. Claude slash commands are not exposed as Codex commands;
+start a new Codex thread after installation so the bundled skills load.
+
 ### v0.40.1 passive limits and OpenRouter
 
 Use `python3 scripts/provider-runtime.py limits`, `limits z.ai`, or the exact
