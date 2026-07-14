@@ -36,7 +36,10 @@ Parallax owns the branch commit and writes a normalized attempt receipt plus a
 `provider_attempt` event carrying host/provider/transport/model/attempt/error
 identity. Do not put keys, raw API responses, or full provider output into the
 spec, decision log, receipts, or evidence; transport artifacts are bounded and
-redacted.
+redacted. Python worker processes receive `PYTHONDONTWRITEBYTECODE=1`; Ruff
+done-gates run with `--no-cache` and an external temporary cache, so generated
+`__pycache__`/`.ruff_cache` paths cannot masquerade as worker edits. The final
+visibility check is repeated after the done-gate.
 
 For the cross-model verifier, a provider with `transport = "review-api"` is
 not sent through the worker/Aider adapter. The assembled integration tree is

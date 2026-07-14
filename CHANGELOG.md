@@ -2,6 +2,31 @@
 
 All notable changes to the Parallax plugin. Versions are cumulative.
 
+## 0.40.7 — Reviewer transport cost and cache hardening
+
+Remediates the v0.40.6 live Z.ai failures. Registered GLM reviewer requests
+now disable Z.ai thinking by default, use bounded defaults of 8192 output tokens
+and 600 seconds, and allow only explicit/narrower request overrides. The
+runtime classifies reasoning-only, token-exhausted, sensitive-stop,
+provider-network, read-timeout, connect, and malformed-response failures
+without persisting reasoning text, secrets, or full provider payloads.
+
+Normalized provider attempts retain safe finish/usage/character metadata and
+the effective review parameters; missing usage remains null. Paid HTTP 200
+failures are not retried with an identical body, and existing raw receipts stay
+unchanged on failure.
+
+Python worker processes now disable bytecode writes; Ruff done-gates use
+`--no-cache` and an external temporary cache, followed by a second visibility
+guard. Editing-role dispatch defaults to disposable worktree reconciliation
+without weakening unexpected-write detection.
+
+Live smoke: one cost-capped real Z.ai request (`max_tokens=2048`) returned a
+schema-valid `pass` with `finish_reason=stop`, 11,451 prompt tokens, 16
+completion tokens, 11,467 total tokens, and zero reasoning characters. This is
+transport smoke evidence only; saved production checkpoints remain subject to
+their normal arbiter, ledger, triage, and freeze gates.
+
 ## 0.40.6 — Read-only direct reviewer transport
 
 Separates reviewer execution from code-writing workers. z.ai GLM review now

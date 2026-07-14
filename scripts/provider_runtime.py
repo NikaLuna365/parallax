@@ -295,6 +295,10 @@ def _validate_registry_doc(doc: Any) -> dict[str, Any]:
                 raise ValueError(f"provider {name!r} review-api requires read and structured_output capabilities")
             if capabilities & {"write", "shell"}:
                 raise ValueError(f"provider {name!r} review-api must not declare write or shell capabilities")
+            if provider.get("review_thinking", "disabled") not in {"disabled", "enabled"}:
+                raise ValueError(f"provider {name!r} review_thinking must be disabled or enabled")
+            if not isinstance(provider.get("review_thinking_supported", False), bool):
+                raise ValueError(f"provider {name!r} review_thinking_supported must be boolean")
             endpoints = " ".join(str(provider.get(key, "")) for key in
                                   ("base_url", "budget_key_endpoint", "budget_endpoint", "credits_endpoint")).lower()
             if "openrouter.ai" in endpoints:
@@ -407,6 +411,24 @@ def _aider_child_env(provider: dict[str, Any], env: dict[str, str]) -> dict[str,
         # while Parallax keeps provider-specific names in its registry.
         child["OPENAI_API_KEY"] = child[key_env]
     return child
+
+
+def _worker_child_env(request: dict[str, Any], env: dict[str, str]) -> dict[str, str]:
+    """Prevent ordinary Python/Ruff done-gates from dirtying the worktree."""
+    child = dict(env)
+    if request.get("role") in EDITING_ROLES:
+        child["PYTHONDONTWRITEBYTECODE"] = "1"
+    return child
+
+
+def _done_gate_command(gate: list[str]) -> list[str]:
+    """Disable Ruff's repository cache without widening the visibility manifest."""
+    if gate and Path(gate[0]).name == "ruff" and "--no-cache" not in gate:
+        return [gate[0], "--no-cache", *gate[1:]]
+    if (len(gate) >= 3 and Path(gate[0]).name in {"python", "python3", "py"}
+            and gate[1:3] == ["-m", "ruff"] and "--no-cache" not in gate):
+        return [*gate[:3], "--no-cache", *gate[3:]]
+    return list(gate)
 
 
 def _command_available(command: str | None) -> tuple[bool, str | None]:
@@ -1506,7 +1528,7 @@ def run_attempt(request: dict[str, Any], provider_name: str, provider: dict[str,
         if env.get(provider["key_env"]) and env[provider["key_env"]] in prompt:
             prompt_file.unlink(missing_ok=True)
             return _attempt(request, provider_name, provider, attempt, host, "parked", branch, None, "secret-in-prompt", [], None)
-    env = _aider_child_env(provider, env)
+    env = _worker_child_env(request, _aider_child_env(provider, env))
     try:
         cmd = _provider_command(provider, request, prompt_file)
         timeout = float(request.get("timeout_s", provider.get("timeout_s", 600)))
@@ -1545,10 +1567,19 @@ def run_attempt(request: dict[str, Any], provider_name: str, provider: dict[str,
         if gate:
             if not isinstance(gate, list) or not all(isinstance(x, str) for x in gate):
                 return _attempt(request, provider_name, provider, attempt, host, "parked", branch, None, "invalid-done-gate", artifacts, proc.returncode)
-            gate_proc = subprocess.run(gate, cwd=worktree, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                       stderr=subprocess.DEVNULL, timeout=float(request.get("done_gate_timeout_s", 600)))
+            gate_env = _worker_child_env(request, env)
+            with tempfile.TemporaryDirectory(prefix="parallax-ruff-cache-") as ruff_cache:
+                gate_env["RUFF_CACHE_DIR"] = ruff_cache
+                gate_proc = subprocess.run(_done_gate_command(gate), cwd=worktree, stdin=subprocess.DEVNULL,
+                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                           timeout=float(request.get("done_gate_timeout_s", 600)), env=gate_env)
             if gate_proc.returncode != 0:
                 return _attempt(request, provider_name, provider, attempt, host, "provider_error", branch, None, "done-gate-failed", artifacts, proc.returncode)
+            changed = _worker_status_paths(request)
+            unexpected = [p for p in changed if p not in set(manifest["writable_files"])]
+            if unexpected:
+                return _attempt(request, provider_name, provider, attempt, host, "parked", branch, None,
+                                "visibility-manifest-violation", artifacts, proc.returncode)
         try:
             refresh_limits_context(request, request.get("limits_registry", {}), provider_name,
                                    boundary="before_commit", fallback_available=fallback_available,
@@ -1589,7 +1620,8 @@ def run_attempt(request: dict[str, Any], provider_name: str, provider: dict[str,
 def _attempt(request: dict[str, Any], provider: str, config: dict[str, Any], attempt: int, host: str,
              status: str, branch: str | None, commit: str | None, error: str | None,
              artifacts: list[str], returncode: int | None, limit_observation: dict[str, Any] | None = None,
-             limit_action: str | None = None, review_verdict: str | None = None) -> dict[str, Any]:
+             limit_action: str | None = None, review_verdict: str | None = None,
+             provider_diagnostics: dict[str, Any] | None = None) -> dict[str, Any]:
     logical_model = config.get("logical_model") or (str(config.get("model")).split("/", 1)[-1] if config.get("transport") == "openrouter-api" else config.get("model"))
     result = {"schema_version": "parallax-worker-attempt-v1", "host": host, "provider": provider,
               "transport": config.get("transport"), "model": logical_model, "role": request.get("role"),
@@ -1612,6 +1644,8 @@ def _attempt(request: dict[str, Any], provider: str, config: dict[str, Any], att
         result["limit_action"] = limit_action
     if review_verdict is not None:
         result["review_verdict"] = review_verdict
+    if provider_diagnostics is not None:
+        result["provider_diagnostics"] = provider_diagnostics
     _schema_validate(result, ATTEMPT_SCHEMA)
     return result
 
@@ -1745,16 +1779,19 @@ def _review_attempt(request: dict[str, Any], provider_name: str, provider: dict[
             status, error = "auth_error", exc.error_class
         elif exc.error_class in {"rate-limited", "insufficient_balance"}:
             status, error = "limit", exc.error_class
-        elif exc.error_class in {"provider-timeout-or-network"}:
+        elif exc.error_class in {"provider-read-timeout", "provider-connect-error"}:
             status, error = "timeout", exc.error_class
         else:
             status, error = "provider_error", exc.error_class
         return _attempt(request, provider_name, provider, attempt, host, status,
-                        request.get("expected_branch"), None, error, [], None)
+                        request.get("expected_branch"), None, error, [], None,
+                        provider_diagnostics=exc.diagnostics)
     return _attempt(request, provider_name, provider, attempt, host, "no_change",
                     request.get("expected_branch"), None, None,
                     [str(result["raw_artifact"])], 0, limit_action="continue",
-                    review_verdict=result["verdict"]["verdict"])
+                    review_verdict=result["verdict"]["verdict"],
+                    provider_diagnostics={**result.get("diagnostics", {}),
+                                          "review_parameters": result.get("review_parameters", {})})
 
 
 def _record_successful_probe(repo: Path, name: str, provider: dict[str, Any], registry: dict[str, Any],
@@ -1796,7 +1833,8 @@ def dispatch(request: dict[str, Any], registry: dict[str, Any], host: str) -> di
         store.close()
     attempt_records = Path(request["attempt_log"]) if request.get("attempt_log") else None
     worktree = Path(request["worktree"]).resolve()
-    disposable = bool(request.get("disposable_worktree", False))
+    disposable = bool(request.get("disposable_worktree", role_key in {"blind_coder", "test_writer", "arbiter"}))
+    request["disposable_worktree"] = disposable
     results = []
     for idx, name in enumerate(chain, 1):
         fallback_available = idx < len(chain)

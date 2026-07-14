@@ -53,8 +53,10 @@ key_env = "ZAI_API_KEY"
 auth_probe = "zai-models"
 auth_endpoint = "https://api.z.ai/api/paas/v4/models"
 auth_method = "GET"
-review_timeout_s = 180
-review_max_tokens = 12000
+review_timeout_s = 600
+review_max_tokens = 8192
+review_thinking = "disabled"
+review_thinking_supported = true
 capabilities = ["read", "structured_output"]
 
 # Optional same-model fallback. This is the OpenRouter account/key budget, not
@@ -73,8 +75,9 @@ budget_remaining_path = "limit_remaining"
 budget_limit_path = "limit"
 budget_exact = true
 balance_scope = "openrouter-key"
-review_timeout_s = 180
-review_max_tokens = 12000
+review_timeout_s = 600
+review_max_tokens = 8192
+review_thinking = "disabled"
 capabilities = ["read", "structured_output"]
 
 # Optional OpenRouter transport. This is an OpenRouter key/account budget, not

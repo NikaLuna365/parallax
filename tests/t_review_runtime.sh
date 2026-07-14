@@ -10,6 +10,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import socket
 import sys
 
 plugin = pathlib.Path(sys.argv[1])
@@ -27,7 +28,8 @@ verdict = {"verdict": "pass", "findings": []}
 provider = {
     "kind": "reviewer", "transport": "review-api", "model": "glm-5.2",
     "base_url": "https://review.invalid/v1/chat/completions", "key_env": "ZAI_API_KEY",
-    "capabilities": ["read", "structured_output"], "review_max_tokens": 12000,
+    "capabilities": ["read", "structured_output"], "review_max_tokens": 8192,
+    "review_timeout_s": 600, "review_thinking": "disabled", "review_thinking_supported": True,
 }
 registry = {"providers": {"zai_reviewer": provider}}
 request = {
@@ -39,6 +41,7 @@ os.environ["ZAI_API_KEY"] = "test-secret"
 seen = {}
 
 class Response:
+    headers = {}
     def __enter__(self): return self
     def __exit__(self, *args): return False
     def read(self, limit=-1): return json.dumps({"choices": [{"message": {"content": json.dumps(verdict)}}]}).encode()
@@ -58,8 +61,12 @@ assert (repo / "src.py").read_text(encoding="utf-8") == "VALUE = 7\n"
 assert seen["auth"] == "Bearer test-secret"
 assert seen["body"]["response_format"] == {"type": "json_object"}
 assert seen["body"]["model"] == "glm-5.2"
+assert seen["body"]["thinking"] == {"type": "disabled"}
+assert seen["body"]["max_tokens"] == 8192
+assert seen["timeout"] == 600
 assert "VALUE = 7" in seen["body"]["messages"][1]["content"]
 assert "assert VALUE == 7" in seen["body"]["messages"][1]["content"]
+assert result["diagnostics"]["prompt_tokens"] is None
 
 # The provider runtime's real cross-model dispatch must select review-runtime,
 # not the worker/Aider path.
@@ -117,6 +124,71 @@ except mod.ReviewError as exc:
 else:
     raise AssertionError("malformed provider response was accepted")
 assert raw.read_text(encoding="utf-8") == "{\"sentinel\":true}\n"
+
+# Provider termination and network classes are deterministic and never replace
+# an existing raw receipt. Reasoning text is only represented by its length.
+def expect_error(payload_or_exc, expected):
+    raw.write_text('{"sentinel":true}\n', encoding="utf-8")
+    if isinstance(payload_or_exc, BaseException):
+        mod.urllib.request.urlopen = lambda req, timeout: (_ for _ in ()).throw(payload_or_exc)
+    else:
+        class PayloadResponse(Response):
+            def read(self, limit=-1):
+                if payload_or_exc == b"malformed":
+                    return payload_or_exc
+                return json.dumps(payload_or_exc).encode()
+        mod.urllib.request.urlopen = lambda req, timeout: PayloadResponse()
+    try:
+        mod.run_review(request, registry, "zai_reviewer")
+    except mod.ReviewError as exc:
+        assert exc.error_class == expected, (exc.error_class, expected)
+        assert exc.diagnostics.get("reasoning_chars", 0) >= 0
+        assert "review_parameters" in exc.diagnostics
+    else:
+        raise AssertionError(f"expected {expected}")
+    assert raw.read_text(encoding="utf-8") == '{"sentinel":true}\n'
+
+expect_error({"choices":[{"finish_reason":"stop","message":{"content":"", "reasoning_content":"private reasoning"}}], "usage":{"completion_tokens":12}}, "reasoning-only-response")
+expect_error({"choices":[{"finish_reason":"length","message":{"content":"", "reasoning_content":""}}], "usage":{}}, "output-token-exhausted")
+expect_error({"choices":[{"finish_reason":"stop","message":{"content":"", "reasoning_content":""}}]}, "empty-provider-response")
+expect_error({"choices":[{"finish_reason":"sensitive","message":{"content":"", "reasoning_content":""}}]}, "provider-sensitive-stop")
+expect_error({"choices":[{"finish_reason":"sensitive","message":{"content":json.dumps(verdict), "reasoning_content":""}}]}, "provider-sensitive-stop")
+expect_error({"error":{"message":"upstream network error"}}, "provider-inference-network-error")
+expect_error(b"malformed", "malformed-provider-response-json")
+expect_error(socket.timeout("read"), "provider-read-timeout")
+expect_error(__import__("urllib.error", fromlist=["URLError"]).URLError("dns"), "provider-connect-error")
+
+# Valid content wins over reasoning, while the reasoning text never reaches disk.
+valid_payload = {"choices":[{"finish_reason":"stop","message":{"content":json.dumps(verdict), "reasoning_content":"do not persist this"}}], "usage":{"prompt_tokens":4,"completion_tokens":5,"total_tokens":9}}
+raw.write_text('{"sentinel":true}\n', encoding="utf-8")
+mod.urllib.request.urlopen = lambda req, timeout: type("ValidResponse", (Response,), {"read": lambda self, limit=-1: json.dumps(valid_payload).encode()})()
+ok_result = mod.run_review(request, registry, "zai_reviewer")
+assert ok_result["diagnostics"]["reasoning_chars"] == len("do not persist this")
+assert "do not persist this" not in raw.read_text(encoding="utf-8")
+
+# A legacy z.ai registry without the new marker still gets the safe disabled
+# thinking field; generic endpoints remain explicit opt-in only.
+legacy_zai = dict(provider)
+legacy_zai.pop("review_thinking_supported")
+legacy_zai["base_url"] = "https://api.z.ai/api/paas/v4/chat/completions"
+registry["providers"]["legacy_zai"] = legacy_zai
+mod.urllib.request.urlopen = fake_urlopen
+mod.run_review(request, registry, "legacy_zai")
+assert seen["body"]["thinking"] == {"type": "disabled"}
+
+# Thinking is an explicit provider-contract opt-in, never a request-side guess.
+enabled = dict(provider, review_thinking="enabled")
+registry["providers"]["zai_enabled"] = enabled
+mod.urllib.request.urlopen = fake_urlopen
+mod.run_review(request, registry, "zai_enabled")
+assert seen["body"]["thinking"] == {"type": "enabled"}
+unsupported = dict(provider, review_thinking="enabled", review_thinking_supported=False)
+try:
+    mod.run_review(request, {"providers": {"bad": unsupported}}, "bad")
+except mod.ReviewError as exc:
+    assert exc.error_class == "review-thinking-unsupported"
+else:
+    raise AssertionError("unsupported thinking opt-in was accepted")
 
 # Registry validation rejects a review transport that can write or shell out.
 provider_runtime._validate_registry_doc({"providers": {"review": provider}})

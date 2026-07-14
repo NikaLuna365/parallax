@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import os
+import socket
 import sys
 import tempfile
 import urllib.error
@@ -25,9 +26,10 @@ MAX_CONTEXT_BYTES = 8 * 1024 * 1024
 
 
 class ReviewError(RuntimeError):
-    def __init__(self, error_class: str, message: str = ""):
+    def __init__(self, error_class: str, message: str = "", diagnostics: dict[str, Any] | None = None):
         super().__init__(message or error_class)
         self.error_class = error_class
+        self.diagnostics = diagnostics or {}
 
 
 def _json(path: Path) -> Any:
@@ -144,13 +146,55 @@ def _assert_unchanged(repo: Path, before: dict[str, str], excluded: Path) -> Non
         raise ReviewError("reviewer-worktree-mutated")
 
 
-def _response_content(payload: Any) -> str:
+def _usage(payload: Any) -> dict[str, int | None]:
+    usage = payload.get("usage") if isinstance(payload, dict) else None
+    if not isinstance(usage, dict):
+        return {"prompt_tokens": None, "completion_tokens": None, "total_tokens": None}
+    values: dict[str, int | None] = {}
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        value = usage.get(key)
+        values[key] = int(value) if isinstance(value, (int, float)) and value >= 0 else None
+    return values
+
+
+def _response_diagnostics(payload: Any, request_id: str | None = None) -> dict[str, Any]:
+    choice = {}
+    message = {}
+    if isinstance(payload, dict) and isinstance(payload.get("choices"), list) and payload["choices"]:
+        choice = payload["choices"][0] if isinstance(payload["choices"][0], dict) else {}
+        message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+    content = message.get("content") if isinstance(message.get("content"), str) else ""
+    reasoning = message.get("reasoning_content") if isinstance(message.get("reasoning_content"), str) else ""
+    usage = _usage(payload)
+    return {
+        "finish_reason": choice.get("finish_reason") if isinstance(choice.get("finish_reason"), str) else None,
+        **usage,
+        "content_chars": len(content),
+        "reasoning_chars": len(reasoning),
+        "request_id": request_id,
+    }
+
+
+def _response_content(payload: Any, diagnostics: dict[str, Any]) -> str:
     try:
-        content = payload["choices"][0]["message"]["content"]
+        message = payload["choices"][0]["message"]
+        content = message["content"]
     except (KeyError, IndexError, TypeError) as exc:
-        raise ReviewError("malformed-provider-response") from exc
+        raise ReviewError("malformed-provider-response", diagnostics=diagnostics) from exc
     if not isinstance(content, str) or not content.strip():
-        raise ReviewError("empty-provider-response")
+        reasoning_chars = int(diagnostics.get("reasoning_chars") or 0)
+        finish_reason = diagnostics.get("finish_reason")
+        if finish_reason == "length":
+            error_class = "output-token-exhausted"
+        elif str(finish_reason).lower() in {"sensitive", "content_filter"}:
+            error_class = "provider-sensitive-stop"
+        elif str(finish_reason).lower() in {"network_error", "network-error"}:
+            error_class = "provider-inference-network-error"
+        elif reasoning_chars:
+            error_class = "reasoning-only-response"
+        else:
+            error_class = "empty-provider-response"
+        raise ReviewError(error_class, diagnostics=diagnostics)
     return content
 
 
@@ -169,6 +213,12 @@ def _atomic_write(path: Path, doc: dict[str, Any]) -> None:
     except Exception:
         tmp.unlink(missing_ok=True)
         raise
+
+
+def _blank_diagnostics(parameters: dict[str, Any]) -> dict[str, Any]:
+    return {"finish_reason": None, "prompt_tokens": None, "completion_tokens": None,
+            "total_tokens": None, "content_chars": 0, "reasoning_chars": 0,
+            "request_id": None, "review_parameters": parameters}
 
 
 def run_review(request: dict[str, Any], registry: dict[str, Any], provider_name: str) -> dict[str, Any]:
@@ -215,6 +265,29 @@ def run_review(request: dict[str, Any], registry: dict[str, Any], provider_name:
                    "Do not include markdown fences or commentary.\n"
                    "===== FULL REVIEW SCHEMA =====\n" + schema_text +
                    ("\n===== ASSEMBLED READ-ONLY CONTEXT =====" + context if context else ""))
+    # z.ai GLM supports the field and must receive the explicit disabled policy
+    # even when an older local registry omitted the capability marker. Other
+    # OpenAI-compatible endpoints opt in explicitly because their reasoning
+    # parameter names are not interchangeable.
+    supported_thinking = bool(provider.get("review_thinking_supported", False)) or "api.z.ai" in base_url
+    thinking = str(provider.get("review_thinking", "disabled"))
+    if thinking not in {"disabled", "enabled"}:
+        raise ReviewError("invalid-review-thinking-policy")
+    if thinking == "enabled" and not supported_thinking:
+        raise ReviewError("review-thinking-unsupported")
+    configured_max_tokens = int(provider.get("review_max_tokens", 8192))
+    requested_max_tokens = request.get("review_max_tokens")
+    max_tokens = configured_max_tokens if requested_max_tokens is None else int(requested_max_tokens)
+    if max_tokens < 1 or (max_tokens > configured_max_tokens and not request.get("allow_review_override")):
+        raise ReviewError("review-max-tokens-override-required")
+    configured_timeout = float(provider.get("review_timeout_s", 600))
+    requested_timeout = request.get("review_timeout_s", request.get("timeout_s"))
+    timeout = configured_timeout if requested_timeout is None else float(requested_timeout)
+    if timeout <= 0 or (timeout > configured_timeout and not request.get("allow_review_override")):
+        raise ReviewError("review-timeout-override-required")
+    review_parameters = {"timeout_s": timeout, "max_tokens": max_tokens,
+                         "thinking": thinking if supported_thinking else "disabled"}
+    failure_diagnostics = _blank_diagnostics(review_parameters)
     body = {
         "model": model,
         "messages": [
@@ -222,9 +295,11 @@ def run_review(request: dict[str, Any], registry: dict[str, Any], provider_name:
             {"role": "user", "content": user_prompt},
         ],
         "temperature": 0,
-        "max_tokens": int(provider.get("review_max_tokens", 12000)),
+        "max_tokens": max_tokens,
         "response_format": {"type": "json_object"},
     }
+    if supported_thinking:
+        body["thinking"] = {"type": thinking}
     body_bytes = json.dumps(body, ensure_ascii=False).encode("utf-8")
     if secret in body_bytes.decode("utf-8"):
         raise ReviewError("secret-in-request")
@@ -233,29 +308,60 @@ def run_review(request: dict[str, Any], registry: dict[str, Any], provider_name:
     http_request.add_header("Authorization", f"Bearer {secret}")
     http_request.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(http_request, timeout=float(request.get("timeout_s", provider.get("review_timeout_s", 180)))) as response:
-            payload = json.loads(response.read(16 * 1024 * 1024).decode("utf-8"))
+        with urllib.request.urlopen(http_request, timeout=timeout) as response:
+            request_id = response.headers.get("x-request-id") if getattr(response, "headers", None) else None
+            raw_response = response.read(16 * 1024 * 1024)
+            try:
+                payload = json.loads(raw_response.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ReviewError("malformed-provider-response-json") from exc
     except urllib.error.HTTPError as exc:
         if exc.code in {401, 403}:
-            raise ReviewError("auth-failed") from exc
+            raise ReviewError("auth-failed", diagnostics=failure_diagnostics) from exc
         if exc.code == 402:
-            raise ReviewError("insufficient_balance") from exc
+            raise ReviewError("insufficient_balance", diagnostics=failure_diagnostics) from exc
         if exc.code in {408, 409, 429}:
-            raise ReviewError("rate-limited") from exc
-        raise ReviewError("provider-http-error") from exc
-    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-        raise ReviewError("provider-timeout-or-network") from exc
+            raise ReviewError("rate-limited", diagnostics=failure_diagnostics) from exc
+        raise ReviewError("provider-http-error", diagnostics=failure_diagnostics) from exc
+    except ReviewError as exc:
+        for key, value in failure_diagnostics.items():
+            exc.diagnostics.setdefault(key, value)
+        raise
+    except (socket.timeout, TimeoutError) as exc:
+        raise ReviewError("provider-read-timeout", diagnostics=failure_diagnostics) from exc
+    except urllib.error.URLError as exc:
+        reason = getattr(exc, "reason", None)
+        if isinstance(reason, (socket.timeout, TimeoutError)):
+            raise ReviewError("provider-read-timeout", diagnostics=failure_diagnostics) from exc
+        raise ReviewError("provider-connect-error", diagnostics=failure_diagnostics) from exc
+    except OSError as exc:
+        raise ReviewError("provider-connect-error", diagnostics=failure_diagnostics) from exc
     _assert_unchanged(repo, before, raw_output)
+    diagnostics = _response_diagnostics(payload, request_id)
+    diagnostics["review_parameters"] = review_parameters
+    terminal_reason = str(diagnostics.get("finish_reason") or "").lower()
+    if terminal_reason in {"sensitive", "content_filter"}:
+        raise ReviewError("provider-sensitive-stop", diagnostics=diagnostics)
+    if terminal_reason in {"network_error", "network-error"}:
+        raise ReviewError("provider-inference-network-error", diagnostics=diagnostics)
+    if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
+        error_text = json.dumps(payload["error"], ensure_ascii=False).lower()
+        if "network" in error_text:
+            raise ReviewError("provider-inference-network-error", diagnostics=diagnostics)
     try:
-        verdict = json.loads(_response_content(payload))
+        content = _response_content(payload, diagnostics)
+        verdict = json.loads(content)
     except json.JSONDecodeError as exc:
-        raise ReviewError("malformed-provider-json") from exc
+        if diagnostics.get("finish_reason") == "length":
+            raise ReviewError("output-token-exhausted", diagnostics=diagnostics) from exc
+        raise ReviewError("malformed-provider-json", diagnostics=diagnostics) from exc
     if not isinstance(verdict, dict):
         raise ReviewError("review-not-object")
     _validate(verdict, schema_path)
     _atomic_write(raw_output, verdict)
     return {"status": "ok", "provider": provider_name, "transport": "review-api", "model": model,
-            "raw_artifact": str(raw_output), "verdict": verdict}
+            "raw_artifact": str(raw_output), "verdict": verdict, "diagnostics": diagnostics,
+            "review_parameters": review_parameters}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -272,7 +378,10 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(run_review(request, registry, args.provider), indent=2, sort_keys=True, ensure_ascii=False))
         return 0
     except ReviewError as exc:
-        print(json.dumps({"status": "error", "error_class": exc.error_class}, sort_keys=True))
+        output = {"status": "error", "error_class": exc.error_class}
+        if exc.diagnostics:
+            output["diagnostics"] = exc.diagnostics
+        print(json.dumps(output, sort_keys=True))
         return 2
     except Exception:
         print(json.dumps({"status": "error", "error_class": "runtime-error"}, sort_keys=True))

@@ -39,19 +39,13 @@ Like the arbiter, the verifier **produces a verdict, never edits code/tests/spec
   `.parallax/<slug>/reviews/<slice>.round<N>.raw.json`. The helper owns the
   Chat Completions call, JSON mode, full-schema validation, mutation check, and
   atomic raw receipt. Never use Aider for this transport.
-  - **zai (GLM over the OpenAI-compatible API, v0.37.4):** the canonical fallback when the `codex` CLI is unavailable or limited. z.ai speaks OpenAI `chat/completions`, so:
-    ```sh
-    curl --max-time "$TIMEOUT_S" -sS "$BASE_URL" \
-      -H "Authorization: Bearer $ZAI_API_KEY" -H "Content-Type: application/json" \
-      -d '{"model":"'"$MODEL"'","temperature":0,"max_tokens":4096,
-           "response_format":{"type":"json_object"},
-           "messages":[{"role":"user","content":"<prompt + INLINE the review-round/verdict/spec-adversary schema: reply with ONLY a JSON object matching it>"}]}'
-    ```
-    where `BASE_URL` = the config `base_url` (e.g. `https://api.z.ai/api/paas/v4/chat/completions`), `MODEL` = the config `model` (e.g. `glm-5.2`), and `ZAI_API_KEY` is read from the env var the config's `key_env` names. **Fail closed if that env var is empty** — never proceed unauthenticated, and never read the key from the committed `.parallax/codex.toml` (put it in an untracked `.parallax/zai.env` you `source` first). The verdict JSON is in `.choices[0].message.content`; **GLM is a reasoning model — its chain-of-thought is in `.message.reasoning_content` (ignore it) and you must budget a generous `max_tokens`, or `finish_reason:"length"` truncates the content before the JSON is emitted.** Like the gemini path, z.ai has no native custom-schema enforcement: **embed the schema in the prompt and validate the returned JSON yourself against the FULL schema**; for a top-level-`allOf` schema (`review-round.schema.json`) pass the `scripts/strip-openai-schema.py` copy into `response_format`'s `json_schema` if you use that mode, but the full schema stays the acceptance bar. On invalid/truncated JSON retry once with a stricter instruction and a larger budget; if still unusable, treat it as a provider error and move to the next provider.
+  - **zai (GLM over the OpenAI-compatible API):** the canonical fallback when the `codex` CLI is unavailable or limited. For a registered `review-api`, invoke `scripts/review-runtime.py`; do not hand-write a curl request. It reads the secret named by `key_env` and sends `Authorization: Bearer <key>` with `response_format={"type":"json_object"}`. Its frozen z.ai contract sends `thinking={"type":"disabled"}` by default, caps output at `review_max_tokens=8192`, and records bounded finish/usage diagnostics. `reasoning_content` is counted but never persisted; only `message.content` can become a schema-validated receipt. A paid HTTP 200 with no usable content is a provider failure, never an automatic identical retry or a pass.
+
+    A generic curl adapter remains a legacy/manual path for non-registered providers only. It must fail closed when the configured key is absent and must validate the full schema without persisting secrets or reasoning text.
 
 Exact flags drift between versions — confirm against the installed CLI. Schemas ship under `assets/` (`review-round.schema.json` post-green, `verdict.schema.json` sole-mode RED arbitration, `spec-adversary.schema.json` pre-freeze). Whatever the form, what you carry upward is output matching that schema — and you note **which provider** produced it.
 
-**Mechanical vs directive — be honest about which is which.** Two guards here are *real* and shell-enforced: the `timeout` / `--max-time` wrapper (a hung provider is killed at `timeout_s`) and walking to the next provider on a non-zero/124 exit. Two things are **directives you, the operating agent, execute** — not deterministic code: the short in-process **retry budget** on a transient limit (you judge when a blip becomes "move on") and the **`api` form** (you author and run the `curl`, then parse and schema-validate its body). Hold the directives to the same discipline as the mechanical guards; the self-test harness can only exercise the mechanical ones.
+**Mechanical vs directive — be honest about which is which.** The registered `review-api` helper owns the timeout, mutation guard, full-schema validation, bounded diagnostics, and atomic receipt. A provider failure walks to the next configured provider; the same paid HTTP 200 body is never retried automatically. The self-test harness exercises these mechanics; live smoke evidence remains separate.
 
 ## The two insertion points
 

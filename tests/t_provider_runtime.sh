@@ -91,7 +91,7 @@ printf 'validation\n' > "$T/validation.md"
 python3 - "$REQ" "$REPO" "$BASE" "$T" <<'PY'
 import json,sys
 out,repo,base,t=sys.argv[1:]
-json.dump({'repo':repo,'role':'blind-coder','slice_id':'S1','slug':'demo','run_id':'run-1','side':'code','worktree':repo,'expected_branch':'feature/demo-S1-code','clean_base':base,'disposable_worktree':True,'chain':['fake'],'spec_path':t+'/spec.md','validation_path':t+'/validation.md','visibility_manifest':{'visible_files':['src/base.py'],'writable_files':['src/impl.py']},'prompt':'Read the frozen spec and implement the assigned behavior.','timeout_s':20,'attempt_log':t+'/attempts.jsonl','attempt_artifacts':t+'/attempt-artifacts','evidence_dir':t+'/evidence'},open(out,'w'))
+json.dump({'repo':repo,'role':'blind-coder','slice_id':'S1','slug':'demo','run_id':'run-1','side':'code','worktree':repo,'expected_branch':'feature/demo-S1-code','clean_base':base,'chain':['fake'],'spec_path':t+'/spec.md','validation_path':t+'/validation.md','visibility_manifest':{'visible_files':['src/base.py'],'writable_files':['src/impl.py']},'prompt':'Read the frozen spec and implement the assigned behavior.','timeout_s':20,'attempt_log':t+'/attempts.jsonl','attempt_artifacts':t+'/attempt-artifacts','evidence_dir':t+'/evidence'},open(out,'w'))
 PY
 python3 - "$PLUGIN" <<'PY'
 import sys
@@ -108,6 +108,7 @@ assert cmd.count('--read') == 1 and 'spec.md' in cmd and cmd.count('--file') == 
 assert '--no-auto-commits' in cmd
 assert '--yes-always' in cmd and '--yes' not in cmd
 assert '--no-gitignore' in cmd
+assert r._done_gate_command([sys.executable, '-m', 'ruff', 'check'])[3] == '--no-cache'
 direct=r._provider_command({'transport':'aider-api','command':sys.executable,'model':'glm-5.2','base_url':'https://api.z.ai/api/paas/v4','key_env':'ZAI_API_KEY'}, {'worktree':'.','visibility_manifest':{'visible_files':['spec.md'],'writable_files':['src/impl.py']}}, Path('/tmp/prompt'))
 assert direct[direct.index('--model')+1] == 'openai/glm-5.2'
 assert direct[direct.index('--openai-api-base')+1] == 'https://api.z.ai/api/paas/v4'
@@ -131,6 +132,28 @@ assert result['limit_action'] == 'continue'
 assert observation['live_status'] == 'unknown'
 assert observation['predictive'] is False
 PY
+
+# Python/Ruff done-gates must not create guard-visible caches. The fake Ruff
+# fails unless the runtime supplied both protections; a real cache write would
+# still be rejected by the post-gate visibility check.
+cat > "$T/ruff" <<EOF
+#!/usr/bin/env python3
+import os, sys
+from pathlib import Path
+if '--no-cache' not in sys.argv or os.environ.get('PYTHONDONTWRITEBYTECODE') != '1':
+    raise SystemExit(9)
+Path('$T/ruff-gate-ok').write_text('ok')
+EOF
+chmod +x "$T/ruff"
+git -C "$REPO" reset -q --hard "$BASE"
+python3 - "$REQ" "$BASE" "$T" <<'PY'
+import json,sys
+p=json.load(open(sys.argv[1])); p['chain']=['fake']; p['clean_base']=sys.argv[2]; p['done_gate']=[sys.argv[3]+'/ruff','check']; json.dump(p,open(sys.argv[1],'w'))
+PY
+python3 "$PLUGIN/scripts/provider-runtime.py" dispatch --request "$REQ" --registry "$REPO/.parallax/providers.toml" --host codex > "$T/done-gate.json"
+grep -q '"status": "committed"' "$T/done-gate.json" || { cat "$T/done-gate.json"; fail 'cache-safe done-gate did not commit'; }
+[ -s "$T/ruff-gate-ok" ] || fail 'cache-safe done-gate was not executed'
+[ ! -e "$REPO/.ruff_cache" ] && [ ! -e "$REPO/src/__pycache__" ] || fail 'done-gate left generated caches in worktree'
 
 sed "s#command = \"$T/fake-success\"#command = \"$T/fake-limit\"#" "$REPO/.parallax/providers.toml" > "$T/fallback.toml"
 cat >> "$T/fallback.toml" <<EOF

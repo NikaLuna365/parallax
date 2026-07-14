@@ -14,6 +14,7 @@
     "artifacts": {"type": "array", "items": {"type": "string"}}, "error_class": {"type": ["string", "null"]}, "exit_class": {"type": "string"},
     "limit_action": {"type": ["string", "null"], "enum": ["continue", "handoff", "sleep_until_reset", "unknown", null]},
     "review_verdict": {"type": ["string", "null"], "enum": ["pass", "concerns", null]},
+    "provider_diagnostics": {"type": ["object", "null"], "additionalProperties": true},
     "upstream_provider": {"type": ["string", "null"]}, "upstream_model": {"type": ["string", "null"]},
     "balance_scope": {"type": ["string", "null"]}, "routing": {"type": ["object", "null"], "additionalProperties": true},
     "limit_observation": {"type": ["object", "null"], "additionalProperties": true},
