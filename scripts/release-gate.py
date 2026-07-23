@@ -44,11 +44,18 @@ def plugin_version(repo: Path) -> str:
 
 
 def find_review(repo: Path, version: str, reviews_dir: Path | None) -> Path:
-    candidates = [reviews_dir] if reviews_dir else [repo / "REVIEWS", repo.parent / "REVIEWS"]
-    for directory in candidates:
-        if directory and directory.is_dir():
-            return directory / f"v{version}_implementation_verification.md"
-    return (reviews_dir or repo / "REVIEWS") / f"v{version}_implementation_verification.md"
+    directories = [reviews_dir] if reviews_dir else [repo / "REVIEWS", repo.parent / "REVIEWS"]
+    # Both historical naming forms are accepted: vX.Y.Z_… and vX.Y_… (the
+    # REVIEWS/ archive contains both).
+    minor = re.sub(r"^(\d+\.\d+)\.\d+$", r"\1", version)
+    names = [f"v{version}_implementation_verification.md"]
+    if minor != version:
+        names.append(f"v{minor}_implementation_verification.md")
+    directory = next((d for d in directories if d and d.is_dir()), None) or (reviews_dir or repo / "REVIEWS")
+    for name in names:
+        if (directory / name).exists():
+            return directory / name
+    return directory / names[0]
 
 
 def gate(repo: Path, version: str, reviews_dir: Path | None) -> tuple[bool, str, Path]:
