@@ -46,9 +46,14 @@ not sent through the worker/Aider adapter. The assembled integration tree is
 already the review subject: the arbiter has assembled the real source and test
 branches and run the declared tests, lint, typecheck, and build. The verifier
 transport receives that snapshot plus the spec and validation evidence as
-explicit read-only context, returns one `review-round.schema.json` object, and
-lets the runtime atomically persist the raw receipt. It never merges branches,
-runs candidate tests, or writes candidate files. Findings still go through
+explicit read-only context, returns one schema object selected by insertion
+point (`pre_freeze` → `spec-adversary.schema.json`, `post_green` →
+`review-round.schema.json`), and lets the runtime atomically persist the raw
+receipt. It never merges branches, runs candidate tests, or writes candidate
+files — mechanically: dispatch routes the verifier role only to read-only
+`review-api` providers, a write/shell-capable provider is rejected from the
+chain at registry validation, freeze, and dispatch, and a null verdict is a
+provider failure, never a success. Findings still go through
 `merge-ledger.py` and `triage.py`; a provider error never becomes a pass.
 
 Fallback is per role and only follows an attempt that produced no accepted

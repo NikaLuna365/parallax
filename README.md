@@ -94,13 +94,20 @@ configured OpenRouter `z-ai/glm-5.2` fallback. Key rotation produces a new
 fingerprint. `limits --recheck` clears the selected persistent state.
 
 `python3 scripts/provider-runtime.py plan ...` produces the proposed matrix;
-`freeze --plan ... --selection ...` requires explicit confirmation and writes
+`freeze --plan ... --selection ...` requires explicit confirmation, enforces
+each role's `required_capabilities` against every chain provider, and writes
 the selected host, role chains, capabilities, provider identities, fallback
 policy, and budget limitations without secrets. Worker dispatch owns the
-blindfold check, explicit writable-file list, clean-base fallback reset,
-commit, normalized attempt receipt, and evidence identity. The Codex-host seam
-is `scripts/codex-host.py`; requests missing the frozen artifacts park with
-`host_capability_missing` rather than emulating Claude's Task tool.
+blindfold check and it fails CLOSED: a blind role (blind-coder, test-writer)
+must supply `side`+`slug`, the dispatch request itself is schema-validated
+before any provider process starts, and a missing or unreadable
+`blindfold-guard.py` parks the attempt (`blindfold-guard-unavailable`) instead
+of reporting clean. Dispatch further owns the explicit writable-file list,
+clean-base fallback reset, commit, normalized attempt receipt, and evidence
+identity, and routes by ROLE: the cross-model verifier role only ever reaches
+the read-only review path. The Codex-host seam is `scripts/codex-host.py`;
+requests missing the frozen artifacts (including `side`/`slug` for blind
+roles) park rather than emulating Claude's Task tool.
 
 ---
 

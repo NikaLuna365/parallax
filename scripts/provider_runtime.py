@@ -36,6 +36,7 @@ BLINDFOLD = ROOT / "scripts" / "blindfold-guard.py"
 REGISTRY_SCHEMA = ROOT / "assets" / "provider-registry.schema.json"
 PLAN_SCHEMA = ROOT / "assets" / "provider-plan.schema.json"
 ATTEMPT_SCHEMA = ROOT / "assets" / "worker-attempt.schema.json"
+REQUEST_SCHEMA = ROOT / "assets" / "worker-request.schema.json"
 BUDGET_SCHEMA = ROOT / "assets" / "provider-budget.schema.json"
 LIMITS_SCHEMA = ROOT / "assets" / "provider-limits.schema.json"
 OPENROUTER_SCHEMA = ROOT / "assets" / "openrouter-provider.schema.json"
@@ -43,16 +44,71 @@ DEFAULT_CHAINS = {
     "blind_coder": ["codex", "zai", "deepseek", "claude"],
     "test_writer": ["codex", "zai", "deepseek", "claude"],
     "arbiter": ["codex", "zai"],
-    "cross_model_verifier": ["codex", "zai_reviewer", "gemini"],
+    # A verifier chain may only carry read-only structured reviewers; a
+    # write/shell-capable provider (codex-cli, aider) is never a valid default.
+    "cross_model_verifier": ["zai_reviewer", "openrouter_glm52_reviewer"],
 }
 ROLE_ALIASES = {"blind-coder": "blind_coder", "test-writer": "test_writer"}
 EDITING_ROLES = {"blind-coder", "test-writer", "arbiter"}
+# The blindness role contract. A role listed here MUST supply side+slug on
+# every dispatch and MUST run the wall guard; "not-requested" is legal only for
+# the explicitly exempt roles below — never inferred from a missing field.
+ROLE_BLINDFOLD_SIDES = {"blind_coder": "code", "test_writer": "test"}
+BLINDFOLD_EXEMPT_ROLES = {"arbiter", "cross_model_verifier"}
+REVIEWER_ROLES = {"cross_model_verifier"}
+DEFAULT_ROLE_CAPABILITIES = {
+    "arbiter": ["read", "structured_output"],
+    "cross_model_verifier": ["read", "structured_output"],
+}
+DEFAULT_EDITING_CAPABILITIES = ["read", "write"]
+# Provider failure classes that can only arise from a completed (paid) HTTP 200
+# provider response body. After one of these, an automatic identical retry or
+# silent fallback would spend money on the same request again.
+PAID_RESPONSE_CLASSES = {
+    "reasoning-only-response", "output-token-exhausted", "empty-provider-response",
+    "provider-sensitive-stop", "provider-inference-network-error",
+    "malformed-provider-json", "malformed-provider-response",
+    "malformed-provider-response-json", "review-not-object", "schema-invalid",
+}
+# Credential names that must never co-reside in a provider child that does not
+# own them, even when a stale value lingers in the operator's shell.
+KNOWN_CREDENTIAL_ENV = {
+    "OPENAI_API_KEY", "OPENROUTER_API_KEY", "OPENROUTER_MANAGEMENT_KEY",
+    "ZAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY",
+}
 SECRET_KEYS = re.compile(r"(?:key|token|secret|password|credential|api[_-]?key)$", re.I)
 ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 LIMIT_RE = re.compile(r"rate.?limit|quota|usage.?limit|too many requests|429|exhausted", re.I)
 AUTH_RE = re.compile(r"unauthori[sz]ed|authentication|invalid api key|permission denied|401|403", re.I)
 BALANCE_RE = re.compile(r"insufficient balance|balance exhausted|insufficient funds|business.?code\s*[:=]?\s*(?:1113|402)|(?:http|status|code|error_code)\s*[:=]?\s*402|\b1113\b", re.I)
 SOURCE_CLASSES = {"official-api", "official-cli", "official-dashboard", "local-health-probe", "unknown"}
+# Provenance ordering: a collected payload may LOWER the recorded class below
+# what the registry declares, never raise it (a local script must not be able
+# to mint official-cli / high confidence for itself).
+SOURCE_CLASS_RANK = {"unknown": 0, "local-health-probe": 1, "official-dashboard": 2,
+                     "official-cli": 3, "official-api": 4}
+# Secret-shaped VALUES (not just key names): bearer tokens, vendor key prefixes,
+# private-key material. Name-based detection alone let `authorization = "Bearer …"`
+# through the registry validator.
+SECRET_VALUE_RE = re.compile(
+    r"(?:\bBearer\s+[A-Za-z0-9._~+/=-]{8,}"
+    r"|\bsk-[A-Za-z0-9_-]{16,}"
+    r"|\bAIza[0-9A-Za-z_-]{30,}"
+    r"|\bgh[pousr]_[A-Za-z0-9]{20,}"
+    r"|\bgithub_pat_[A-Za-z0-9_]{20,}"
+    r"|\bxox[abopsr]-[A-Za-z0-9-]{10,}"
+    r"|\b\d{6,}:[A-Za-z0-9_-]{30,}"
+    r"|-----BEGIN [A-Z ]*PRIVATE KEY-----)")
+
+
+def _cap_source_class(collected: Any, declared: Any) -> str:
+    declared_class = str(declared) if declared in SOURCE_CLASSES else "unknown"
+    collected_class = str(collected) if collected in SOURCE_CLASSES else None
+    if collected_class is None:
+        return declared_class
+    if SOURCE_CLASS_RANK[collected_class] > SOURCE_CLASS_RANK[declared_class]:
+        return declared_class
+    return collected_class
 HOSTS = {"claude-code", "codex", "shell"}
 PROVIDER_ALIASES = {"z.ai": "zai", "zai-api": "zai", "claude-code": "claude"}
 LIMIT_ACTIONS = {"continue", "handoff", "sleep_until_reset", "unknown"}
@@ -223,6 +279,10 @@ def _secret_values(doc: Any, path: str = "") -> list[str]:
     elif isinstance(doc, list):
         for idx, value in enumerate(doc):
             found.extend(_secret_values(value, f"{path}[{idx}]"))
+    elif isinstance(doc, str) and SECRET_VALUE_RE.search(doc):
+        # Value-shaped secrets are rejected regardless of the key they hide
+        # under; the path is reported, never the value itself.
+        found.append(path or "<root>")
     return found
 
 
@@ -343,8 +403,15 @@ def _validate_registry_doc(doc: Any) -> dict[str, Any]:
     if isinstance(verifier, dict):
         for name in verifier.get("chain", []):
             provider = doc["providers"].get(name)
-            if isinstance(provider, dict) and provider.get("transport") in {"aider-api", "openrouter-api"}:
+            if not isinstance(provider, dict):
+                continue
+            if provider.get("transport") in {"aider-api", "openrouter-api"}:
                 raise ValueError(f"cross_model_verifier provider {name!r} cannot use an Aider transport; use review-api")
+            capabilities = set(provider.get("capabilities", []))
+            if capabilities & {"write", "shell"}:
+                raise ValueError(
+                    f"cross_model_verifier provider {name!r} declares write/shell capabilities; "
+                    "a reviewer chain accepts only read-only structured reviewers")
     _schema_validate(doc, REGISTRY_SCHEMA)
     return doc
 
@@ -402,6 +469,27 @@ def _child_env(repo: Path, key_env: str | None, blocked_env: set[str] | None = N
     return env
 
 
+def _credential_env_names(registry: dict[str, Any] | None) -> set[str]:
+    """Every credential env name the registry knows about, plus well-known ones."""
+    names = set(KNOWN_CREDENTIAL_ENV)
+    providers = (registry or {}).get("providers", {})
+    if isinstance(providers, dict):
+        for provider in providers.values():
+            if not isinstance(provider, dict):
+                continue
+            for field in ("key_env", "credits_key_env", "management_key_env"):
+                value = provider.get(field)
+                if isinstance(value, str) and value:
+                    names.add(value)
+    return names
+
+
+def _provider_blocked_env(registry: dict[str, Any] | None, provider: dict[str, Any] | None) -> set[str]:
+    """Block every credential that does not belong to the selected provider."""
+    own = {provider.get("key_env")} if isinstance(provider, dict) else set()
+    return _credential_env_names(registry) - {name for name in own if name}
+
+
 def _aider_child_env(provider: dict[str, Any], env: dict[str, str]) -> dict[str, str]:
     """Adapt Parallax provider credentials to Aider's OpenAI-compatible contract."""
     child = dict(env)
@@ -446,11 +534,14 @@ def _aider_version(request: dict[str, Any], provider: dict[str, Any], argv: list
     if not available:
         raise ValueError("aider_missing")
     try:
+        version_env = _child_env(Path(request.get("repo", request.get("worktree", "."))), provider.get("key_env"),
+                                 blocked_env=_provider_blocked_env(
+                                     request.get("limits_registry") if isinstance(request.get("limits_registry"), dict) else None,
+                                     provider))
         proc = subprocess.run(argv + ["--version"], cwd=request.get("worktree", "."),
                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               text=True, timeout=float(provider.get("version_timeout_s", 10)),
-                              env={k: v for k, v in {**os.environ, "AIDER_CHECK_UPDATE": "false"}.items()
-                                   if k != "OPENROUTER_MANAGEMENT_KEY"})
+                              env={**version_env, "AIDER_CHECK_UPDATE": "false"})
     except (OSError, subprocess.TimeoutExpired):
         raise ValueError("aider_missing")
     match = re.search(r"(?<!\d)(\d+)\.(\d+)(?:\.(\d+))?", (proc.stdout or "") + "\n" + (proc.stderr or ""))
@@ -532,7 +623,9 @@ def _provider_report(repo: Path, name: str, p: dict[str, Any], registry: dict[st
         try:
             probe_proc = subprocess.run(shlex.split(str(p["probe_command"])), cwd=repo,
                                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                        stderr=subprocess.DEVNULL, env=_child_env(repo, p.get("key_env")),
+                                        stderr=subprocess.DEVNULL,
+                                        env=_child_env(repo, p.get("key_env"),
+                                                       blocked_env=_provider_blocked_env(registry, p)),
                                         timeout=float(p.get("probe_timeout_s", 15)))
             probe = "ok" if probe_proc.returncode == 0 else "failed"
         except subprocess.TimeoutExpired:
@@ -558,6 +651,21 @@ def _provider_report(repo: Path, name: str, p: dict[str, Any], registry: dict[st
         "live_signal_status": "configured" if (p.get("live_signal_command") or p.get("live_signal_path")) else "not-supported",
         "authenticated": "yes" if probe in {"ok", "http_200"} else ("no" if probe == "http_401" else ("unknown" if available and configured else ("no" if not secret.get("configured", True) else "unknown"))),
     }
+    if p.get("transport") == "review-api":
+        # The effective reviewer contract, surfaced WITHOUT any paid call:
+        # this is what a frozen dispatch would actually send.
+        report["review_contract"] = {
+            "endpoint": p.get("base_url"),
+            "model": p.get("model"),
+            "review_thinking": str(p.get("review_thinking", "disabled")),
+            "review_thinking_supported": bool(p.get("review_thinking_supported", False)) or "api.z.ai" in str(p.get("base_url", "")),
+            "review_max_tokens": int(p.get("review_max_tokens", 8192)),
+            "review_timeout_s": float(p.get("review_timeout_s", 600)),
+            "credential_class": p.get("credential_class"),
+            "key_env": p.get("key_env"),
+            "key_present": configured,
+            "insertion_points": ["pre_freeze", "post_green"],
+        }
     if p.get("transport") == "aider-api" and not available:
         report["availability"] = "provider-unavailable"
     elif not configured:
@@ -717,7 +825,9 @@ def _budget_report(repo: Path, name: str, p: dict[str, Any], provider_report: di
             args = shlex.split(str(command))
             proc = subprocess.run(args, cwd=repo, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                   stderr=subprocess.DEVNULL, text=True, timeout=float(p.get("budget_timeout_s", 10)),
-                                  env={**_child_env(repo, p.get("key_env")), "PARALLAX_BUDGET_PROBE": "1"})
+                                  env={**_child_env(repo, p.get("key_env"),
+                                                    blocked_env=_provider_blocked_env(registry, p)),
+                                       "PARALLAX_BUDGET_PROBE": "1"})
             payload = json.loads(proc.stdout) if proc.returncode == 0 else None
             if not isinstance(payload, dict) or payload.get("status") not in {"known", "limited", "unknown", "unavailable"}:
                 error_class = "malformed-budget-probe"
@@ -852,6 +962,21 @@ def freeze_plan(plan_path: Path, selection_path: Path, output: Path) -> dict[str
         base = plan.get("roles", {}).get(role, {})
         roles[role] = {"chain": chain, "required_capabilities": value.get("required_capabilities", base.get("required_capabilities", [])),
                        "automatic_fallback": bool(value.get("automatic_fallback", base.get("automatic_fallback", True)))}
+    # required_capabilities is ENFORCED at freeze: a chain provider whose
+    # declared capabilities do not cover the role's requirement cannot freeze,
+    # and a reviewer chain accepts only read-only review-api providers.
+    for role, value in roles.items():
+        required = set(value.get("required_capabilities") or
+                       DEFAULT_ROLE_CAPABILITIES.get(role, DEFAULT_EDITING_CAPABILITIES))
+        for name in value["chain"]:
+            descriptor = providers.get(name, {})
+            capabilities = set(descriptor.get("capabilities", []))
+            if not required.issubset(capabilities):
+                raise ValueError(f"unsafe-provider-chain: role {role!r} provider {name!r} does not cover "
+                                 f"required capabilities {sorted(required)}")
+            if role in REVIEWER_ROLES and (capabilities & {"write", "shell"} or descriptor.get("transport") != "review-api"):
+                raise ValueError(f"unsafe-provider-chain: role {role!r} provider {name!r} is not a "
+                                 "read-only structured review-api provider")
     chosen_names = {n for role in roles.values() for n in role["chain"]}
     frozen = {"schema_version": "parallax-provider-contract-v1", "frozen_at": now(),
               "host_provider": selection.get("host_provider", plan.get("host_provider", "claude-code")),
@@ -921,15 +1046,33 @@ def _redact(text: str, env: dict[str, str]) -> str:
 
 
 def _blindfold(request: dict[str, Any], worktree: Path) -> tuple[bool, str]:
+    """Fail-CLOSED blindness wall check.
+
+    A role with a declared blindness side must supply side+slug and must have a
+    readable guard script on disk. A missing field or a missing guard is never
+    "clean"; "not-requested" exists only for the explicitly exempt roles.
+    """
+    role = ROLE_ALIASES.get(request.get("role"), request.get("role"))
     side = request.get("side")
     slug = request.get("slug")
-    if not side or not slug or not BLINDFOLD.exists():
-        return True, "not-requested"
+    declared_side = ROLE_BLINDFOLD_SIDES.get(role)
+    if declared_side and (not side or not slug or side != declared_side):
+        return False, "blindfold-request-incomplete"
+    if not side or not slug:
+        if role in BLINDFOLD_EXEMPT_ROLES and not side and not slug:
+            # Explicit role-contract exemption, never an inference from a
+            # missing field on a blindness-bearing role.
+            return True, "not-requested"
+        return False, "blindfold-request-incomplete"
+    if not BLINDFOLD.exists() or not os.access(BLINDFOLD, os.R_OK):
+        return False, "blindfold-guard-unavailable"
     cmd = [sys.executable, str(BLINDFOLD), "--worktree", str(worktree), "--side", side, "--slug", slug]
     scope = request.get("scope_manifest")
     if scope:
         cmd.extend(["--scope-manifest", str(scope)])
-    p = subprocess.run(cmd, capture_output=True, text=True)
+    guard_env = _child_env(Path(request.get("repo", worktree)),
+                           None, blocked_env=_credential_env_names(request.get("limits_registry")))
+    p = subprocess.run(cmd, capture_output=True, text=True, env=guard_env)
     if p.returncode != 0:
         return False, "blindfold-contaminated"
     return True, "clean"
@@ -973,24 +1116,44 @@ def _find_signal(payload: Any) -> dict[str, Any]:
     return {}
 
 
-def _read_live_signal(provider: dict[str, Any], request: dict[str, Any]) -> dict[str, Any]:
-    """Read a configured machine signal, never a model or arbitrary probe."""
+def _read_live_signal(provider: dict[str, Any], request: dict[str, Any],
+                      registry: dict[str, Any] | None = None, *,
+                      probe_auth: bool = False, probe_all: bool = False) -> tuple[dict[str, Any], bool]:
+    """Read a configured machine signal, never a model or an ungated probe.
+
+    A `live_signal_path` file read is passive and always allowed. A
+    `live_signal_command` is an arbitrary executable and is gated exactly like
+    `probe_command`: registry `probe_policy`, provider `probe_read_only`, and an
+    explicit opt-in (CLI probe flag or request `probe_live_signal: true`). The
+    provider secret is NOT placed in its environment unless the registry
+    explicitly authorizes it with `live_signal_needs_key = true`.
+    Returns (signal, command_executed).
+    """
     signal: dict[str, Any] = {}
+    executed = False
     source = provider.get("live_signal_path") or request.get("live_signal_path")
     command = provider.get("live_signal_command")
+    opted_in = probe_auth or probe_all or request.get("probe_live_signal") is True
     try:
         if source:
             signal = _find_signal(_json(Path(source)))
         elif command:
+            if not _arbitrary_command_allowed(registry or {}, provider, "live_signal_command",
+                                             probe_auth=opted_in, probe_all=opted_in):
+                return {}, False
+            repo = Path(request.get("repo", request.get("worktree", ".")))
+            key_env = provider.get("key_env") if provider.get("live_signal_needs_key") is True else None
+            env = _child_env(repo, key_env, blocked_env=_credential_env_names(registry) - ({key_env} if key_env else set()))
+            executed = True
             proc = subprocess.run(shlex.split(str(command)), cwd=request.get("repo", request.get("worktree", ".")),
                                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                   text=True, timeout=float(provider.get("live_signal_timeout_s", 10)),
-                                  env=_child_env(Path(request.get("repo", request.get("worktree", "."))), provider.get("key_env")))
+                                  env=env)
             if proc.returncode == 0:
                 signal = _find_signal(json.loads(proc.stdout))
     except (OSError, ValueError, subprocess.TimeoutExpired, json.JSONDecodeError):
         signal = {}
-    return signal
+    return signal, executed
 
 
 def _limits_policy(registry: dict[str, Any], provider: dict[str, Any]) -> dict[str, Any]:
@@ -1110,14 +1273,16 @@ def _snapshot_for_provider(repo: Path, name: str, provider: dict[str, Any], regi
                            previous: dict[str, Any] | None = None) -> dict[str, Any]:
     report = _provider_report(repo, name, provider, registry, probe_auth=probe_auth, probe_all=probe_all)
     state_store, state, identity = _load_provider_state(repo, name, provider, registry)
-    signal = _read_live_signal(provider, request)
+    signal, signal_command_executed = _read_live_signal(provider, request, registry,
+                                                        probe_auth=probe_auth, probe_all=probe_all)
     policy = _limits_policy(registry, provider)
     used = signal.get("used_percentage")
     reset = signal.get("resets_at")
-    source_class = str(signal.get("source_class") or provider.get("limits_source_class") or
-                       provider.get("budget_source_class") or "unknown")
-    if source_class not in SOURCE_CLASSES:
-        source_class = "unknown"
+    declared_source = (provider.get("live_signal_source_class") if (signal_command_executed or provider.get("live_signal_path") or request.get("live_signal_path")) else None) \
+        or provider.get("limits_source_class") or provider.get("budget_source_class") or "unknown"
+    # The registry declaration caps the recorded provenance; a collected payload
+    # may lower it but can never raise it (or the confidence derived from it).
+    source_class = _cap_source_class(signal.get("source_class"), declared_source)
     budget = _budget_report(repo, name, provider, report, probe_budget=probe_budget, registry=registry,
                             probe_auth=probe_auth, probe_all=probe_all)["budget"]
     budget_scope = budget.get("balance_scope")
@@ -1140,6 +1305,8 @@ def _snapshot_for_provider(repo: Path, name: str, provider: dict[str, Any], regi
               "reset_at": budget.get("reset_at") if exact and source_class in {"official-api", "official-cli"} else None,
               "exact": bool(exact)}
     limitations = list(provider.get("limits_limitations", []))
+    if signal_command_executed:
+        limitations.append("live_signal_command executed under explicit opt-in")
     state_blocking = _state_is_blocking(state)
     routing_state = str(state.get("last_status", "unknown")) if state else "unknown"
     if routing_state not in STATE_STATUSES:
@@ -1308,14 +1475,15 @@ def limit_guard(provider: dict[str, Any], request: dict[str, Any], boundary: str
     after a child returns, before commit, and before fallback. A native host
     turn can only be classified after the host exposes an observation.
     """
-    signal = _read_live_signal(provider, request)
+    registry_doc = request.get("limits_registry") if isinstance(request.get("limits_registry"), dict) else {}
+    signal, _signal_executed = _read_live_signal(provider, request, registry_doc)
     signal_present = bool(signal)
-    signal.setdefault("source_class", provider.get("live_signal_source_class", "unknown"))
+    signal["source_class"] = _cap_source_class(signal.get("source_class"),
+                                               provider.get("live_signal_source_class", "unknown"))
     signal.setdefault("observed_at", now())
     used = signal.get("used_percentage")
     reset_seconds = _reset_seconds(signal.get("resets_at"))
-    registry = request.get("limits_registry") if isinstance(request.get("limits_registry"), dict) else {}
-    policy = _limits_policy(registry, provider)
+    policy = _limits_policy(registry_doc, provider)
     action, live_status, predictive = _limit_action(used, signal.get("limit_signal"), reset_seconds, policy,
                                                      fallback_available, last_status)
     if not signal_present and action == "continue":
@@ -1508,23 +1676,18 @@ def run_attempt(request: dict[str, Any], provider_name: str, provider: dict[str,
     with tempfile.NamedTemporaryFile("w", prefix="parallax-prompt-", suffix=".txt", delete=False, encoding="utf-8") as f:
         f.write(prompt)
         prompt_file = Path(f.name)
-    env = os.environ.copy()
-    for name in {provider.get("credits_key_env"), "OPENROUTER_MANAGEMENT_KEY", "management_key_env"}:
-        if name:
-            env.pop(str(name), None)
+    # Child-process credential isolation: the worker child receives ONLY the
+    # selected provider's credential. Every other credential the registry (or
+    # the well-known credential list) names is stripped, including stale
+    # OPENAI/OPENROUTER/ZAI values inherited from the operator's shell.
+    registry_doc = request.get("limits_registry") if isinstance(request.get("limits_registry"), dict) else {}
+    env = _child_env(Path(request.get("repo", worktree)), provider.get("key_env"),
+                     blocked_env=_provider_blocked_env(registry_doc, provider))
     if provider.get("key_env"):
         secret = discover_secret(Path(request.get("repo", worktree)), provider["key_env"])
         if not secret.get("configured"):
             prompt_file.unlink(missing_ok=True)
             return _attempt(request, provider_name, provider, attempt, host, "auth_error", branch, None, "missing-key", [], None)
-        # Values already present in the process are passed through.  Dotenv values are
-        # loaded only into the child and are never reflected in a result or prompt.
-        if provider["key_env"] not in env:
-            for candidate, _ in _env_candidates(Path(request.get("repo", worktree))):
-                values = _dotenv(candidate)
-                if provider["key_env"] in values:
-                    env[provider["key_env"]] = values[provider["key_env"]]
-                    break
         if env.get(provider["key_env"]) and env[provider["key_env"]] in prompt:
             prompt_file.unlink(missing_ok=True)
             return _attempt(request, provider_name, provider, attempt, host, "parked", branch, None, "secret-in-prompt", [], None)
@@ -1669,7 +1832,9 @@ def _evidence_event(request: dict[str, Any], result: dict[str, Any]) -> None:
            "--commit", str(result.get("commit") or ""), "--host", result["host"], "--provider", result["provider"],
            "--transport", result["transport"], "--model", str(result.get("model") or ""), "--attempt", str(result["attempt"]),
            "--exit-class", result["exit_class"], "--error-class", str(result.get("error_class") or "")]
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   env=_child_env(Path(request.get("repo", request.get("worktree", "."))), None,
+                                  blocked_env=_credential_env_names(request.get("limits_registry"))))
 
 
 def _provider_state(repo: Path, name: str, provider: dict[str, Any], registry: dict[str, Any]) -> tuple[ProviderStateStore, dict[str, Any] | None, dict[str, Any]]:
@@ -1707,8 +1872,18 @@ def _mark_provider_state(request: dict[str, Any], registry: dict[str, Any], name
     store.close()
 
 
-def _route_chain(request: dict[str, Any], registry: dict[str, Any], chain: list[str]) -> list[str]:
+def _route_chain(request: dict[str, Any], registry: dict[str, Any], chain: list[str],
+                 *, allow_widening: bool = True) -> list[str]:
+    """Order the effective chain. `fallback_policy = "disabled"` and
+    `automatic_fallback = false` are absolute: a forbidden chain is returned
+    exactly as declared and is never widened by `fallback_providers`."""
     providers = registry.get("providers", {})
+    if not allow_widening or str(registry.get("fallback_policy", "ordered-clean-base")) == "disabled":
+        deduped: list[str] = []
+        for name in chain:
+            if name not in deduped:
+                deduped.append(name)
+        return deduped
     routed: list[str] = []
     for name in chain:
         if name not in routed:
@@ -1755,6 +1930,27 @@ def _openrouter_budget_gate(request: dict[str, Any], registry: dict[str, Any], n
     return healthy, snapshot
 
 
+def _retry_annotation(retry_record: dict[str, Any] | None, provider_name: str,
+                      provider: dict[str, Any], diagnostics: dict[str, Any]) -> dict[str, Any] | None:
+    """Record what changed on a policy-allowed paid retry (P0.4)."""
+    if not retry_record:
+        return None
+    prior_parameters = retry_record.get("prior_parameters") or {}
+    current_parameters = diagnostics.get("review_parameters") or {}
+    changed = sorted(key for key in set(prior_parameters) | set(current_parameters)
+                     if prior_parameters.get(key) != current_parameters.get(key))
+    if retry_record.get("prior_provider") != provider_name:
+        changed.insert(0, "provider")
+    if retry_record.get("prior_model") != provider.get("model"):
+        changed.insert(0, "model")
+    return {"prior_provider": retry_record.get("prior_provider"),
+            "prior_error_class": retry_record.get("prior_error_class"),
+            "prior_usage": retry_record.get("prior_usage"),
+            "prior_parameters": prior_parameters,
+            "changed_parameters": changed,
+            "reason": retry_record.get("reason")}
+
+
 def _review_attempt(request: dict[str, Any], provider_name: str, provider: dict[str, Any],
                     attempt: int, host: str) -> dict[str, Any]:
     """Run a non-editing review transport without entering the worker path."""
@@ -1769,6 +1965,9 @@ def _review_attempt(request: dict[str, Any], provider_name: str, provider: dict[
     review_request = dict(request.get("review_request") or request)
     review_request.setdefault("repo", request.get("repo", request.get("worktree")))
     review_request.setdefault("worktree", request.get("worktree"))
+    if request.get("_forbidden_body_fingerprints"):
+        review_request["forbidden_body_fingerprints"] = list(request["_forbidden_body_fingerprints"])
+    retry_record = request.pop("_paid_retry_record", None)
     if not review_request.get("raw_output"):
         return _attempt(request, provider_name, provider, attempt, host, "provider_error",
                         request.get("expected_branch"), None, "review-request-missing-raw-output", [], None)
@@ -1783,15 +1982,22 @@ def _review_attempt(request: dict[str, Any], provider_name: str, provider: dict[
             status, error = "timeout", exc.error_class
         else:
             status, error = "provider_error", exc.error_class
+        diagnostics = dict(exc.diagnostics or {})
+        retry = _retry_annotation(retry_record, provider_name, provider, diagnostics)
+        if retry is not None:
+            diagnostics["retry"] = retry
         return _attempt(request, provider_name, provider, attempt, host, status,
                         request.get("expected_branch"), None, error, [], None,
-                        provider_diagnostics=exc.diagnostics)
+                        provider_diagnostics=diagnostics)
+    diagnostics = {**result.get("diagnostics", {}), "review_parameters": result.get("review_parameters", {})}
+    retry = _retry_annotation(retry_record, provider_name, provider, diagnostics)
+    if retry is not None:
+        diagnostics["retry"] = retry
     return _attempt(request, provider_name, provider, attempt, host, "no_change",
                     request.get("expected_branch"), None, None,
                     [str(result["raw_artifact"])], 0, limit_action="continue",
                     review_verdict=result["verdict"]["verdict"],
-                    provider_diagnostics={**result.get("diagnostics", {}),
-                                          "review_parameters": result.get("review_parameters", {})})
+                    provider_diagnostics=diagnostics)
 
 
 def _record_successful_probe(repo: Path, name: str, provider: dict[str, Any], registry: dict[str, Any],
@@ -1810,28 +2016,93 @@ def _record_successful_probe(repo: Path, name: str, provider: dict[str, Any], re
     store.close()
 
 
+def _request_schema_problem(request: dict[str, Any]) -> str | None:
+    """Validate the dispatch REQUEST itself before any provider process starts.
+
+    A role with a declared blindness side must carry side+slug matching its
+    contract; that failure is reported as `blindfold-request-incomplete`. Any
+    other structural failure is `invalid-dispatch-request`. A missing schema
+    validator fails closed (RuntimeError propagates)."""
+    role = ROLE_ALIASES.get(request.get("role"), request.get("role"))
+    declared_side = ROLE_BLINDFOLD_SIDES.get(role)
+    if declared_side and (not request.get("side") or not request.get("slug")
+                          or request.get("side") != declared_side):
+        return "blindfold-request-incomplete"
+    try:
+        _schema_validate(request, REQUEST_SCHEMA)
+    except RuntimeError:
+        raise
+    except Exception:
+        return "invalid-dispatch-request"
+    return None
+
+
+def _paid_response_failure(result: dict[str, Any]) -> bool:
+    """True when a failed attempt consumed a paid HTTP-200 provider response.
+
+    Missing usage is unknown, never zero: an HTTP-200 failure class without a
+    usage object still counts as paid; only an explicit zero completion does not.
+    """
+    if result.get("status") in {"committed", "no_change"}:
+        return False
+    if result.get("error_class") not in PAID_RESPONSE_CLASSES:
+        return False
+    diagnostics = result.get("provider_diagnostics") or {}
+    completion = diagnostics.get("completion_tokens")
+    return not (isinstance(completion, (int, float)) and completion == 0)
+
+
+def _usage_or_unknown(diagnostics: dict[str, Any]) -> dict[str, Any]:
+    return {key: (diagnostics.get(key) if diagnostics.get(key) is not None else "unknown")
+            for key in ("prompt_tokens", "completion_tokens", "total_tokens")}
+
+
 def dispatch(request: dict[str, Any], registry: dict[str, Any], host: str) -> dict[str, Any]:
     registry = _validate_registry_doc(registry)
     if host not in HOSTS:
         raise ValueError(f"unsupported host {host!r}")
+    attempt_records = Path(request["attempt_log"]) if request.get("attempt_log") else None
+    problem = _request_schema_problem(request)
     request["limits_registry"] = registry
+    if problem:
+        parked = _attempt(request, str(request.get("primary_provider") or "none"), {}, 1, host,
+                          "parked", request.get("expected_branch"), None, problem, [], None)
+        if attempt_records:
+            _append_jsonl(attempt_records, parked)
+            request["attempt_receipt"] = str(attempt_records)
+        _evidence_event(request, parked)
+        return parked
     role = request.get("role")
     role_key = ROLE_ALIASES.get(role, role)
     role_config = registry.get("roles", {}).get(role_key, {})
+    if not isinstance(role_config, dict):
+        role_config = {}
+    reviewer_role = role_key in REVIEWER_ROLES
     chain = request.get("chain", role_config.get("chain", []))
     if not isinstance(chain, list) or not chain:
         raise ValueError(f"no explicit provider chain for role {role!r}")
     providers = registry.get("providers", {})
     request["primary_provider"] = request.get("primary_provider", chain[0] if chain else None)
-    request["chain"] = _route_chain(request, registry, list(chain))
+    # automatic_fallback=false and fallback_policy="disabled" are ABSOLUTE:
+    # they are read here, truncate the chain to its declared head, and forbid
+    # any widening by fallback_providers.
+    automatic_fallback = bool(role_config.get("automatic_fallback", True)) and request.get("automatic_fallback") is not False
+    fallback_disabled = str(registry.get("fallback_policy", "ordered-clean-base")) == "disabled"
+    allow_fallback = automatic_fallback and not fallback_disabled
+    request["chain"] = _route_chain(request, registry, list(chain), allow_widening=allow_fallback)
+    if not automatic_fallback:
+        request["chain"] = request["chain"][:1]
     _validate_effective_review_chain(registry, role_key, request["chain"])
     chain = request["chain"]
+    required_capabilities = set(role_config.get(
+        "required_capabilities", DEFAULT_ROLE_CAPABILITIES.get(role_key, DEFAULT_EDITING_CAPABILITIES)))
+    paid_retry_policy = str(role_config.get("paid_retry_policy", registry.get("paid_retry_policy", "never")))
+    paid_retries_used = 0
     if request.get("recheck"):
         store = ProviderStateStore(_state_path(registry))
         for name in chain:
             store.clear(name)
         store.close()
-    attempt_records = Path(request["attempt_log"]) if request.get("attempt_log") else None
     worktree = Path(request["worktree"]).resolve()
     disposable = bool(request.get("disposable_worktree", role_key in {"blind_coder", "test_writer", "arbiter"}))
     request["disposable_worktree"] = disposable
@@ -1842,13 +2113,21 @@ def dispatch(request: dict[str, Any], registry: dict[str, Any], host: str) -> di
         if not isinstance(provider, dict):
             result = _attempt(request, name, {}, idx, host, "parked", request.get("expected_branch"), None, "unknown-provider", [], None)
         else:
+            capabilities = set(provider.get("capabilities", []))
             store, state, identity = _provider_state(Path(request.get("repo", worktree)).resolve(), name, provider, registry)
             blocked = _state_is_blocking(state, recheck=bool(request.get("recheck")))
             store.close()
-            if blocked:
+            if not required_capabilities.issubset(capabilities) or (reviewer_role and (
+                    provider.get("transport") != "review-api" or capabilities & {"write", "shell"})):
+                # Dispatch routes by ROLE class. A reviewer role never reaches
+                # the worker path, and no role runs on a provider whose declared
+                # capabilities do not cover the role's requirement.
+                result = _attempt(request, name, provider, idx, host, "parked", request.get("expected_branch"), None,
+                                  "unsafe-provider-chain", [], None)
+            elif blocked:
                 result = _attempt(request, name, provider, idx, host, "limit", request.get("expected_branch"), None,
                                   "persistent-exhausted", [], None, limit_action="handoff")
-            elif role_key == "cross_model_verifier" and provider.get("transport") == "review-api":
+            elif reviewer_role:
                 if provider.get("budget_key_endpoint"):
                     budget_ok, budget_snapshot = _openrouter_budget_gate(request, registry, name, provider)
                     if not budget_ok:
@@ -1875,10 +2154,46 @@ def dispatch(request: dict[str, Any], registry: dict[str, Any], host: str) -> di
             _append_jsonl(attempt_records, result)
             request["attempt_receipt"] = str(attempt_records)
         _evidence_event(request, result)
-        review_success = role_key == "cross_model_verifier" and provider.get("transport") == "review-api" if isinstance(provider, dict) else False
-        if result["status"] == "committed" or (review_success and result["status"] == "no_change"):
+        if reviewer_role:
+            # A reviewer succeeds ONLY with a schema-valid verdict and a raw
+            # receipt. A committed reviewer result or a null verdict is never a
+            # success (P0-2).
+            success = (result["status"] == "no_change"
+                       and result.get("review_verdict") in {"pass", "concerns"}
+                       and bool(result.get("artifacts")))
+        else:
+            success = result["status"] == "committed"
+        if success:
             result["fallback_attempts"] = results[:-1]
             return result
+        if _paid_response_failure(result):
+            diagnostics = result.get("provider_diagnostics") or {}
+            fingerprint = diagnostics.get("request_fingerprint")
+            if fingerprint:
+                forbidden = request.setdefault("_forbidden_body_fingerprints", [])
+                if fingerprint not in forbidden:
+                    forbidden.append(fingerprint)
+            if paid_retry_policy != "one-changed-body" or paid_retries_used >= 1:
+                # P0.4: a paid HTTP-200 response is never automatically retried
+                # (and never with an identical body). The chain stops here.
+                stopped = dict(result)
+                stopped["provider_diagnostics"] = {**diagnostics, "automatic_retry": {
+                    "allowed": False, "policy": paid_retry_policy,
+                    "reason": "paid-http-200-response-not-retried",
+                    "usage": _usage_or_unknown(diagnostics)}}
+                clean, reconcile_error = _reconcile_disposable(request, worktree)
+                if not clean:
+                    stopped["error_class"] = reconcile_error or "partial-edit-not-reconciled"
+                return {**stopped, "fallback_attempts": results[:-1]}
+            paid_retries_used += 1
+            request["_paid_retry_record"] = {
+                "prior_provider": name,
+                "prior_model": provider.get("model") if isinstance(provider, dict) else None,
+                "prior_error_class": result.get("error_class"),
+                "prior_usage": _usage_or_unknown(diagnostics),
+                "prior_parameters": diagnostics.get("review_parameters") or {},
+                "reason": f"paid_retry_policy={paid_retry_policy}",
+            }
         if not fallback_available:
             try:
                 refresh_limits_context(request, registry, name, boundary="before_fallback",
@@ -1895,7 +2210,9 @@ def dispatch(request: dict[str, Any], registry: dict[str, Any], host: str) -> di
                 if not clean:
                     result["error_class"] = error
                 return {**result, "fallback_attempts": results}
-        if idx < len(chain):
+        if idx < len(chain) and not reviewer_role:
+            # Worker-only reconciliation machinery; a reviewer role never
+            # edits, so it never enters the clean-base reset path.
             boundary_guard = limit_guard(provider or {}, request, "before_fallback", True, last_status=result.get("status"))
             if boundary_guard["action"] == "sleep_until_reset":
                 # A fallback is available, so a trustworthy reset is advisory;
@@ -1926,12 +2243,18 @@ def dispatch(request: dict[str, Any], registry: dict[str, Any], host: str) -> di
                 return {**_attempt(request, name, provider or {}, idx, host, "parked", request.get("expected_branch"), None,
                                    "partial-edit-not-reconciled", [], None), "fallback_attempts": results}
     parked = results[-1] if results else _attempt(request, "none", {}, 0, host, "parked", None, None, "empty-chain", [], None)
-    parked = {**parked, "status": "parked", "error_class": "all-providers-failed", "fallback_attempts": results}
-    clean, error = _reconcile_disposable(request, worktree)
-    if not clean:
-        parked["error_class"] = error or "partial-edit-not-reconciled"
-    elif not disposable and _worker_status_paths(request):
-        parked["error_class"] = "partial-edit-not-reconciled"
+    # When every attempt failed for the SAME reason (e.g. unsafe-provider-chain),
+    # keep the specific class; a mixed chain reports the aggregate class.
+    error_classes = {r.get("error_class") for r in results}
+    final_error = (results[-1].get("error_class") if results and len(error_classes) == 1 and error_classes != {None}
+                   else "all-providers-failed")
+    parked = {**parked, "status": "parked", "error_class": final_error or "all-providers-failed", "fallback_attempts": results}
+    if not reviewer_role:
+        clean, error = _reconcile_disposable(request, worktree)
+        if not clean:
+            parked["error_class"] = error or "partial-edit-not-reconciled"
+        elif not disposable and _worker_status_paths(request):
+            parked["error_class"] = "partial-edit-not-reconciled"
     if attempt_records:
         _append_jsonl(attempt_records, parked)
     if request.get("evidence_dir"):
@@ -1939,7 +2262,9 @@ def dispatch(request: dict[str, Any], registry: dict[str, Any], host: str) -> di
                         "--run-id", str(request.get("run_id", "provider-runtime")), "--slug", str(request.get("slug", "provider-runtime")),
                         "--event-type", "run_parked", "--actor", "main", "--summary", f"{role} parked after provider chain exhaustion",
                         "--artifact-paths", json.dumps({"attempt_log": str(attempt_records) if attempt_records else ""})],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       env=_child_env(Path(request.get("repo", request.get("worktree", "."))), None,
+                                      blocked_env=_credential_env_names(request.get("limits_registry"))))
     return parked
 
 
@@ -1982,12 +2307,70 @@ def _limit_human(snapshot: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _reviewer_smoke(repo: Path, registry: dict[str, Any], provider_name: str, provider: dict[str, Any],
+                    model: str, max_output_tokens: int, use_configured_key: bool) -> dict[str, Any]:
+    """One cost-capped reviewer round-trip against a fixed tiny fixture.
+
+    Explicitly paid and opt-in; exactly one request; bounded tokens/timeout;
+    never run in CI; never with the production key unless explicitly authorized
+    (`smoke_key_env` in the registry or --use-configured-key).
+    """
+    if str(provider.get("model")) != model:
+        return {"status": "blocked", "error_class": "model_mismatch"}
+    smoke_key_env = provider.get("smoke_key_env")
+    if not smoke_key_env and not use_configured_key:
+        return {"status": "blocked", "error_class": "production_key_not_authorized"}
+    import importlib.util
+    module_path = ROOT / "scripts" / "review-runtime.py"
+    spec = importlib.util.spec_from_file_location("parallax_review_runtime_smoke", module_path)
+    if spec is None or spec.loader is None:
+        return {"status": "blocked", "error_class": "review-runtime-missing"}
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    smoke_provider = dict(provider)
+    if smoke_key_env:
+        smoke_provider["key_env"] = smoke_key_env
+    with tempfile.TemporaryDirectory(prefix="parallax-reviewer-smoke-") as directory:
+        fixture_repo = Path(directory)
+        (fixture_repo / "fixture.txt").write_text("Parallax reviewer transport smoke fixture.\n", encoding="utf-8")
+        raw = fixture_repo / ".parallax" / "smoke" / "reviews" / "smoke.round1.raw.json"
+        request = {
+            "repo": str(fixture_repo), "worktree": str(fixture_repo),
+            "insertion_point": "post_green", "raw_output": str(raw),
+            "prompt": ("Transport smoke check. If you can read the fixture, return verdict "
+                       "\"pass\" with an empty findings array. This is not a code review."),
+            "context_files": [{"label": "fixture", "path": "fixture.txt"}],
+            "review_max_tokens": min(int(provider.get("review_max_tokens", 8192)), int(max_output_tokens)),
+            "review_timeout_s": min(float(provider.get("review_timeout_s", 600)), 120.0),
+        }
+        try:
+            result = module.run_review(request, {"providers": {provider_name: smoke_provider}}, provider_name)
+        except module.ReviewError as exc:
+            diagnostics = dict(exc.diagnostics or {})
+            return {"status": "smoke_failed", "error_class": exc.error_class, "provider": provider_name,
+                    "transport": "review-api", "model": model, "attempts": 1,
+                    "finish_reason": diagnostics.get("finish_reason"),
+                    "usage": {key: diagnostics.get(key) for key in ("prompt_tokens", "completion_tokens", "total_tokens")}}
+        diagnostics = result.get("diagnostics", {})
+        raw_sha = hashlib.sha256(raw.read_bytes()).hexdigest() if raw.exists() else None
+        return {"status": "ok", "provider": provider_name, "transport": "review-api", "model": model,
+                "attempts": 1, "verdict": result["verdict"]["verdict"],
+                "finish_reason": diagnostics.get("finish_reason"),
+                "usage": {key: diagnostics.get(key) for key in ("prompt_tokens", "completion_tokens", "total_tokens")},
+                "review_parameters": result.get("review_parameters", {}),
+                "raw_sha256": raw_sha, "raw_receipt_persisted": False,
+                "evidence": "transport smoke only; never a quality claim"}
+
+
 def live_smoke(repo: Path, config: Path | None, provider_name: str, model: str,
-               max_output_tokens: int, max_cost_usd: float, confirm_spend: bool) -> dict[str, Any]:
+               max_output_tokens: int, max_cost_usd: float, confirm_spend: bool,
+               *, reviewer: bool = False, use_configured_key: bool = False) -> dict[str, Any]:
     """Fail-closed paid smoke gate; no provider process starts without hard caps."""
     if not confirm_spend:
         return {"status": "blocked", "error_class": "confirm_spend_required"}
-    if max_output_tokens < 1 or max_output_tokens > 32:
+    if os.environ.get("CI"):
+        return {"status": "blocked", "error_class": "ci_forbidden"}
+    if max_output_tokens < 1 or max_output_tokens > (256 if reviewer else 32):
         return {"status": "blocked", "error_class": "output_cap_unenforceable"}
     if max_cost_usd <= 0 or max_cost_usd > 0.25:
         return {"status": "blocked", "error_class": "cost_cap_unenforceable"}
@@ -1995,6 +2378,11 @@ def live_smoke(repo: Path, config: Path | None, provider_name: str, model: str,
     provider = registry.get("providers", {}).get(provider_name)
     if not isinstance(provider, dict):
         return {"status": "blocked", "error_class": "unknown-provider"}
+    if reviewer or provider.get("transport") == "review-api":
+        if provider.get("transport") != "review-api":
+            return {"status": "blocked", "error_class": "reviewer_transport_required"}
+        return _reviewer_smoke(repo, registry, provider_name, provider, model,
+                               max_output_tokens, use_configured_key)
     if provider.get("transport") not in {"aider-api", "openrouter-api"}:
         return {"status": "blocked", "error_class": "unsupported_smoke_transport"}
     if str(provider.get("model")) != model:
@@ -2116,6 +2504,10 @@ def command_main(argv: list[str] | None = None) -> int:
     s.add_argument("--max-output-tokens", required=True, type=int)
     s.add_argument("--max-cost-usd", required=True, type=float)
     s.add_argument("--confirm-spend", action="store_true")
+    s.add_argument("--reviewer", action="store_true",
+                   help="one cost-capped reviewer round-trip against a fixed tiny fixture (explicitly paid; never CI)")
+    s.add_argument("--use-configured-key", action="store_true",
+                   help="explicitly authorize the provider's configured production key for the smoke")
     s.add_argument("--repo", default=".")
     s.add_argument("--config", default=None)
     args = ap.parse_args(argv)
@@ -2128,10 +2520,15 @@ def command_main(argv: list[str] | None = None) -> int:
             registry, _ = load_registry(repo, Path(args.registry).resolve())
             result = dispatch(request, registry, args.host)
         elif args.command == "limit-guard":
-            request = _json(Path(args.request)); registry = tomllib.loads(Path(args.registry).read_text(encoding="utf-8"))
+            request = _json(Path(args.request))
+            # R1 (TZ v0.40.1): EVERY entrypoint routes through the validated
+            # registry loader; limit-guard previously parsed raw TOML.
+            guard_repo = Path(request.get("repo", request.get("worktree", "."))).resolve()
+            registry, _ = load_registry(guard_repo, Path(args.registry).resolve())
             provider = registry.get("providers", {}).get(args.provider)
             if not isinstance(provider, dict):
                 raise ValueError(f"unknown provider {args.provider!r}")
+            request["limits_registry"] = registry
             result = limit_guard(provider, request, args.boundary, args.fallback_available, args.last_status)
             if args.sleep and result["action"] == "sleep_until_reset" and result.get("sleep_seconds") is not None:
                 time.sleep(float(result["sleep_seconds"]))
@@ -2144,7 +2541,8 @@ def command_main(argv: list[str] | None = None) -> int:
         elif args.command == "live-smoke":
             result = live_smoke(Path(args.repo).resolve(), Path(args.config).resolve() if args.config else None,
                                 args.provider, args.model, args.max_output_tokens, args.max_cost_usd,
-                                args.confirm_spend)
+                                args.confirm_spend, reviewer=args.reviewer,
+                                use_configured_key=args.use_configured_key)
         else:
             repo = Path(args.repo).resolve(); config = Path(args.config).resolve() if args.config else None
             if args.command == "validate-registry":
@@ -2159,7 +2557,12 @@ def command_main(argv: list[str] | None = None) -> int:
             Path(args.output).parent.mkdir(parents=True, exist_ok=True)
             Path(args.output).write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         print(json.dumps(result, indent=2, sort_keys=True))
-        return 0 if result.get("status") not in {"parked"} else 2
+        # A blocked/parked/failed status NEVER exits 0. Informational results
+        # (no status field) and successful outcomes are the only zero exits.
+        status = result.get("status") if isinstance(result, dict) else None
+        if status is None or status in {"committed", "no_change", "ok"}:
+            return 0
+        return 2
     except (ValueError, RuntimeError, OSError, json.JSONDecodeError) as exc:
         return fail(str(exc), 3 if isinstance(exc, RuntimeError) and "jsonschema" in str(exc) else 2)
 

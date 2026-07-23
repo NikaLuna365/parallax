@@ -11,7 +11,7 @@
       "name": "parallax",
       "source": "./",
       "category": "Developer tools",
-      "description": "Parallax — independent paths, one verified result. Claude Code provides the slash-command pipeline; Codex provides a skills-only adapter for the same fail-closed workflow. Claude slash commands are not exposed as Codex commands."
+      "description": "Parallax — independent paths, one verified result. A spec-driven, parallel, blind-coder TDD pipeline: a maximally concrete read-only spec drives two independent tracks (a test-writer and a blind-coder that never sees the tests); a single whole-seeing arbiter runs the tests and loops until green. An optional cross-model verifier — a read-only structured reviewer chain of non-Claude models — adversarially reviews the spec before the blind tracks and each green slice after. Safety is mechanical, not honour-based: a deterministic blindfold guard fails closed on any cross-track leak (and on an incomplete wall request), finalize/epic gates require committed green receipts and re-derivable raw verdicts, verifier chains accept only read-only reviewers, worker children hold only their own provider credential, paid provider failures are never silently retried, and nothing reaches main without a human. Claude Code provides the slash-command pipeline; Codex provides a skills-only adapter for the same fail-closed workflow (Claude slash commands are not exposed as Codex commands). Releases require a durable independent verifier verdict — the packaging gate refuses a version without one."
     }
   ]
 }

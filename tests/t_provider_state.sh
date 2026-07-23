@@ -61,6 +61,7 @@ model = "glm-5.2"
 operator_budget_usd = 7.0
 operator_budget_scope = "estimate-only"
 fallback_providers = ["openrouter_glm52"]
+capabilities = ["read", "write", "shell"]
 [providers.openrouter_glm52]
 kind = "worker"
 transport = "openrouter-api"
@@ -74,6 +75,7 @@ budget_exact = true
 budget_command = "$T/budget"
 probe_read_only = true
 balance_scope = "openrouter-key"
+capabilities = ["read", "write", "shell"]
 [providers.openrouter_glm52.routing]
 only = ["z-ai"]
 allow_fallbacks = false

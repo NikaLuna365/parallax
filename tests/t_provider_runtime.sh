@@ -93,16 +93,16 @@ import json,sys
 out,repo,base,t=sys.argv[1:]
 json.dump({'repo':repo,'role':'blind-coder','slice_id':'S1','slug':'demo','run_id':'run-1','side':'code','worktree':repo,'expected_branch':'feature/demo-S1-code','clean_base':base,'chain':['fake'],'spec_path':t+'/spec.md','validation_path':t+'/validation.md','visibility_manifest':{'visible_files':['src/base.py'],'writable_files':['src/impl.py']},'prompt':'Read the frozen spec and implement the assigned behavior.','timeout_s':20,'attempt_log':t+'/attempts.jsonl','attempt_artifacts':t+'/attempt-artifacts','evidence_dir':t+'/evidence'},open(out,'w'))
 PY
+# NOTE (TZ v0.41 §5.5 / CE1): the former pure-function `_aider_child_env`
+# unit test on a hand-fed two-key dict was structurally unable to catch
+# credential co-residency in a real child. It is REPLACED by the real
+# child-process environment assertions in tests/t_provider_containment.sh,
+# which spawn an actual child per transport and read its real environment.
 python3 - "$PLUGIN" <<'PY'
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(sys.argv[1])/'scripts'))
 import provider_runtime as r
-adapted = r._aider_child_env({'transport':'aider-api','key_env':'ZAI_API_KEY'}, {'ZAI_API_KEY':'zai-test-secret','OPENAI_API_KEY':'stale-key'})
-assert adapted['OPENAI_API_KEY'] == 'zai-test-secret'
-assert adapted['ZAI_API_KEY'] == 'zai-test-secret'
-unchanged = r._aider_child_env({'transport':'openrouter-api','key_env':'OPENROUTER_API_KEY'}, {'OPENROUTER_API_KEY':'or-test-secret'})
-assert 'OPENAI_API_KEY' not in unchanged
 cmd=r._provider_command({'transport':'aider-api','command':sys.executable,'model':'m','base_url':'https://example.invalid','key_env':'FAKE_KEY'}, {'worktree':'.','visibility_manifest':{'visible_files':['spec.md'],'writable_files':['src/impl.py']}}, Path('/tmp/prompt'))
 assert cmd.count('--read') == 1 and 'spec.md' in cmd and cmd.count('--file') == 1 and 'src/impl.py' in cmd
 assert '--no-auto-commits' in cmd
@@ -200,11 +200,13 @@ model = "fake-model"
 live_signal_path = "$T/near-signal.json"
 live_signal_source_class = "official-cli"
 max_sleep_s = 60
+capabilities = ["read", "write", "shell"]
 [providers.fake]
 kind = "worker"
 transport = "codex-cli"
 command = "$T/fake-success"
 model = "fake-model"
+capabilities = ["read", "write", "shell"]
 [roles.blind_coder]
 chain = ["near", "fake"]
 required_capabilities = ["read", "write"]

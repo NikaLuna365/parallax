@@ -19,8 +19,13 @@ worker roles that are explicitly allowed to edit.
   timeout `600s`.
 - Smoke metadata: `finish_reason=stop`, prompt `11451`, completion `16`,
   total `11467`, content `32` chars, reasoning `0` chars.
-- Smoke raw receipt SHA-256:
-  `24ae4f4b07f7ec91f883ae292805b48c71882722930b466eafbf21aa0213c0fc`.
+- ~~Smoke raw receipt SHA-256:
+  `24ae4f4b07f7ec91f883ae292805b48c71882722930b466eafbf21aa0213c0fc`.~~
+  **Withdrawn (v0.41.0):** no artifact with this digest exists anywhere in the
+  repository (`git ls-files .parallax` is empty), so the hash proves nothing
+  and the claim is withdrawn per `REVIEWS/v0.40_band_retro_verification.md` §4.
+  The metadata line above remains as an unverifiable operator report, not
+  release evidence.
 
 The raw smoke receipt contained only the schema-valid verdict and no secret or
 reasoning text. The API key remained in the local ignored `.parallax/.env` and

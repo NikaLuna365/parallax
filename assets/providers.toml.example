@@ -161,8 +161,12 @@ chain = ["codex", "zai"]
 required_capabilities = ["read", "structured_output"]
 automatic_fallback = true
 
+# A verifier chain accepts ONLY read-only structured reviewers (review-api,
+# no write/shell capabilities). A write/shell-capable provider such as codex
+# (codex-cli, workspace-write sandbox) is mechanically rejected from this
+# chain at registry validation, freeze, and dispatch.
 [roles.cross_model_verifier]
-chain = ["codex", "zai_reviewer", "openrouter_glm52_reviewer", "gemini"]
+chain = ["zai_reviewer", "openrouter_glm52_reviewer"]
 required_capabilities = ["read", "structured_output"]
 automatic_fallback = true
 

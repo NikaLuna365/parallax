@@ -1055,12 +1055,22 @@ bash tests/t_provider_state.sh >/tmp/parallax_provider_state 2>&1 && ok "provide
   || { no "provider state routing v0.40.1"; sed 's/^/      /' /tmp/parallax_provider_state; }
 bash tests/t_host_verification.sh >/tmp/parallax_host_verification 2>&1 && ok "host verification: Claude/Codex availability, diagnostic-only doctor, rate_limits and usage/status seam parsing, unknown quota evidence" \
   || { no "Claude/Codex host verification"; sed 's/^/      /' /tmp/parallax_host_verification; }
-python3 -m py_compile scripts/provider_runtime.py scripts/review-runtime.py scripts/provider-runtime.py scripts/codex-host.py scripts/host-verification.py && ok "provider, reviewer, and host verification scripts pass Python syntax checks" || no "provider/host runtime Python syntax"
 
-echo "[release_coherence]  (v0.40.7 — manifest/changelog/docs agree on the release; v0.31-v0.40 kept)"
-{ grep -q '"version": "0.40.7"' .claude-plugin/plugin.json \
-  && grep -q '"version": "0.40.7"' .codex-plugin/plugin.json \
+echo "[provider_containment]  (v0.41 — the provider surface BINDS to the gates: fail-closed wall, role routing, cost safety, gated probes, credential isolation)"
+bash tests/t_provider_containment.sh >/tmp/parallax_provider_containment 2>&1 && ok "provider containment: blindness wall fails closed (side/slug/guard); verifier role never reaches the worker path; capabilities enforced; paid 200 never auto-retried; fallback=false absolute; limit-guard validated loader; live_signal gated; provenance capped; per-transport child credential isolation; reviewer preflight/smoke; pre-freeze schema round closes the gate" \
+  || { no "provider containment v0.41"; sed 's/^/      /' /tmp/parallax_provider_containment; }
+bash tests/t_release_gate.sh >/tmp/parallax_release_gate 2>&1 && ok "release gate: packaging refuses a version without a durable independent verifier verdict (and refuses a FAIL verdict)" \
+  || { no "release gate v0.41"; sed 's/^/      /' /tmp/parallax_release_gate; }
+python3 -m py_compile scripts/provider_runtime.py scripts/review-runtime.py scripts/provider-runtime.py scripts/codex-host.py scripts/host-verification.py scripts/release-gate.py && ok "provider, reviewer, host verification, and release gate scripts pass Python syntax checks" || no "provider/host runtime Python syntax"
+
+echo "[release_coherence]  (v0.41.0 — manifest/changelog/docs agree on the release; v0.31-v0.40 kept)"
+{ grep -q '"version": "0.41.0"' .claude-plugin/plugin.json \
+  && grep -q '"version": "0.41.0"' .codex-plugin/plugin.json \
+  && grep -q '^## 0.41.0' CHANGELOG.md \
   && grep -q '^## 0.40.7' CHANGELOG.md \
+  && [ -f scripts/release-gate.py ] && [ -f tests/t_provider_containment.sh ] && [ -f tests/t_release_gate.sh ] \
+  && [ -f assets/worker-request.schema.json ] \
+  && grep -q 'v0.41.0' .claude-plugin/plugin.json \
   && [ -f RELEASE_REPORT_v0.40.7.md ] \
   && grep -qF 'review-runtime.py' RELEASE_REPORT_v0.40.7.md \
   && grep -qiF 'provider' README.md \
@@ -1107,7 +1117,7 @@ echo "[release_coherence]  (v0.40.7 — manifest/changelog/docs agree on the rel
   && [ -f scripts/feature-sweep.py ] && [ -f scripts/contract-amend.py ] \
   && [ -f scripts/evidence-event.py ] && [ -f scripts/strip-openai-schema.py ] \
   && [ -f assets/blindfold-scope.schema.json ]; } \
-  && ok "version 0.40.7 in Claude/Codex manifests; CHANGELOG/release report present; limits/OpenRouter/Codex/reviewer docs/schemas/tests are present; v0.31-v0.40 gates remain" \
+  && ok "version 0.41.0 in Claude/Codex manifests; CHANGELOG entries 0.41.0 back to 0.31 present; containment/release-gate/request-schema artifacts present; limits/OpenRouter/Codex/reviewer docs/schemas/tests are present; v0.31-v0.40 gates remain" \
   || no "release coherence: version/changelog/reviewer remediation docs not aligned for 0.40.7"
 
 echo ""

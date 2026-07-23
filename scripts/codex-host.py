@@ -13,7 +13,7 @@ import json
 import sys
 from pathlib import Path
 
-from provider_runtime import dispatch, load_registry
+from provider_runtime import ROLE_ALIASES, ROLE_BLINDFOLD_SIDES, REVIEWER_ROLES, dispatch, load_registry
 
 
 def _json(path: Path):
@@ -28,20 +28,29 @@ def main(argv=None) -> int:
     ap.add_argument("--artifact-dir", default=None, help="directory where host-run.json is written")
     args = ap.parse_args(argv)
     request = _json(Path(args.request))
-    required = ("role", "slice_id", "worktree", "expected_branch", "spec_path", "validation_path", "visibility_manifest", "prompt")
+    role_key = ROLE_ALIASES.get(request.get("role"), request.get("role"))
+    required = ["role", "slice_id", "worktree", "expected_branch", "spec_path", "validation_path", "visibility_manifest", "prompt"]
+    # The blindness role contract is part of the host's required-key list: a
+    # request that would open the wall is NOT a valid host request.
+    if role_key in ROLE_BLINDFOLD_SIDES:
+        required += ["side", "slug"]
     missing = [key for key in required if key not in request]
     missing += [key for key in ("spec_path", "validation_path")
                 if key in request and not Path(request[key]).exists()]
     if missing:
-        result = {"status": "parked", "error_class": "host_capability_missing", "missing_artifacts": missing,
-                  "host": args.host}
+        blindfold_incomplete = role_key in ROLE_BLINDFOLD_SIDES and any(key in ("side", "slug") for key in missing)
+        result = {"status": "parked",
+                  "error_class": "blindfold-request-incomplete" if blindfold_incomplete else "host_capability_missing",
+                  "missing_artifacts": missing, "host": args.host}
         print(json.dumps(result, indent=2, sort_keys=True))
         return 2
     try:
         registry, _ = load_registry(Path(request.get("repo", ".")).resolve(), Path(args.registry).resolve())
         result = dispatch(request, registry, args.host)
     except ValueError as exc:
-        error_class = "unsafe-provider-chain" if "effective provider" in str(exc) or "Aider transport" in str(exc) else "host_capability_missing"
+        unsafe = any(marker in str(exc) for marker in
+                     ("effective provider", "Aider transport", "unsafe-provider-chain", "reviewer chain"))
+        error_class = "unsafe-provider-chain" if unsafe else "host_capability_missing"
         result = {"status": "parked", "error_class": error_class, "host": args.host}
     except OSError:
         result = {"status": "parked", "error_class": "host_capability_missing", "host": args.host}
@@ -57,6 +66,12 @@ def main(argv=None) -> int:
     print(json.dumps(result, indent=2, sort_keys=True))
     if result.get("review_verdict") == "concerns":
         return 2
+    if role_key in REVIEWER_ROLES:
+        # A reviewer succeeds only with an explicit schema-valid verdict and a
+        # raw receipt; a null verdict or empty artifacts is a provider failure.
+        return 0 if (result.get("status") == "no_change"
+                     and result.get("review_verdict") == "pass"
+                     and result.get("artifacts")) else 2
     return 0 if result.get("status") in {"committed", "no_change"} else 2
 
 

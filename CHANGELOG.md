@@ -2,6 +2,29 @@
 
 All notable changes to the Parallax plugin. Versions are cumulative.
 
+## 0.41.0 — Provider-Runtime Containment
+
+Makes the v0.40 provider surface bind to the gates it runs beside. A retrospective
+independent audit of v0.40.0-v0.40.7 (REVIEWS/v0.40_band_retro_verification.md, verdict
+FAIL) found no prior gate script weakened - all are byte-identical to v0.39.0 - but the new
+provider/host code able to go around them. This release closes that: the blindness wall
+fails CLOSED when side/slug are absent or the guard binary is missing (it previously
+reported "clean"); dispatch routes by ROLE rather than transport and enforces
+required_capabilities, so a write/shell-capable provider can no longer serve a reviewer
+chain and a null verdict is no longer a success; the P0.4 cost-safe retry policy from the
+v0.40.6 review is implemented and automatic_fallback/fallback_policy are actually read and
+absolute; every entrypoint routes through the validated registry loader and
+live_signal_command is gated like probe_command instead of running arbitrary commands with
+the provider secret in env; worker children receive only their own credential; the reviewer
+selects its schema by insertion point so pre-freeze rounds can close; and preflight surfaces
+the effective frozen reviewer contract so configuring a provider no longer requires a
+hand-rolled probe. Claims in README/run.md/CHANGELOG that described directives as mechanical
+are corrected. Every gate is proven see-it-fail-first: neutering it must turn the harness
+red. No new command, no new provider, no new behavior thesis, all 0.31-0.39 boundaries
+preserved. The v0.40.6 reviewer NO-GO is lifted only by the independent verifier, not by a
+release report. The adopt and monorepo skill-flow soaks remain OPEN; no "gates protect
+production" claim is made.
+
 ## 0.40.7 — Reviewer transport cost and cache hardening
 
 Remediates the v0.40.6 live Z.ai failures. Registered GLM reviewer requests
@@ -12,9 +35,12 @@ provider-network, read-timeout, connect, and malformed-response failures
 without persisting reasoning text, secrets, or full provider payloads.
 
 Normalized provider attempts retain safe finish/usage/character metadata and
-the effective review parameters; missing usage remains null. Paid HTTP 200
-failures are not retried with an identical body, and existing raw receipts stay
-unchanged on failure.
+the effective review parameters; missing usage remains null. Existing raw
+receipts stay unchanged on failure. [Correction, v0.41.0: this entry originally
+claimed "Paid HTTP 200 failures are not retried with an identical body" as a
+mechanical property; in 0.40.7 that was prose only — the retro audit (P0-6)
+showed a paid reasoning-only 200 followed by an automatic identical-body call.
+The mechanical no-identical-retry gate shipped in 0.41.0.]
 
 Python worker processes now disable bytecode writes; Ruff done-gates use
 `--no-cache` and an external temporary cache, followed by a second visibility
@@ -62,9 +88,12 @@ namespace and isolated credential path.
 
 Fixes direct Z.ai `aider-api` dispatch when the provider registry uses
 `ZAI_API_KEY`: the child Aider process now receives the credential through
-the `OPENAI_API_KEY` name expected by Aider/LiteLLM. OpenRouter credentials
-remain isolated on their own transport. Adds a regression test for the
-credential mapping and preserves secret redaction.
+the `OPENAI_API_KEY` name expected by Aider/LiteLLM. Adds a regression test
+for the credential mapping and preserves secret redaction. [Correction,
+v0.41.0: this entry originally claimed "OpenRouter credentials remain isolated
+on their own transport"; that held at load/dispatch validation only — the retro
+audit (P0-5) showed every worker child inheriting all credentials from the
+process environment. Child-process-level isolation shipped in 0.41.0.]
 
 ## 0.40.2 — Codex plugin adapter
 

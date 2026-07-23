@@ -22,6 +22,10 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 ROUND_SCHEMA = ROOT / "assets" / "codex" / "review-round.schema.json"
+SPEC_ADVERSARY_SCHEMA = ROOT / "assets" / "codex" / "spec-adversary.schema.json"
+# The reviewer selects its schema by INSERTION POINT; full-schema local
+# validation remains the acceptance bar for both.
+INSERTION_SCHEMAS = {"pre_freeze": SPEC_ADVERSARY_SCHEMA, "post_green": ROUND_SCHEMA}
 MAX_CONTEXT_BYTES = 8 * 1024 * 1024
 
 
@@ -256,8 +260,12 @@ def run_review(request: dict[str, Any], registry: dict[str, Any], provider_name:
     if not secret:
         raise ReviewError("missing-key")
     context = _context(request, repo)
-    schema_path = Path(str(request.get("schema") or ROUND_SCHEMA)).resolve()
-    if schema_path != ROUND_SCHEMA.resolve():
+    insertion_point = str(request.get("insertion_point", "post_green"))
+    if insertion_point not in INSERTION_SCHEMAS:
+        raise ReviewError("invalid-insertion-point")
+    selected_schema = INSERTION_SCHEMAS[insertion_point]
+    schema_path = Path(str(request.get("schema") or selected_schema)).resolve()
+    if schema_path != selected_schema.resolve():
         raise ReviewError("unsupported-review-schema")
     schema_text = json.dumps(_json(schema_path), indent=2, sort_keys=True)
     user_prompt = (prompt.rstrip() + "\n\n"
@@ -303,6 +311,14 @@ def run_review(request: dict[str, Any], registry: dict[str, Any], provider_name:
     body_bytes = json.dumps(body, ensure_ascii=False).encode("utf-8")
     if secret in body_bytes.decode("utf-8"):
         raise ReviewError("secret-in-request")
+    # Cost safety (P0.4): the exact request body is fingerprinted BEFORE any
+    # network call. A body already paid for on a prior HTTP-200 failure is
+    # refused here; an identical retry can never reach the provider.
+    body_fingerprint = hashlib.sha256(body_bytes).hexdigest()
+    failure_diagnostics["request_fingerprint"] = body_fingerprint
+    forbidden = request.get("forbidden_body_fingerprints") or []
+    if body_fingerprint in forbidden:
+        raise ReviewError("identical-retry-forbidden", diagnostics=dict(failure_diagnostics))
     before = _snapshot(repo, raw_output)
     http_request = urllib.request.Request(base_url, data=body_bytes, method="POST")
     http_request.add_header("Authorization", f"Bearer {secret}")
@@ -339,6 +355,7 @@ def run_review(request: dict[str, Any], registry: dict[str, Any], provider_name:
     _assert_unchanged(repo, before, raw_output)
     diagnostics = _response_diagnostics(payload, request_id)
     diagnostics["review_parameters"] = review_parameters
+    diagnostics["request_fingerprint"] = body_fingerprint
     terminal_reason = str(diagnostics.get("finish_reason") or "").lower()
     if terminal_reason in {"sensitive", "content_filter"}:
         raise ReviewError("provider-sensitive-stop", diagnostics=diagnostics)

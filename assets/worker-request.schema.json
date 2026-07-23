@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Parallax provider dispatch request",
+  "description": "Schema for the dispatch REQUEST, validated before any provider process starts. A role with a declared blindness side (blind_coder -> code, test_writer -> test) must supply side+slug; a wall-opening request without them is invalid, never 'not-requested'.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["role", "worktree", "slice_id"],
+  "properties": {
+    "role": {"type": "string", "minLength": 1},
+    "worktree": {"type": "string", "minLength": 1},
+    "slice_id": {"type": ["string", "number"], "minLength": 1},
+    "slug": {"type": "string", "minLength": 1},
+    "side": {"type": "string", "enum": ["code", "test"]},
+    "expected_branch": {"type": ["string", "null"]},
+    "spec_path": {"type": "string"},
+    "validation_path": {"type": "string"},
+    "prompt": {"type": "string"},
+    "chain": {"type": "array", "items": {"type": "string"}},
+    "visibility_manifest": {"type": ["object", "string"]},
+    "review_request": {"type": "object"},
+    "attempt_log": {"type": "string"},
+    "attempt_artifacts": {"type": "string"},
+    "evidence_dir": {"type": "string"},
+    "clean_base": {"type": "string"},
+    "disposable_worktree": {"type": "boolean"},
+    "automatic_fallback": {"type": "boolean"},
+    "probe_live_signal": {"type": "boolean"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"role": {"enum": ["blind-coder", "blind_coder"]}}, "required": ["role"]},
+      "then": {"required": ["side", "slug"], "properties": {"side": {"const": "code"}}}
+    },
+    {
+      "if": {"properties": {"role": {"enum": ["test-writer", "test_writer"]}}, "required": ["role"]},
+      "then": {"required": ["side", "slug"], "properties": {"side": {"const": "test"}}}
+    }
+  ]
+}
